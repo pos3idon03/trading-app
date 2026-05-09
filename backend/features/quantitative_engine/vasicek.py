@@ -1,0 +1,73 @@
+"""Vasicek model parameter estimation via OLS on discretized SDE."""
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+from scipy import stats
+
+from utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+MIN_OBSERVATIONS = 30
+
+
+@dataclass
+class VasicekParams:
+    k: float       # mean reversion speed
+    theta: float   # long-term mean
+    sigma: float   # diffusion coefficient
+    r_squared: float = 0.0
+
+
+def estimate_mean_reversion_params(prices: np.ndarray, dt: float = 1.0) -> VasicekParams:
+    """Estimate Vasicek SDE parameters via OLS regression.
+
+    Discretized form: S(t+1) - S(t) = k*(theta - S(t))*dt + epsilon
+    Rearranged as OLS: dS = alpha + beta*S(t)
+    Where: beta = -k*dt, alpha = k*theta*dt
+    """
+    if len(prices) < MIN_OBSERVATIONS:
+        raise ValueError(f"Need at least {MIN_OBSERVATIONS} observations, got {len(prices)}")
+
+    s = np.asarray(prices, dtype=float)
+    ds = np.diff(s)
+    s_t = s[:-1]
+
+    slope, intercept, r_value, p_value, _ = stats.linregress(s_t, ds)
+
+    k = max(-slope / dt, 1e-6)
+    theta = intercept / (k * dt) if k > 1e-6 else float(s.mean())
+
+    residuals = ds - (intercept + slope * s_t)
+    sigma = float(np.std(residuals) / np.sqrt(dt))
+
+    logger.info("vasicek_params_estimated", k=round(k, 6), theta=round(theta, 4), sigma=round(sigma, 6))
+    return VasicekParams(k=k, theta=theta, sigma=sigma, r_squared=r_value ** 2)
+
+
+def _compute_log_returns(prices: np.ndarray) -> np.ndarray:
+    prices = np.asarray(prices, dtype=float)
+    prices = prices[prices > 0]
+    return np.diff(np.log(prices))
+
+
+def compute_historical_volatility(prices: np.ndarray, annualize: bool = True, trading_days: int = 252) -> float:
+    """Annualized historical volatility from log returns."""
+    log_returns = _compute_log_returns(prices)
+    vol = float(np.std(log_returns))
+    if annualize:
+        vol *= np.sqrt(trading_days)
+    return vol
+
+
+def calibrate_vasicek(
+    prices: np.ndarray,
+    dt: float = 1.0 / 252,
+    log_prices: bool = False,
+) -> VasicekParams:
+    """Full calibration: optionally work in log-price space for positivity."""
+    data = np.log(prices) if log_prices else np.asarray(prices, dtype=float)
+    return estimate_mean_reversion_params(data, dt=dt)

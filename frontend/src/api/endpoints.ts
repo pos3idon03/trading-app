@@ -1,0 +1,165 @@
+import api from './client';
+import type {
+  AgentAnalysisRequest,
+  AgentAnalysisResponse,
+  AssetListResponse,
+  BacktestRequest,
+  BacktestResponse,
+  ExecutionStatusResponse,
+  IndicatorSnapshotResponse,
+  IngestRequest,
+  IngestResponse,
+  IngestionStatusResponse,
+  OHLCVQueryResponse,
+  OptimizationRequest,
+  OptimizationResponse,
+  OrderHistoryResponse,
+  PortfolioResponse,
+  RiskConfigResponse,
+  RiskConfigUpdateRequest,
+  RiskEventHistoryResponse,
+  SignalHistoryResponse,
+  SimulationRequest,
+  SimulationResponse,
+  StreamStartRequest,
+  StreamStatusResponse,
+  TickerSearchResponse,
+  TradingSignalItem,
+} from './types';
+
+export const dataApi = {
+  triggerIngestion: (req: IngestRequest) =>
+    api.post<IngestResponse>('/data/ingest', req).then((r) => r.data),
+
+  getAssets: () =>
+    api.get<AssetListResponse>('/data/assets').then((r) => r.data),
+
+  getOHLCVBySymbol: (
+    symbol: string,
+    timeframe: string,
+    start?: string,
+    end?: string,
+  ) =>
+    api
+      .get<OHLCVQueryResponse>(`/data/ohlcv/by-symbol/${symbol}`, {
+        params: { timeframe, start, end },
+      })
+      .then((r) => r.data),
+
+  getOHLCV: (
+    assetId: number,
+    timeframe: string,
+    start?: string,
+    end?: string,
+  ) =>
+    api
+      .get<OHLCVQueryResponse>(`/data/ohlcv/${assetId}`, {
+        params: { timeframe, start, end },
+      })
+      .then((r) => r.data),
+
+  getStatus: () =>
+    api.get<IngestionStatusResponse>('/data/status').then((r) => r.data),
+
+  searchTickers: (query: string, limit = 10) =>
+    api
+      .get<TickerSearchResponse>('/data/tickers/search', { params: { query, limit } })
+      .then((r) => r.data),
+};
+
+export const simulationApi = {
+  calibrate: (assetId: number, timeframe = '1d') =>
+    api
+      .post(`/simulation/calibrate/${assetId}`, { timeframe })
+      .then((r) => r.data),
+
+  run: (req: SimulationRequest) =>
+    api.post<SimulationResponse>('/simulation/run', req).then((r) => r.data),
+
+  get: (simId: number) =>
+    api.get<SimulationResponse>(`/simulation/${simId}`).then((r) => r.data),
+};
+
+export const backtestApi = {
+  run: (req: BacktestRequest) =>
+    api.post<BacktestResponse>('/backtest/run', req).then((r) => r.data),
+
+  getResults: (btId: number) =>
+    api.get<BacktestResponse>(`/backtest/${btId}/results`).then((r) => r.data),
+
+  optimize: (req: OptimizationRequest) =>
+    api.post<OptimizationResponse>('/backtest/optimize', req).then((r) => r.data),
+
+  getOptimization: (optId: number) =>
+    api.get<OptimizationResponse>(`/backtest/${optId}/optimization`).then((r) => r.data),
+};
+
+export const agentApi = {
+  analyze: (req: AgentAnalysisRequest) =>
+    api.post<AgentAnalysisResponse>('/agents/analyze', req, { timeout: 180_000 }).then((r) => r.data),
+
+  get: (analysisId: number) =>
+    api.get<AgentAnalysisResponse>(`/agents/${analysisId}`).then((r) => r.data),
+};
+
+export const liveApi = {
+  startStream: (req: StreamStartRequest) =>
+    api.post<StreamStatusResponse>('/live/start', req).then((r) => r.data),
+
+  stopStream: () =>
+    api.post<StreamStatusResponse>('/live/stop').then((r) => r.data),
+
+  getStatus: () =>
+    api.get<StreamStatusResponse>('/live/status').then((r) => r.data),
+
+  getIndicators: (symbol: string, timeframe = '1h') =>
+    api
+      .get<IndicatorSnapshotResponse>(`/live/indicators/${symbol}`, {
+        params: { timeframe },
+      })
+      .then((r) => r.data),
+
+  getLatestSignal: (symbol: string) =>
+    api.get<TradingSignalItem | { message: string }>(`/live/signals/${symbol}`).then((r) => r.data),
+
+  getSignalHistory: (symbol?: string, limit = 50) =>
+    api
+      .get<SignalHistoryResponse>('/live/signals', {
+        params: { symbol, limit },
+      })
+      .then((r) => r.data),
+};
+
+export const executionApi = {
+  enable: () =>
+    api.post<ExecutionStatusResponse>('/execution/enable').then((r) => r.data),
+
+  disable: () =>
+    api.post<ExecutionStatusResponse>('/execution/disable').then((r) => r.data),
+
+  getStatus: () =>
+    api.get<ExecutionStatusResponse>('/execution/status').then((r) => r.data),
+
+  getOrders: (symbol?: string, limit = 50) =>
+    api
+      .get<OrderHistoryResponse>('/execution/orders', {
+        params: { symbol, limit },
+      })
+      .then((r) => r.data),
+
+  getPortfolio: () =>
+    api.get<PortfolioResponse>('/execution/portfolio').then((r) => r.data),
+
+  getRiskConfig: () =>
+    api.get<RiskConfigResponse>('/execution/risk/config').then((r) => r.data),
+
+  updateRiskConfig: (req: RiskConfigUpdateRequest) =>
+    api.put<RiskConfigResponse>('/execution/risk/config', req).then((r) => r.data),
+
+  getRiskEvents: (limit = 50) =>
+    api
+      .get<RiskEventHistoryResponse>('/execution/risk/events', {
+        params: { limit },
+      })
+      .then((r) => r.data),
+};

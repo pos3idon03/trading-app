@@ -1,0 +1,209 @@
+"""Tests for the POST /api/v1/backtest/optimize and GET /{opt_id}/optimization routes."""
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import HTTPException
+from pydantic import ValidationError
+
+from dtos.backtest_dto import OptimizationRequest
+
+
+# ---------------------------------------------------------------------------
+# OptimizationRequest DTO validation
+# ---------------------------------------------------------------------------
+
+
+class TestOptimizationRequestDTO:
+    def _base_kwargs(self) -> dict:
+        return {
+            "strategy_name": "ma_crossover",
+            "start_date": datetime(2020, 1, 1, tzinfo=timezone.utc),
+            "end_date": datetime(2024, 1, 1, tzinfo=timezone.utc),
+            "param_grid": {"fast_window": [5, 10], "slow_window": [20, 50]},
+        }
+
+    def test_accepts_symbol(self):
+        req = OptimizationRequest(symbol="AAPL", **self._base_kwargs())
+        assert req.symbol == "AAPL"
+
+    def test_accepts_asset_id(self):
+        req = OptimizationRequest(asset_id=1, **self._base_kwargs())
+        assert req.asset_id == 1
+
+    def test_rejects_neither_asset_id_nor_symbol(self):
+        with pytest.raises(ValidationError) as exc_info:
+            OptimizationRequest(**self._base_kwargs())
+        assert "Provide either asset_id or symbol" in str(exc_info.value)
+
+    def test_defaults(self):
+        req = OptimizationRequest(symbol="SPY", **self._base_kwargs())
+        assert req.n_splits == 5
+        assert req.optimize_metric == "sharpe_ratio"
+        assert req.initial_capital == 100_000.0
+
+    def test_custom_n_splits(self):
+        req = OptimizationRequest(symbol="SPY", n_splits=3, **self._base_kwargs())
+        assert req.n_splits == 3
+
+    def test_n_splits_out_of_range(self):
+        with pytest.raises(ValidationError):
+            OptimizationRequest(symbol="SPY", n_splits=1, **self._base_kwargs())
+
+    def test_n_splits_max(self):
+        with pytest.raises(ValidationError):
+            OptimizationRequest(symbol="SPY", n_splits=21, **self._base_kwargs())
+
+
+# ---------------------------------------------------------------------------
+# Route: _resolve_asset_id (shared helper, imported from backtest route)
+# ---------------------------------------------------------------------------
+
+
+class TestOptimizationRouteResolveAsset:
+    @pytest.mark.asyncio
+    async def test_asset_id_returns_directly(self):
+        from routes.backtest import _resolve_asset_id
+
+        session = AsyncMock()
+        result = await _resolve_asset_id(session, asset_id=5, symbol=None)
+        assert result == 5
+
+    @pytest.mark.asyncio
+    async def test_symbol_resolution(self):
+        from routes.backtest import _resolve_asset_id
+
+        session = AsyncMock()
+        with patch("routes.backtest.get_asset_id_by_symbol", new=AsyncMock(return_value=7)):
+            result = await _resolve_asset_id(session, asset_id=None, symbol="MSFT")
+        assert result == 7
+
+    @pytest.mark.asyncio
+    async def test_symbol_not_found_raises_404(self):
+        from routes.backtest import _resolve_asset_id
+
+        session = AsyncMock()
+        with patch("routes.backtest.get_asset_id_by_symbol", new=AsyncMock(return_value=None)):
+            with pytest.raises(HTTPException) as exc_info:
+                await _resolve_asset_id(session, asset_id=None, symbol="UNKNOWN")
+        assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Route: run_optimization (end-to-end mock)
+# ---------------------------------------------------------------------------
+
+
+class TestRunOptimizationRoute:
+    def _make_df(self):
+        import numpy as np
+        import pandas as pd
+
+        rng = np.random.default_rng(0)
+        prices = 100 + np.cumsum(rng.normal(0, 1, 400))
+        dates = pd.date_range("2020-01-01", periods=400, freq="D")
+        return pd.DataFrame({"time": dates, "close": prices})
+
+    @pytest.mark.asyncio
+    async def test_successful_optimization(self):
+        from features.backtesting.optimizer import OptimizationResult
+        from routes.backtest import run_optimization
+
+        mock_result = OptimizationResult(
+            best_params={"fast_window": 10, "slow_window": 50},
+            best_sharpe=0.9,
+            all_results=[
+                {"params": {"fast_window": 10, "slow_window": 50}, "avg_oos_metric": 0.9},
+                {"params": {"fast_window": 5, "slow_window": 20}, "avg_oos_metric": 0.4},
+            ],
+            n_splits=2,
+        )
+
+        req = OptimizationRequest(
+            symbol="AAPL",
+            strategy_name="ma_crossover",
+            start_date=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            param_grid={"fast_window": [5, 10], "slow_window": [20, 50]},
+            n_splits=2,
+        )
+        session = AsyncMock()
+
+        with (
+            patch("routes.backtest.get_asset_id_by_symbol", new=AsyncMock(return_value=1)),
+            patch("routes.backtest.get_ohlcv", new=AsyncMock(return_value=self._make_df())),
+            patch("routes.backtest.create_optimization", new=AsyncMock(return_value=42)),
+            patch("routes.backtest.walk_forward_optimize", return_value=mock_result),
+            patch("routes.backtest.update_optimization_result", new=AsyncMock()),
+        ):
+            response = await run_optimization(req, session)
+
+        assert response.optimization_id == 42
+        assert response.status == "done"
+        assert response.best_params == {"fast_window": 10, "slow_window": 50}
+        assert response.best_metric == pytest.approx(0.9)
+        assert len(response.all_results) == 2
+
+    @pytest.mark.asyncio
+    async def test_insufficient_data_raises_422(self):
+        import pandas as pd
+        from routes.backtest import run_optimization
+
+        req = OptimizationRequest(
+            symbol="AAPL",
+            strategy_name="ma_crossover",
+            start_date=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            param_grid={"fast_window": [5, 10]},
+            n_splits=5,
+        )
+        session = AsyncMock()
+
+        with (
+            patch("routes.backtest.get_asset_id_by_symbol", new=AsyncMock(return_value=1)),
+            patch("routes.backtest.get_ohlcv", new=AsyncMock(return_value=pd.DataFrame())),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await run_optimization(req, session)
+        assert exc_info.value.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Route: get_optimization_results
+# ---------------------------------------------------------------------------
+
+
+class TestGetOptimizationResultsRoute:
+    @pytest.mark.asyncio
+    async def test_returns_stored_result(self):
+        from routes.backtest import get_optimization_results
+
+        mock_opt = MagicMock()
+        mock_opt.id = 42
+        mock_opt.asset_id = 1
+        mock_opt.strategy_name = "ma_crossover"
+        mock_opt.status = "done"
+        mock_opt.optimize_metric = "sharpe_ratio"
+        mock_opt.n_splits = 5
+        mock_opt.best_params = {"fast_window": 10, "slow_window": 50}
+        mock_opt.best_metric = 0.9
+        mock_opt.all_results = [{"params": {"fast_window": 10, "slow_window": 50}, "avg_oos_metric": 0.9}]
+        mock_opt.duration_ms = 1200
+        mock_opt.error_message = None
+
+        session = AsyncMock()
+        with patch("routes.backtest.get_optimization", new=AsyncMock(return_value=mock_opt)):
+            response = await get_optimization_results(42, session)
+
+        assert response.optimization_id == 42
+        assert response.best_params == {"fast_window": 10, "slow_window": 50}
+
+    @pytest.mark.asyncio
+    async def test_404_when_not_found(self):
+        from routes.backtest import get_optimization_results
+
+        session = AsyncMock()
+        with patch("routes.backtest.get_optimization", new=AsyncMock(return_value=None)):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_optimization_results(999, session)
+        assert exc_info.value.status_code == 404

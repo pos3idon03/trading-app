@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-surface-950 text-slate-100 antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-surface-900;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-600 rounded-full;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface-800 border border-slate-700 rounded-xl p-4;
+  }
+
+  .btn-primary {
+    @apply bg-brand-500 hover:bg-brand-600 text-white font-medium px-4 py-2 rounded-lg transition-colors;
+  }
+
+  .btn-secondary {
+    @apply bg-slate-700 hover:bg-slate-600 text-slate-100 font-medium px-4 py-2 rounded-lg transition-colors;
+  }
+
+  .metric-value {
+    @apply font-mono text-lg font-semibold;
+  }
+
+  .metric-label {
+    @apply text-xs text-slate-400 uppercase tracking-wide;
+  }
+
+  .positive {
+    @apply text-green-400;
+  }
+
+  .negative {
+    @apply text-red-400;
+  }
+
+  .neutral {
+    @apply text-slate-300;
+  }
+}
