@@ -1,6 +1,7 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Double, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Double, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db import Base
@@ -39,3 +40,20 @@ class Fundamental(Base):
     __table_args__ = (
         UniqueConstraint("time", "asset_id", "metric_name", "source", name="uq_fundamentals"),
     )
+
+
+class CompanyProfile(Base):
+    __tablename__ = "company_profiles"
+
+    asset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    sector: Mapped[str | None] = mapped_column(String)
+    industry: Mapped[str | None] = mapped_column(String)
+    business_summary: Mapped[str | None] = mapped_column(Text)
+    website: Mapped[str | None] = mapped_column(String)
+    country: Mapped[str | None] = mapped_column(String)
+    employees: Mapped[int | None] = mapped_column(Integer)
+    officers: Mapped[list | None] = mapped_column(JSONB, default=list)
+    source: Mapped[str] = mapped_column(String, nullable=False, default="yfinance")
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

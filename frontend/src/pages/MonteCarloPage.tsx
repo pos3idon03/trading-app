@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   LineChart,
   Line,
@@ -7,9 +7,11 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  ComposedChart,
+  Bar,
 } from 'recharts';
 import { dataApi, simulationApi } from '../api/endpoints';
-import type { AssetItem, SimulationResponse } from '../api/types';
+import type { AssetItem, SimulationResponse, DistributionPoint } from '../api/types';
 import MetricCard from '../components/MetricCard';
 import StatusBadge from '../components/StatusBadge';
 import Spinner from '../components/Spinner';
@@ -34,18 +36,43 @@ function buildChartData(paths: Record<string, number[]>): Record<string, number>
   });
 }
 
+function buildDistributionData(
+  histogram: DistributionPoint[],
+  mrDensity: DistributionPoint[],
+  jumpUp: DistributionPoint[],
+  jumpDown: DistributionPoint[],
+): Record<string, number | null>[] {
+  // Merge all series onto a shared x-axis derived from histogram midpoints
+  const mrMap = new Map(mrDensity.map((p) => [p.x.toFixed(6), p.density]));
+  const upMap = new Map(jumpUp.map((p) => [p.x.toFixed(6), p.density]));
+  const downMap = new Map(jumpDown.map((p) => [p.x.toFixed(6), p.density]));
+
+  return histogram.map((p) => {
+    const key = p.x.toFixed(6);
+    return {
+      x: Number(p.x.toFixed(4)),
+      histogram: Number(p.density.toFixed(4)),
+      mr: mrMap.has(key) ? Number(mrMap.get(key)!.toFixed(4)) : null,
+      jumpUp: upMap.has(key) ? Number(upMap.get(key)!.toFixed(4)) : null,
+      jumpDown: downMap.has(key) ? Number(downMap.get(key)!.toFixed(4)) : null,
+    };
+  });
+}
+
 export default function MonteCarloPage() {
   const [assets, setAssets] = useState<AssetItem[]>([]);
   const [symbol, setSymbol] = useState('');
   const [numPaths, setNumPaths] = useState(1000);
   const [horizonSteps, setHorizonSteps] = useState(252);
+  const [calibrationYears, setCalibrationYears] = useState(10);
+  const [showDistribution, setShowDistribution] = useState(false);
   const [result, setResult] = useState<SimulationResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    dataApi.getAssets().then((resp) => {
-      const active = resp.assets.filter((a) => a.is_active);
+    dataApi.getAssets().then((resp: { assets: AssetItem[] }) => {
+      const active = resp.assets.filter((a: AssetItem) => a.is_active);
       setAssets(active);
       if (active.length > 0) setSymbol(active[0].symbol);
     });
@@ -62,6 +89,8 @@ export default function MonteCarloPage() {
         num_paths: numPaths,
         horizon_steps: horizonSteps,
         use_stored_params: true,
+        include_distribution: showDistribution,
+        calibration_years: calibrationYears,
       });
       setResult(resp);
     } catch (err) {
@@ -72,6 +101,16 @@ export default function MonteCarloPage() {
   };
 
   const chartData = result?.percentile_paths ? buildChartData(result.percentile_paths) : [];
+
+  const distData =
+    result?.return_distribution
+      ? buildDistributionData(
+          result.return_distribution.histogram,
+          result.return_distribution.mr_density,
+          result.return_distribution.jump_up_density,
+          result.return_distribution.jump_down_density,
+        )
+      : [];
 
   return (
     <div className="space-y-6">
@@ -92,11 +131,11 @@ export default function MonteCarloPage() {
             <select
               className="bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500"
               value={symbol}
-              onChange={(e) => setSymbol(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSymbol(e.target.value)}
               disabled={assets.length === 0}
             >
               {assets.length === 0 && <option value="">Loading…</option>}
-              {assets.map((a) => (
+              {assets.map((a: AssetItem) => (
                 <option key={a.id} value={a.symbol}>
                   {a.symbol}{a.name ? ` — ${a.name}` : ''}
                 </option>
@@ -108,7 +147,7 @@ export default function MonteCarloPage() {
             <select
               className="bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500"
               value={numPaths}
-              onChange={(e) => setNumPaths(Number(e.target.value))}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setNumPaths(Number(e.target.value))}
             >
               {[100, 500, 1000, 5000, 10000].map((v) => (
                 <option key={v} value={v}>{v.toLocaleString()}</option>
@@ -120,12 +159,36 @@ export default function MonteCarloPage() {
             <select
               className="bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500"
               value={horizonSteps}
-              onChange={(e) => setHorizonSteps(Number(e.target.value))}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setHorizonSteps(Number(e.target.value))}
             >
               {[21, 63, 126, 252, 504].map((v) => (
                 <option key={v} value={v}>{v} days</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="metric-label block mb-1">Calibration Window</label>
+            <select
+              className="bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500"
+              value={calibrationYears}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCalibrationYears(Number(e.target.value))}
+            >
+              {[1, 2, 3, 5, 7, 10, 15, 20].map((v) => (
+                <option key={v} value={v}>{v} {v === 1 ? 'year' : 'years'}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2 pb-1">
+            <input
+              id="show-dist"
+              type="checkbox"
+              className="accent-brand-500 w-4 h-4 cursor-pointer"
+              checked={showDistribution}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setShowDistribution(e.target.checked)}
+            />
+            <label htmlFor="show-dist" className="metric-label cursor-pointer select-none">
+              Return Distribution
+            </label>
           </div>
           <button
             onClick={runSimulation}
@@ -141,11 +204,19 @@ export default function MonteCarloPage() {
 
       {result && !loading && (
         <>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <StatusBadge status={result.status} />
             <span className="text-slate-400 text-sm">
               Sim ID #{result.simulation_id} &bull; {result.duration_ms}ms
             </span>
+            {result.params?.calibration_start && result.params?.calibration_end && (
+              <span className="text-slate-500 text-xs">
+                Calibrated on {String(result.params.calibration_start).slice(0, 10)}
+                &nbsp;&rarr;&nbsp;
+                {String(result.params.calibration_end).slice(0, 10)}
+                &nbsp;({result.params.num_observations as number} bars)
+              </span>
+            )}
           </div>
 
           {result.stats && (
@@ -195,6 +266,37 @@ export default function MonteCarloPage() {
                     />
                   ))}
                 </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {distData.length > 0 && (
+            <div className="card">
+              <h2 className="text-slate-200 font-semibold mb-1">Log-Return Distribution</h2>
+              <p className="text-slate-400 text-xs mb-4">
+                Histogram of simulated log-returns decomposed into mean-reverting, negative-jump and positive-jump components.
+              </p>
+              <ResponsiveContainer width="100%" height={380}>
+                <ComposedChart data={distData} margin={{ top: 5, right: 20, bottom: 20, left: 0 }}>
+                  <XAxis
+                    dataKey="x"
+                    stroke="#475569"
+                    tick={{ fontSize: 11, fill: '#64748b' }}
+                    label={{ value: 'Log-return', position: 'insideBottom', offset: -10, fill: '#64748b', fontSize: 11 }}
+                    tickFormatter={(v: number | string) => Number(v).toFixed(3)}
+                  />
+                  <YAxis stroke="#475569" tick={{ fontSize: 11, fill: '#64748b' }} />
+                  <Tooltip
+                    contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
+                    labelStyle={{ color: '#94a3b8' }}
+                    formatter={(v: number | string) => Number(v).toFixed(4)}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12, color: '#94a3b8' }} />
+                  <Bar dataKey="histogram" name="Historical log-returns" fill="#3b82f6" fillOpacity={0.5} />
+                  <Line type="monotone" dataKey="mr" name="Mean-reverting process" stroke="#ef4444" strokeWidth={2} dot={false} connectNulls />
+                  <Line type="monotone" dataKey="jumpDown" name="Negative jumps dist." stroke="#22c55e" strokeWidth={1.5} dot={false} connectNulls />
+                  <Line type="monotone" dataKey="jumpUp" name="Positive jumps dist." stroke="#d946ef" strokeWidth={1.5} dot={false} connectNulls />
+                </ComposedChart>
               </ResponsiveContainer>
             </div>
           )}

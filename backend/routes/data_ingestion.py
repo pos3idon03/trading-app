@@ -1,3 +1,4 @@
+import math
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -5,11 +6,12 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dal.market_data_dal import get_asset_id_by_symbol, get_ohlcv, list_assets
+from dal.market_data_dal import delete_asset, get_asset_id_by_symbol, get_ohlcv, list_assets
 from db import get_db
 from dtos.market_data_dto import (
     AssetDTO,
     AssetListResponse,
+    DeleteAssetResponse,
     IngestRequest,
     IngestResponse,
     IngestionStatusResponse,
@@ -62,6 +64,24 @@ async def get_assets(
     return AssetListResponse(assets=assets, count=len(assets))
 
 
+@router.delete("/assets/{symbol}", response_model=DeleteAssetResponse)
+async def delete_asset_endpoint(
+    symbol: str,
+    session: AsyncSession = Depends(get_db),
+) -> DeleteAssetResponse:
+    """Delete an asset and all its associated OHLCV, fundamental, and profile data."""
+    symbol = symbol.upper()
+    deleted = await delete_asset(session, symbol)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Asset not found: {symbol}")
+    logger.info("asset_deleted", symbol=symbol)
+    return DeleteAssetResponse(
+        symbol=symbol,
+        deleted=True,
+        message=f"Asset {symbol} and all associated data deleted successfully.",
+    )
+
+
 @router.get("/ohlcv/by-symbol/{symbol}", response_model=OHLCVQueryResponse)
 async def get_ohlcv_by_symbol(
     symbol: str,
@@ -80,7 +100,7 @@ async def get_ohlcv_by_symbol(
         raise HTTPException(status_code=404, detail=f"Asset not found: {symbol}")
 
     if start is None:
-        start = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        start = datetime(1970, 1, 1, tzinfo=timezone.utc)
     if end is None:
         end = utcnow()
 
@@ -111,7 +131,7 @@ async def get_ohlcv_data(
     """Retrieve stored OHLCV data for an asset by numeric ID."""
     from utils.time_utils import utcnow
     if start is None:
-        start = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        start = datetime(1970, 1, 1, tzinfo=timezone.utc)
     if end is None:
         end = utcnow()
 
@@ -131,6 +151,16 @@ async def get_ohlcv_data(
     )
 
 
+def _nan_to_none(value: object) -> object:
+    """Return None if value is NaN or Inf, otherwise return value unchanged."""
+    try:
+        if value is not None and (math.isnan(value) or math.isinf(value)):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
 def _build_ohlcv_records(df, asset_id: int, timeframe: str) -> list[OHLCVRecord]:
     return [
         OHLCVRecord(
@@ -138,9 +168,9 @@ def _build_ohlcv_records(df, asset_id: int, timeframe: str) -> list[OHLCVRecord]
             asset_id=asset_id,
             timeframe=timeframe,
             open=row["open"], high=row["high"], low=row["low"], close=row["close"],
-            volume=int(row.get("volume", 0)),
-            vwap=row.get("vwap"),
-            source=row.get("source", "unknown"),
+            volume=int(row.get("volume") or 0),
+            vwap=_nan_to_none(row.get("vwap")),
+            source=row.get("source") or "unknown",
         )
         for _, row in df.iterrows()
     ]

@@ -158,3 +158,76 @@ class TestParamsDictSerialization:
 
         assert isinstance(result["calibration_start"], datetime)
         assert isinstance(result["calibration_end"], datetime)
+
+
+# ---------------------------------------------------------------------------
+# SimulationRequest include_distribution flag
+# ---------------------------------------------------------------------------
+
+class TestIncludeDistributionFlag:
+    def test_defaults_to_false(self):
+        req = SimulationRequest(symbol="AAPL")
+        assert req.include_distribution is False
+
+    def test_can_be_set_to_true(self):
+        req = SimulationRequest(symbol="AAPL", include_distribution=True)
+        assert req.include_distribution is True
+
+
+# ---------------------------------------------------------------------------
+# ReturnDistribution and JumpCI DTOs
+# ---------------------------------------------------------------------------
+
+class TestReturnDistributionDTO:
+    def test_round_trips(self):
+        from dtos.simulation_dto import DistributionPoint, ReturnDistribution
+
+        dist = ReturnDistribution(
+            histogram=[DistributionPoint(x=0.0, density=1.0)],
+            mr_density=[DistributionPoint(x=0.0, density=2.0)],
+            jump_up_density=[DistributionPoint(x=0.1, density=0.5)],
+            jump_down_density=[DistributionPoint(x=-0.1, density=0.5)],
+        )
+        dumped = dist.model_dump()
+        assert len(dumped["histogram"]) == 1
+        assert dumped["histogram"][0]["x"] == 0.0
+        assert dumped["mr_density"][0]["density"] == 2.0
+
+
+class TestJumpCIDTO:
+    def test_round_trips(self):
+        from dtos.simulation_dto import JumpCI
+
+        ci = JumpCI(mu_low=-0.1, mu_high=0.1, sigma_low=0.05, sigma_high=0.15)
+        dumped = ci.model_dump()
+        assert dumped["mu_low"] == -0.1
+        assert dumped["sigma_high"] == 0.15
+
+    def test_jump_params_ci_optional(self):
+        from dtos.simulation_dto import JumpParams
+
+        params = JumpParams(
+            lambda_up=1.0,
+            lambda_down=1.0,
+            mu_up=0.01,
+            sigma_up=0.005,
+            mu_down=-0.01,
+            sigma_down=0.005,
+        )
+        assert params.ci_up is None
+        assert params.ci_down is None
+
+    def test_jump_params_with_ci(self):
+        from dtos.simulation_dto import JumpCI, JumpParams
+
+        params = JumpParams(
+            lambda_up=1.0,
+            lambda_down=1.0,
+            mu_up=0.01,
+            sigma_up=0.005,
+            mu_down=-0.01,
+            sigma_down=0.005,
+            ci_up=JumpCI(mu_low=-0.1, mu_high=0.1, sigma_low=0.01, sigma_high=0.05),
+        )
+        assert params.ci_up is not None
+        assert params.ci_up.mu_low == -0.1

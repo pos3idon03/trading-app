@@ -63,6 +63,7 @@ class TestAnalyzeRoute:
         mock_signal = _make_trading_signal()
 
         with (
+            patch("routes.ai_agents.get_asset_id_by_symbol", new=AsyncMock(return_value=1)),
             patch("routes.ai_agents.create_analysis", new=AsyncMock(return_value=1)),
             patch("routes.ai_agents.run_analysis_crew", return_value=mock_signal),
             patch("routes.ai_agents.update_analysis_result", new=AsyncMock()),
@@ -70,6 +71,7 @@ class TestAnalyzeRoute:
             response = await analyze_asset(req, session)
 
         assert response.analysis_id == 1
+        assert response.asset_id == 1
         assert response.status == "done"
         assert response.signal is not None
         assert response.signal.bias == "bullish"
@@ -85,6 +87,7 @@ class TestAnalyzeRoute:
         session = AsyncMock()
 
         with (
+            patch("routes.ai_agents.get_asset_id_by_symbol", new=AsyncMock(return_value=2)),
             patch("routes.ai_agents.create_analysis", new=AsyncMock(return_value=1)),
             patch("routes.ai_agents.run_analysis_crew", side_effect=RuntimeError("LLM timeout")),
             patch("routes.ai_agents.update_analysis_error", new=AsyncMock()),
@@ -104,6 +107,7 @@ class TestAnalyzeRoute:
         mock_update_error = AsyncMock()
 
         with (
+            patch("routes.ai_agents.get_asset_id_by_symbol", new=AsyncMock(return_value=3)),
             patch("routes.ai_agents.create_analysis", new=AsyncMock(return_value=5)),
             patch("routes.ai_agents.run_analysis_crew", side_effect=ValueError("bad input")),
             patch("routes.ai_agents.update_analysis_error", new=mock_update_error),
@@ -123,6 +127,7 @@ class TestGetAgentAnalysisRoute:
     def _make_mock_record(self, status: str = "done"):
         rec = MagicMock()
         rec.id = 1
+        rec.asset_id = 1
         rec.symbol = "AAPL"
         rec.status = status
         rec.signal = {
@@ -141,6 +146,7 @@ class TestGetAgentAnalysisRoute:
         rec.sentiment_report = "Sentiment text."
         rec.duration_ms = 45000
         rec.error_message = None
+        rec.provider_used = None
         return rec
 
     @pytest.mark.asyncio

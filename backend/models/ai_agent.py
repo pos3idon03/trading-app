@@ -1,7 +1,7 @@
 """SQLAlchemy model for AI agent analysis records."""
 from datetime import datetime
 
-from sqlalchemy import DateTime, Double, Integer, String, Text, func
+from sqlalchemy import DateTime, Double, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,6 +12,9 @@ class AgentAnalysis(Base):
     __tablename__ = "agent_analyses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("assets.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
     symbol: Mapped[str] = mapped_column(String, nullable=False)
     llm: Mapped[str] = mapped_column(String, nullable=False, default="gpt-4o-mini")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

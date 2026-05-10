@@ -12,6 +12,7 @@ from dal.ai_agent_dal import (
     update_analysis_error,
     update_analysis_result,
 )
+from dal.market_data_dal import get_asset_id_by_symbol
 from db import get_db
 from dtos.ai_agent_dto import (
     AgentAnalysisRequest,
@@ -36,13 +37,22 @@ async def analyze_asset(
 
     Runs fundamental (SEC filings), macro (FRED data), and sentiment (news) agents,
     then synthesizes their outputs into a structured JSON trading signal.
+    The symbol must already exist in the assets table (ingest it first).
     """
-    analysis_id = await create_analysis(session, symbol=request.symbol, llm=request.llm)
+    symbol = request.symbol.upper()
+    asset_id = await get_asset_id_by_symbol(session, symbol)
+    if asset_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Asset '{symbol}' is not registered. Ingest it first via /ingest.",
+        )
+
+    analysis_id = await create_analysis(session, symbol=symbol, llm=request.llm, asset_id=asset_id)
 
     try:
         loop = asyncio.get_running_loop()
         trading_signal = await loop.run_in_executor(
-            None, partial(run_analysis_crew, ticker=request.symbol, llm=request.llm)
+            None, partial(run_analysis_crew, ticker=symbol, llm=request.llm)
         )
 
         signal_dict = _signal_to_dict(trading_signal)
@@ -63,7 +73,8 @@ async def analyze_asset(
 
         return AgentAnalysisResponse(
             analysis_id=analysis_id,
-            symbol=request.symbol,
+            asset_id=asset_id,
+            symbol=symbol,
             status="done",
             signal=TradingSignal(**signal_dict),
             reports=AgentReports(
@@ -100,6 +111,7 @@ async def get_agent_analysis(
 
     return AgentAnalysisResponse(
         analysis_id=record.id,
+        asset_id=record.asset_id,
         symbol=record.symbol,
         status=record.status,
         signal=signal,

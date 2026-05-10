@@ -4,9 +4,11 @@ import pytest
 
 from features.quantitative_engine.jump_diffusion import JumpDistParams, JumpParams
 from features.quantitative_engine.monte_carlo import (
+    DistributionData,
     SimulationResult,
     SimulationStats,
     compute_path_statistics,
+    compute_return_distribution,
     extract_percentile_paths,
     run_simulation,
     simulate_paths,
@@ -87,3 +89,41 @@ class TestRunSimulation:
         assert result.duration_ms > 0
         assert result.stats is not None
         assert result.percentile_paths is not None
+
+
+class TestComputeReturnDistribution:
+    def test_returns_distribution_data(self, vasicek_params, jump_params):
+        paths = simulate_paths(vasicek_params, jump_params, s0=100.0, dt=1/252, steps=50, n_paths=300, seed=1)
+        dist = compute_return_distribution(paths, vasicek_params, jump_params)
+        assert isinstance(dist, DistributionData)
+
+    def test_histogram_is_non_empty(self, vasicek_params, jump_params):
+        paths = simulate_paths(vasicek_params, jump_params, s0=100.0, dt=1/252, steps=50, n_paths=300, seed=1)
+        dist = compute_return_distribution(paths, vasicek_params, jump_params)
+        assert len(dist.histogram) > 0
+
+    def test_histogram_densities_are_non_negative(self, vasicek_params, jump_params):
+        paths = simulate_paths(vasicek_params, jump_params, s0=100.0, dt=1/252, steps=50, n_paths=300, seed=2)
+        dist = compute_return_distribution(paths, vasicek_params, jump_params)
+        assert all(d >= 0 for _, d in dist.histogram)
+
+    def test_mr_density_same_length_as_grid(self, vasicek_params, jump_params):
+        paths = simulate_paths(vasicek_params, jump_params, s0=100.0, dt=1/252, steps=50, n_paths=300, seed=3)
+        dist = compute_return_distribution(paths, vasicek_params, jump_params)
+        assert len(dist.mr_density) == 200
+
+    def test_jump_densities_have_grid_length(self, vasicek_params, jump_params):
+        paths = simulate_paths(vasicek_params, jump_params, s0=100.0, dt=1/252, steps=50, n_paths=300, seed=4)
+        dist = compute_return_distribution(paths, vasicek_params, jump_params)
+        assert len(dist.jump_up_density) == 200
+        assert len(dist.jump_down_density) == 200
+
+    def test_mr_densities_are_non_negative(self, vasicek_params, jump_params):
+        paths = simulate_paths(vasicek_params, jump_params, s0=100.0, dt=1/252, steps=50, n_paths=300, seed=5)
+        dist = compute_return_distribution(paths, vasicek_params, jump_params)
+        assert all(d >= 0 for _, d in dist.mr_density)
+
+    def test_custom_n_bins(self, vasicek_params, jump_params):
+        paths = simulate_paths(vasicek_params, jump_params, s0=100.0, dt=1/252, steps=50, n_paths=300, seed=6)
+        dist = compute_return_distribution(paths, vasicek_params, jump_params, n_bins=30)
+        assert len(dist.histogram) == 30

@@ -1,5 +1,6 @@
 """Jump process detection and calibration for the Vasicek+Jump model."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
 
 import numpy as np
 from scipy import stats
@@ -18,11 +19,22 @@ class JumpDistParams:
 
 
 @dataclass
+class JumpCI:
+    """95% confidence intervals for a single jump component's log-normal parameters."""
+    mu_low: float
+    mu_high: float
+    sigma_low: float
+    sigma_high: float
+
+
+@dataclass
 class JumpParams:
     lambda_up: float       # Poisson rate for upward jumps (per time unit)
     lambda_down: float     # Poisson rate for downward jumps
     up: JumpDistParams
     down: JumpDistParams
+    ci_up: Optional[JumpCI] = field(default=None)
+    ci_down: Optional[JumpCI] = field(default=None)
 
 
 @dataclass
@@ -78,8 +90,41 @@ def fit_jump_distribution(jumps: np.ndarray, direction: str) -> JumpDistParams:
     return JumpDistParams(mu=mu, sigma=sigma)
 
 
+def compute_jump_ci(jumps: np.ndarray, confidence: float = 0.95) -> Optional[JumpCI]:
+    """Compute confidence intervals for log-normal jump parameters.
+
+    Uses Student-t CI for the mean and chi-squared CI for the std deviation
+    of log-magnitudes. Returns None when fewer than 2 samples are available.
+    """
+    if len(jumps) < 2:
+        return None
+
+    magnitudes = np.abs(jumps)
+    log_mags = np.log(magnitudes + 1e-10)
+    n = len(log_mags)
+    mu_hat = float(np.mean(log_mags))
+    std_hat = float(np.std(log_mags, ddof=1))
+    alpha = 1.0 - confidence
+
+    # t-interval for the mean
+    mu_low, mu_high = stats.t.interval(confidence, df=n - 1, loc=mu_hat, scale=std_hat / np.sqrt(n))
+
+    # chi-squared interval for the std
+    chi2_low = stats.chi2.ppf(alpha / 2, df=n - 1)
+    chi2_high = stats.chi2.ppf(1 - alpha / 2, df=n - 1)
+    sigma_low = float(np.sqrt((n - 1) * std_hat ** 2 / chi2_high))
+    sigma_high = float(np.sqrt((n - 1) * std_hat ** 2 / chi2_low))
+
+    return JumpCI(
+        mu_low=float(mu_low),
+        mu_high=float(mu_high),
+        sigma_low=sigma_low,
+        sigma_high=sigma_high,
+    )
+
+
 def estimate_jump_params(returns: np.ndarray, dt: float = 1.0, threshold_sigma: float = DEFAULT_JUMP_THRESHOLD_SIGMA) -> JumpParams:
-    """Estimate full jump parameter set from historical returns."""
+    """Estimate full jump parameter set from historical returns, including 95% CIs."""
     events = detect_jumps(returns, threshold_sigma=threshold_sigma)
     n = len(returns)
 
@@ -88,12 +133,16 @@ def estimate_jump_params(returns: np.ndarray, dt: float = 1.0, threshold_sigma: 
 
     up_dist = fit_jump_distribution(events.up_jumps, "up")
     down_dist = fit_jump_distribution(np.abs(events.down_jumps), "down")
+    ci_up = compute_jump_ci(events.up_jumps)
+    ci_down = compute_jump_ci(events.down_jumps)
 
     return JumpParams(
         lambda_up=lambda_up,
         lambda_down=lambda_down,
         up=up_dist,
         down=down_dist,
+        ci_up=ci_up,
+        ci_down=ci_down,
     )
 
 

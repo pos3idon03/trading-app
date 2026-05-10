@@ -54,7 +54,7 @@ def register_default_jobs(scheduler: AsyncIOScheduler) -> None:
         CronTrigger(hour="17", minute="30"),
         id="ingest_daily",
         name="Daily EOD ingestion",
-        kwargs={"symbols": default_symbols, "timeframes": ["1d"], "provider": "polygon"},
+        kwargs={"symbols": default_symbols, "timeframes": ["1d"], "provider": "yfinance"},
         replace_existing=True,
         misfire_grace_time=600,
     )

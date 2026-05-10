@@ -15,7 +15,7 @@ from dtos.market_data_dto import IngestRequest, OHLCVRecord
 from features.data_ingestion.providers import get_provider
 from features.data_ingestion.sanitizer import run_sanitization_pipeline
 from utils.logging import get_logger
-from utils.time_utils import utcnow
+from utils.time_utils import timeframe_to_timedelta, utcnow
 
 logger = get_logger(__name__)
 
@@ -29,13 +29,18 @@ async def ingest_ohlcv_for_symbol(
     end: Optional[datetime],
 ) -> dict:
     """Fetch, sanitize, and persist OHLCV for one symbol+timeframe."""
+    symbol = symbol.upper()
     provider = get_provider(provider_name)
 
     asset_id = await upsert_asset(session, symbol, asset_type="stock")
 
     if start is None:
         latest = await get_latest_timestamp(session, asset_id, timeframe)
-        start = latest or datetime(2010, 1, 1, tzinfo=timezone.utc)
+        start = (
+            latest + timeframe_to_timedelta(timeframe)
+            if latest
+            else datetime(1970, 1, 1, tzinfo=timezone.utc)
+        )
     if end is None:
         end = utcnow()
 
@@ -60,6 +65,7 @@ async def ingest_fundamentals_for_symbol(
     provider_name: str,
 ) -> dict:
     """Fetch and persist fundamentals for one symbol."""
+    symbol = symbol.upper()
     provider = get_provider(provider_name)
     asset_id = await upsert_asset(session, symbol, asset_type="stock")
     records = await provider.fetch_fundamentals(symbol, asset_id=asset_id)

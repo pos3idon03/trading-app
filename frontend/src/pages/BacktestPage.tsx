@@ -7,9 +7,6 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
-  BarChart,
-  Bar,
-  Cell,
 } from 'recharts';
 import { backtestApi, dataApi } from '../api/endpoints';
 import type {
@@ -24,12 +21,37 @@ import Spinner from '../components/Spinner';
 import ErrorAlert from '../components/ErrorAlert';
 
 const STRATEGIES = [
-  { value: 'ma_crossover', label: 'MA Crossover' },
-  { value: 'mean_reversion', label: 'Mean Reversion' },
-  { value: 'breakout', label: 'Breakout (Volatility Expansion)' },
-  { value: 'trend_pullback', label: 'Trend-Following with Pullbacks' },
-  { value: 'gap_fade', label: 'Gap Fade' },
-  { value: 'vrp_harvest', label: 'VRP Harvest' },
+  // ── Original ──────────────────────────────────────────────────────────
+  { value: 'ma_crossover',         label: 'MA Crossover' },
+  { value: 'mean_reversion',       label: 'Mean Reversion' },
+  { value: 'breakout',             label: 'Breakout (Volatility Expansion)' },
+  { value: 'trend_pullback',       label: 'Trend-Following with Pullbacks' },
+  { value: 'gap_fade',             label: 'Gap Fade' },
+  { value: 'vrp_harvest',          label: 'VRP Harvest' },
+  // ── Moving Average ────────────────────────────────────────────────────
+  { value: 'sma_cross',            label: 'SMA Cross (Golden / Death Cross)' },
+  { value: 'ema_cross',            label: 'EMA Cross' },
+  { value: 'sma_break',            label: 'Standard SMA Break (20 / 50 / 200)' },
+  // ── Momentum ──────────────────────────────────────────────────────────
+  { value: 'macd',                 label: 'MACD' },
+  { value: 'rsi',                  label: 'RSI (Relative Strength Index)' },
+  { value: 'lrsi',                 label: 'LRSI (Laguerre RSI)' },
+  { value: 'new_high_low',         label: 'New 52-Week High / Low' },
+  { value: 'momentum_rotation',    label: 'Momentum Rotation' },
+  // ── Volatility / Price-Level ──────────────────────────────────────────
+  { value: 'atr_trailing_stop',    label: 'ATR Trailing Stop' },
+  { value: 'vwap_cross',           label: 'VWAP Cross' },
+  { value: 'grid_trading',         label: 'Grid Trading' },
+  { value: 'wedge_compression',    label: 'Horizontal / Wedge Compression' },
+  // ── Mean Reversion ────────────────────────────────────────────────────
+  { value: 'mean_reversion_trend', label: 'Mean Reversion to Trend' },
+  { value: 'mean_reversion_range', label: 'Mean Reversion in Range' },
+  { value: 'reverting_market',     label: 'Reverting Market (Sideways)' },
+  // ── Breakout ──────────────────────────────────────────────────────────
+  { value: 'range_breakout',       label: 'Range Breakout' },
+  { value: 'orb',                  label: 'Open Range Breakout (ORB)' },
+  // ── Seasonal ──────────────────────────────────────────────────────────
+  { value: 'seasonal',             label: 'Seasonal / Sell in May' },
 ];
 
 const OPTIMIZE_METRICS = [
@@ -39,36 +61,60 @@ const OPTIMIZE_METRICS = [
   { value: 'profit_factor', label: 'Profit Factor' },
 ];
 
-const DEFAULT_MA_PARAMS = { fast_window: 10, slow_window: 50 };
-const DEFAULT_MR_PARAMS = { lookback: 20, z_threshold: 2.0 };
-const DEFAULT_BREAKOUT_PARAMS = { bb_window: 20, bb_std: 2.0, squeeze_lookback: 120, donchian_window: 20 };
-const DEFAULT_TREND_PULLBACK_PARAMS = { adx_period: 14, adx_threshold: 25.0, stoch_period: 14, stoch_smooth: 3, oversold: 20.0, overbought: 80.0 };
-const DEFAULT_GAP_FADE_PARAMS = { gap_threshold: 0.03, min_gap_fill_bars: 5 };
-const DEFAULT_VRP_HARVEST_PARAMS = { rv_window: 20, iv_proxy_window: 60, z_entry: -1.0, z_exit: 0.5 };
-
-const DEFAULT_MA_GRID = { fast_window: [5, 10, 20], slow_window: [30, 50, 100] };
-const DEFAULT_MR_GRID = { lookback: [10, 20, 30], z_threshold: [1.5, 2.0, 2.5] };
-const DEFAULT_BREAKOUT_GRID = { bb_window: [15, 20, 25], squeeze_lookback: [60, 120, 180], donchian_window: [15, 20, 25] };
-const DEFAULT_TREND_PULLBACK_GRID = { adx_period: [10, 14, 20], adx_threshold: [20.0, 25.0, 30.0], oversold: [15.0, 20.0, 25.0] };
-const DEFAULT_GAP_FADE_GRID = { gap_threshold: [0.02, 0.03, 0.05] };
-const DEFAULT_VRP_HARVEST_GRID = { rv_window: [10, 20, 30], iv_proxy_window: [40, 60, 90], z_entry: [-1.5, -1.0, -0.5] };
-
+// ── Default params (for backtest display and submission) ───────────────────
 const DEFAULT_PARAMS_MAP: Record<string, Record<string, number>> = {
-  ma_crossover: DEFAULT_MA_PARAMS,
-  mean_reversion: DEFAULT_MR_PARAMS,
-  breakout: DEFAULT_BREAKOUT_PARAMS,
-  trend_pullback: DEFAULT_TREND_PULLBACK_PARAMS,
-  gap_fade: DEFAULT_GAP_FADE_PARAMS,
-  vrp_harvest: DEFAULT_VRP_HARVEST_PARAMS,
+  ma_crossover:         { fast_window: 10, slow_window: 50 },
+  mean_reversion:       { lookback: 20, z_threshold: 2.0 },
+  breakout:             { bb_window: 20, bb_std: 2.0, squeeze_lookback: 120, donchian_window: 20 },
+  trend_pullback:       { adx_period: 14, adx_threshold: 25.0, stoch_period: 14, stoch_smooth: 3, oversold: 20.0, overbought: 80.0 },
+  gap_fade:             { gap_threshold: 0.03, min_gap_fill_bars: 5 },
+  vrp_harvest:          { rv_window: 20, iv_proxy_window: 60, z_entry: -1.0, z_exit: 0.5 },
+  sma_cross:            { fast_window: 50, slow_window: 200 },
+  ema_cross:            { fast_span: 12, slow_span: 26 },
+  sma_break:            { sma_window: 200 },
+  macd:                 { fast: 12, slow: 26, signal: 9 },
+  rsi:                  { period: 14, overbought: 70.0, oversold: 30.0 },
+  lrsi:                 { gamma: 0.5, overbought: 0.8, oversold: 0.2 },
+  new_high_low:         { lookback: 252 },
+  momentum_rotation:    { short_window: 20, long_window: 60, threshold: 0.0 },
+  atr_trailing_stop:    { atr_period: 14, atr_multiplier: 3.0, trend_ma: 50 },
+  vwap_cross:           { band_pct: 0.0 },
+  grid_trading:         { grid_size: 0.02, num_levels: 5 },
+  wedge_compression:    { atr_period: 14, compression_lookback: 20, compression_ratio: 0.5 },
+  mean_reversion_trend: { ma_window: 50, z_threshold: 1.5, adx_period: 14, adx_threshold: 25.0 },
+  mean_reversion_range: { bb_window: 20, bb_std: 2.0, adx_period: 14, adx_max: 20.0 },
+  reverting_market:     { rsi_period: 14, rsi_upper: 60.0, rsi_lower: 40.0, adx_period: 14, adx_max: 20.0 },
+  range_breakout:       { lookback: 20 },
+  orb:                  { opening_bars: 6 },
+  seasonal:             { sell_month: 5, buy_month: 11 },
 };
 
+// ── Default optimization grids ─────────────────────────────────────────────
 const DEFAULT_GRID_MAP: Record<string, Record<string, number[]>> = {
-  ma_crossover: DEFAULT_MA_GRID,
-  mean_reversion: DEFAULT_MR_GRID,
-  breakout: DEFAULT_BREAKOUT_GRID,
-  trend_pullback: DEFAULT_TREND_PULLBACK_GRID,
-  gap_fade: DEFAULT_GAP_FADE_GRID,
-  vrp_harvest: DEFAULT_VRP_HARVEST_GRID,
+  ma_crossover:         { fast_window: [5, 10, 20], slow_window: [30, 50, 100] },
+  mean_reversion:       { lookback: [10, 20, 30], z_threshold: [1.5, 2.0, 2.5] },
+  breakout:             { bb_window: [15, 20, 25], squeeze_lookback: [60, 120, 180], donchian_window: [15, 20, 25] },
+  trend_pullback:       { adx_period: [10, 14, 20], adx_threshold: [20.0, 25.0, 30.0], oversold: [15.0, 20.0, 25.0] },
+  gap_fade:             { gap_threshold: [0.02, 0.03, 0.05] },
+  vrp_harvest:          { rv_window: [10, 20, 30], iv_proxy_window: [40, 60, 90], z_entry: [-1.5, -1.0, -0.5] },
+  sma_cross:            { fast_window: [20, 50, 100], slow_window: [100, 150, 200] },
+  ema_cross:            { fast_span: [5, 12, 20], slow_span: [20, 26, 50] },
+  sma_break:            { sma_window: [20, 50, 100, 200] },
+  macd:                 { fast: [8, 12, 16], slow: [21, 26, 30], signal: [7, 9, 11] },
+  rsi:                  { period: [10, 14, 21], overbought: [65.0, 70.0, 75.0], oversold: [25.0, 30.0, 35.0] },
+  lrsi:                 { gamma: [0.3, 0.5, 0.7], overbought: [0.75, 0.8, 0.85], oversold: [0.15, 0.2, 0.25] },
+  new_high_low:         { lookback: [63, 126, 252] },
+  momentum_rotation:    { short_window: [10, 20, 30], long_window: [40, 60, 90] },
+  atr_trailing_stop:    { atr_period: [10, 14, 21], atr_multiplier: [2.0, 3.0, 4.0], trend_ma: [20, 50, 100] },
+  vwap_cross:           { band_pct: [0.0, 0.01, 0.02] },
+  grid_trading:         { grid_size: [0.01, 0.02, 0.03], num_levels: [3, 5, 8] },
+  wedge_compression:    { atr_period: [10, 14, 21], compression_lookback: [10, 20, 30], compression_ratio: [0.3, 0.5, 0.7] },
+  mean_reversion_trend: { ma_window: [20, 50, 100], z_threshold: [1.0, 1.5, 2.0], adx_threshold: [20.0, 25.0, 30.0] },
+  mean_reversion_range: { bb_window: [15, 20, 25], adx_max: [15.0, 20.0, 25.0] },
+  reverting_market:     { rsi_period: [10, 14, 21], rsi_upper: [55.0, 60.0, 65.0], rsi_lower: [35.0, 40.0, 45.0] },
+  range_breakout:       { lookback: [10, 20, 40] },
+  orb:                  { opening_bars: [3, 6, 12] },
+  seasonal:             { sell_month: [4, 5, 6], buy_month: [10, 11, 12] },
 };
 
 type TabId = 'backtest' | 'optimize';
@@ -185,7 +231,7 @@ export default function BacktestPage() {
   const [optStrategy, setOptStrategy] = useState('ma_crossover');
   const [optStartDate, setOptStartDate] = useState('2020-01-01');
   const [optEndDate, setOptEndDate] = useState('2024-12-31');
-  const [paramGrid, setParamGrid] = useState<Record<string, number[]>>(DEFAULT_MA_GRID);
+  const [paramGrid, setParamGrid] = useState<Record<string, number[]>>(DEFAULT_GRID_MAP['ma_crossover']);
   const [nSplits, setNSplits] = useState(5);
   const [optimizeMetric, setOptimizeMetric] = useState('sharpe_ratio');
   const [optResult, setOptResult] = useState<OptimizationResponse | null>(null);
@@ -203,7 +249,7 @@ export default function BacktestPage() {
     });
   }, []);
 
-  const strategyParams = DEFAULT_PARAMS_MAP[strategy] ?? DEFAULT_MA_PARAMS;
+  const strategyParams = DEFAULT_PARAMS_MAP[strategy] ?? DEFAULT_PARAMS_MAP['ma_crossover'];
 
   const handleStrategyChange = (s: string) => {
     setStrategy(s);
@@ -211,7 +257,7 @@ export default function BacktestPage() {
 
   const handleOptStrategyChange = (s: string) => {
     setOptStrategy(s);
-    setParamGrid(DEFAULT_GRID_MAP[s] ?? DEFAULT_MA_GRID);
+    setParamGrid(DEFAULT_GRID_MAP[s] ?? DEFAULT_GRID_MAP['ma_crossover']);
   };
 
   const runBacktest = async () => {

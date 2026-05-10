@@ -1,7 +1,7 @@
 """SQLAlchemy models for live trading indicators and signals."""
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Double, Integer, String, Text, func
+from sqlalchemy import BigInteger, DateTime, Double, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,6 +12,9 @@ class LiveIndicator(Base):
     __tablename__ = "live_indicators"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("assets.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
     symbol: Mapped[str] = mapped_column(String, nullable=False)
     timeframe: Mapped[str] = mapped_column(String, nullable=False)
     rsi: Mapped[float | None] = mapped_column(Double)
@@ -32,6 +35,9 @@ class TradingSignal(Base):
     __tablename__ = "trading_signals"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("assets.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
     symbol: Mapped[str] = mapped_column(String, nullable=False)
     timeframe: Mapped[str] = mapped_column(String, nullable=False)
     action: Mapped[str] = mapped_column(String, nullable=False)

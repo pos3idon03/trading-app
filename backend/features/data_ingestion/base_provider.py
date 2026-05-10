@@ -32,6 +32,24 @@ class DataProvider(ABC):
     ) -> list[FundamentalRecord]:
         ...
 
+    async def fetch_financial_statements(
+        self,
+        symbol: str,
+        asset_id: Optional[int] = None,
+    ) -> list[FundamentalRecord]:
+        """Fetch income statement, balance sheet, and cash flow records.
+
+        Providers that support this should override it. Default returns empty list.
+        """
+        return []
+
+    async def fetch_company_profile(self, symbol: str) -> dict:
+        """Fetch qualitative company profile (sector, industry, summary, etc.).
+
+        Providers that support this should override it. Default returns empty dict.
+        """
+        return {}
+
     def _timeframe_to_provider_params(self, timeframe: str) -> tuple[int, str]:
         """Convert generic timeframe to (multiplier, timespan) for REST-based providers."""
         mapping = {

@@ -5,16 +5,47 @@ from pydantic import BaseModel, Field, model_validator
 
 
 VALID_STRATEGIES = {
+    # Original
     "ma_crossover",
     "mean_reversion",
     "breakout",
     "trend_pullback",
     "gap_fade",
     "vrp_harvest",
+    # MA / EMA
+    "sma_cross",
+    "ema_cross",
+    "sma_break",
+    # Momentum
+    "macd",
+    "rsi",
+    "lrsi",
+    "new_high_low",
+    "momentum_rotation",
+    # Volatility / price-level
+    "atr_trailing_stop",
+    "vwap_cross",
+    "grid_trading",
+    "wedge_compression",
+    # Mean reversion
+    "mean_reversion_trend",
+    "mean_reversion_range",
+    "reverting_market",
+    # Breakout
+    "range_breakout",
+    "orb",
+    # Seasonal
+    "seasonal",
 }
 
 VALID_OPTIMIZE_METRICS = {"sharpe_ratio", "sortino_ratio", "total_return", "profit_factor"}
 
+_STRATEGY_DESCRIPTIONS = " | ".join(sorted(VALID_STRATEGIES))
+
+
+# ---------------------------------------------------------------------------
+# Original strategy param models
+# ---------------------------------------------------------------------------
 
 class MACrossoverParams(BaseModel):
     fast_window: int = Field(default=10, ge=2, le=200)
@@ -54,10 +85,131 @@ class VrpHarvestParams(BaseModel):
     z_exit: float = Field(default=0.5, ge=0.0, le=3.0)
 
 
-_STRATEGY_DESCRIPTIONS = (
-    "ma_crossover | mean_reversion | breakout | trend_pullback | gap_fade | vrp_harvest"
-)
+# ---------------------------------------------------------------------------
+# New MA / EMA param models
+# ---------------------------------------------------------------------------
 
+class SMACrossParams(BaseModel):
+    fast_window: int = Field(default=50, ge=2, le=300)
+    slow_window: int = Field(default=200, ge=10, le=500)
+
+
+class EMACrossParams(BaseModel):
+    fast_span: int = Field(default=12, ge=2, le=200)
+    slow_span: int = Field(default=26, ge=5, le=500)
+
+
+class SMABreakParams(BaseModel):
+    sma_window: int = Field(default=200, ge=5, le=500)
+
+
+# ---------------------------------------------------------------------------
+# New momentum param models
+# ---------------------------------------------------------------------------
+
+class MACDParams(BaseModel):
+    fast: int = Field(default=12, ge=2, le=100)
+    slow: int = Field(default=26, ge=5, le=200)
+    signal: int = Field(default=9, ge=2, le=50)
+
+
+class RSIParams(BaseModel):
+    period: int = Field(default=14, ge=2, le=100)
+    overbought: float = Field(default=70.0, ge=50.0, le=95.0)
+    oversold: float = Field(default=30.0, ge=5.0, le=50.0)
+
+
+class LRSIParams(BaseModel):
+    gamma: float = Field(default=0.5, ge=0.1, le=0.9)
+    overbought: float = Field(default=0.8, ge=0.5, le=0.99)
+    oversold: float = Field(default=0.2, ge=0.01, le=0.5)
+
+
+class NewHighLowParams(BaseModel):
+    lookback: int = Field(default=252, ge=20, le=504)
+
+
+class MomentumRotationParams(BaseModel):
+    short_window: int = Field(default=20, ge=5, le=100)
+    long_window: int = Field(default=60, ge=20, le=252)
+    threshold: float = Field(default=0.0, ge=-0.5, le=0.5)
+
+
+# ---------------------------------------------------------------------------
+# New volatility / price-level param models
+# ---------------------------------------------------------------------------
+
+class ATRTrailingStopParams(BaseModel):
+    atr_period: int = Field(default=14, ge=5, le=100)
+    atr_multiplier: float = Field(default=3.0, ge=0.5, le=10.0)
+    trend_ma: int = Field(default=50, ge=5, le=500)
+
+
+class VWAPCrossParams(BaseModel):
+    band_pct: float = Field(default=0.0, ge=0.0, le=0.10)
+
+
+class GridTradingParams(BaseModel):
+    grid_size: float = Field(default=0.02, ge=0.001, le=0.20)
+    num_levels: int = Field(default=5, ge=1, le=20)
+
+
+class WedgeCompressionParams(BaseModel):
+    atr_period: int = Field(default=14, ge=5, le=100)
+    compression_lookback: int = Field(default=20, ge=5, le=200)
+    compression_ratio: float = Field(default=0.5, ge=0.0, le=2.0)
+
+
+# ---------------------------------------------------------------------------
+# New mean reversion param models
+# ---------------------------------------------------------------------------
+
+class MeanReversionTrendParams(BaseModel):
+    ma_window: int = Field(default=50, ge=5, le=500)
+    z_threshold: float = Field(default=1.5, ge=0.5, le=5.0)
+    adx_period: int = Field(default=14, ge=5, le=100)
+    adx_threshold: float = Field(default=25.0, ge=10.0, le=60.0)
+
+
+class MeanReversionRangeParams(BaseModel):
+    bb_window: int = Field(default=20, ge=5, le=200)
+    bb_std: float = Field(default=2.0, ge=0.5, le=5.0)
+    adx_period: int = Field(default=14, ge=5, le=100)
+    adx_max: float = Field(default=20.0, ge=5.0, le=50.0)
+
+
+class RevertingMarketParams(BaseModel):
+    rsi_period: int = Field(default=14, ge=2, le=100)
+    rsi_upper: float = Field(default=60.0, ge=50.0, le=90.0)
+    rsi_lower: float = Field(default=40.0, ge=10.0, le=50.0)
+    adx_period: int = Field(default=14, ge=5, le=100)
+    adx_max: float = Field(default=20.0, ge=5.0, le=50.0)
+
+
+# ---------------------------------------------------------------------------
+# New breakout param models
+# ---------------------------------------------------------------------------
+
+class RangeBreakoutParams(BaseModel):
+    lookback: int = Field(default=20, ge=5, le=252)
+
+
+class ORBParams(BaseModel):
+    opening_bars: int = Field(default=6, ge=1, le=120)
+
+
+# ---------------------------------------------------------------------------
+# New seasonal param model
+# ---------------------------------------------------------------------------
+
+class SeasonalParams(BaseModel):
+    sell_month: int = Field(default=5, ge=1, le=12)
+    buy_month: int = Field(default=11, ge=1, le=12)
+
+
+# ---------------------------------------------------------------------------
+# Request / Response models
+# ---------------------------------------------------------------------------
 
 class BacktestRequest(BaseModel):
     asset_id: Optional[int] = None

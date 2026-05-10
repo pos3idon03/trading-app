@@ -6,7 +6,7 @@ import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal.market_data_dal import get_ohlcv
-from dtos.simulation_dto import CalibratedModelParams, JumpParams, VasicekParams
+from dtos.simulation_dto import CalibratedModelParams, JumpCI, JumpParams, VasicekParams
 from features.quantitative_engine.jump_diffusion import estimate_jump_params
 from features.quantitative_engine.vasicek import calibrate_vasicek
 from utils.logging import get_logger
@@ -14,11 +14,11 @@ from utils.time_utils import utcnow
 
 logger = get_logger(__name__)
 
-DEFAULT_CALIBRATION_YEARS = 2
+DEFAULT_CALIBRATION_YEARS = 10
 
 
-def _default_start() -> datetime:
-    return utcnow() - timedelta(days=DEFAULT_CALIBRATION_YEARS * 365)
+def _default_start(years: int = DEFAULT_CALIBRATION_YEARS) -> datetime:
+    return utcnow() - timedelta(days=years * 365)
 
 
 async def calibrate_model_for_asset(
@@ -27,9 +27,10 @@ async def calibrate_model_for_asset(
     timeframe: str = "1d",
     start: Optional[datetime] = None,
     end: Optional[datetime] = None,
+    calibration_years: Optional[int] = None,
 ) -> CalibratedModelParams:
     """Fetch stored OHLCV and fit Vasicek+Jump parameters."""
-    start = start or _default_start()
+    start = start or _default_start(calibration_years or DEFAULT_CALIBRATION_YEARS)
     end = end or utcnow()
 
     df = await get_ohlcv(session, asset_id, timeframe, start, end)
@@ -44,6 +45,10 @@ async def calibrate_model_for_asset(
     jump_raw = estimate_jump_params(log_returns, dt=dt)
 
     vasicek_dto = VasicekParams(k=vasicek_raw.k, theta=vasicek_raw.theta, sigma=vasicek_raw.sigma)
+
+    ci_up = JumpCI(**vars(jump_raw.ci_up)) if jump_raw.ci_up else None
+    ci_down = JumpCI(**vars(jump_raw.ci_down)) if jump_raw.ci_down else None
+
     jump_dto = JumpParams(
         lambda_up=jump_raw.lambda_up,
         lambda_down=jump_raw.lambda_down,
@@ -51,6 +56,8 @@ async def calibrate_model_for_asset(
         sigma_up=jump_raw.up.sigma,
         mu_down=jump_raw.down.mu,
         sigma_down=jump_raw.down.sigma,
+        ci_up=ci_up,
+        ci_down=ci_down,
     )
 
     logger.info(

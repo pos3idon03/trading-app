@@ -60,9 +60,10 @@ async def logging_middleware(request: Request, call_next) -> Response:
     return response
 
 
-from routes import ai_agents, backtest, data_ingestion, execution, live_trading, monte_carlo  # noqa: E402
+from routes import ai_agents, backtest, data_ingestion, execution, financials, live_trading, monte_carlo  # noqa: E402
 
 app.include_router(data_ingestion.router, prefix="/api/v1/data", tags=["Data Ingestion"])
+app.include_router(financials.router, prefix="/api/v1/financials", tags=["Financials"])
 app.include_router(monte_carlo.router, prefix="/api/v1/simulation", tags=["Simulation"])
 app.include_router(backtest.router, prefix="/api/v1/backtest", tags=["Backtesting"])
 app.include_router(ai_agents.router, prefix="/api/v1/agents", tags=["AI Agents"])

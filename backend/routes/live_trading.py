@@ -4,10 +4,11 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal import live_trading_dal
+from dal.market_data_dal import get_asset_id_by_symbol
 from db import get_db
 from dtos.live_trading_dto import (
     IndicatorSnapshotResponse,
@@ -112,14 +113,23 @@ async def get_indicators(
     timeframe: str = Query("1h", description="Timeframe for indicators"),
     session: AsyncSession = Depends(get_db),
 ):
+    symbol = symbol.upper()
+    asset_id = await get_asset_id_by_symbol(session, symbol)
+    if asset_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Asset '{symbol}' is not registered. Ingest it first via /ingest.",
+        )
+
     resampler = _get_resampler()
-    bars = resampler.get_bars(symbol.upper(), timeframe)
+    bars = resampler.get_bars(symbol, timeframe)
 
     if bars:
-        snapshot = compute_indicators(bars, symbol.upper(), timeframe)
+        snapshot = compute_indicators(bars, symbol, timeframe)
         if snapshot is not None:
             await live_trading_dal.create_indicator(
                 session,
+                asset_id=asset_id,
                 symbol=snapshot.symbol,
                 timeframe=snapshot.timeframe,
                 rsi=snapshot.rsi,
@@ -133,6 +143,7 @@ async def get_indicators(
                 close_price=snapshot.close_price,
             )
             return IndicatorSnapshotResponse(
+                asset_id=asset_id,
                 symbol=snapshot.symbol,
                 timeframe=snapshot.timeframe,
                 close_price=snapshot.close_price,
@@ -147,9 +158,10 @@ async def get_indicators(
                 bb_percent=snapshot.bb_percent,
             )
 
-    stored = await live_trading_dal.get_latest_indicator(session, symbol.upper(), timeframe)
+    stored = await live_trading_dal.get_latest_indicator(session, symbol, timeframe)
     if stored:
         return IndicatorSnapshotResponse(
+            asset_id=stored.asset_id,
             symbol=stored.symbol,
             timeframe=stored.timeframe,
             close_price=stored.close_price or 0.0,
@@ -165,7 +177,8 @@ async def get_indicators(
         )
 
     return IndicatorSnapshotResponse(
-        symbol=symbol.upper(),
+        asset_id=asset_id,
+        symbol=symbol,
         timeframe=timeframe,
         close_price=0.0,
     )
@@ -227,6 +240,7 @@ async def _broadcast_ws(data: dict) -> None:
 def _signal_to_response(sig) -> TradingSignalResponse:
     return TradingSignalResponse(
         id=sig.id,
+        asset_id=sig.asset_id,
         symbol=sig.symbol,
         timeframe=sig.timeframe,
         action=sig.action,

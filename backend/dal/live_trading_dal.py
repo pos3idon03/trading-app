@@ -14,6 +14,7 @@ async def create_indicator(
     session: AsyncSession,
     symbol: str,
     timeframe: str,
+    asset_id: int | None = None,
     rsi: float | None = None,
     macd: float | None = None,
     macd_signal: float | None = None,
@@ -27,6 +28,7 @@ async def create_indicator(
     raw_data: dict | None = None,
 ) -> int:
     record = LiveIndicator(
+        asset_id=asset_id,
         symbol=symbol,
         timeframe=timeframe,
         rsi=rsi,
@@ -68,12 +70,14 @@ async def create_signal(
     technical_score: float,
     risk_score: float,
     ai_score: float,
+    asset_id: int | None = None,
     reasoning: str | None = None,
     indicator_snapshot: dict | None = None,
     risk_data: dict | None = None,
     ai_signal: dict | None = None,
 ) -> int:
     record = TradingSignal(
+        asset_id=asset_id,
         symbol=symbol,
         timeframe=timeframe,
         action=action,

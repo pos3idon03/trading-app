@@ -43,7 +43,7 @@ export default function Dashboard() {
       const result = await dataApi.triggerIngestion({
         symbols,
         timeframes: DEFAULT_TIMEFRAMES,
-        provider: 'polygon',
+        provider: 'yfinance',
       });
       setIngestResult(result);
       await fetchStatus();

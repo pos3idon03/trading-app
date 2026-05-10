@@ -1,6 +1,7 @@
 import { BrowserRouter, Link, NavLink, Route, Routes } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import OHLCVChart from './pages/OHLCVChart';
+import FinancialsPage from './pages/FinancialsPage';
 import MonteCarloPage from './pages/MonteCarloPage';
 import BacktestPage from './pages/BacktestPage';
 import AgentAnalysisPage from './pages/AgentAnalysisPage';
@@ -36,6 +37,7 @@ export default function App() {
             <nav className="flex items-center gap-1">
               <NavItem to="/" label="Dashboard" />
               <NavItem to="/ohlcv" label="Price Data" />
+              <NavItem to="/financials" label="Financials" />
               <NavItem to="/simulation" label="Simulation" />
               <NavItem to="/backtest" label="Backtest" />
               <NavItem to="/agents" label="AI Agents" />
@@ -49,6 +51,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/ohlcv" element={<OHLCVChart />} />
+            <Route path="/financials" element={<FinancialsPage />} />
             <Route path="/simulation" element={<MonteCarloPage />} />
             <Route path="/backtest" element={<BacktestPage />} />
             <Route path="/agents" element={<AgentAnalysisPage />} />

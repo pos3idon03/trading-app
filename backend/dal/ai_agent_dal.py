@@ -13,8 +13,9 @@ async def create_analysis(
     session: AsyncSession,
     symbol: str,
     llm: str,
+    asset_id: int | None = None,
 ) -> int:
-    record = AgentAnalysis(symbol=symbol, llm=llm, status="running")
+    record = AgentAnalysis(symbol=symbol, llm=llm, status="running", asset_id=asset_id)
     session.add(record)
     await session.flush()
     return record.id

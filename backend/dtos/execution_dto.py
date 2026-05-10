@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class OrderResponse(BaseModel):
     id: int
+    asset_id: Optional[int] = None
     symbol: str
     side: str
     qty: float
@@ -68,6 +69,7 @@ class RiskConfigUpdateRequest(BaseModel):
 
 class RiskEventResponse(BaseModel):
     id: int
+    asset_id: Optional[int] = None
     event_type: str
     severity: str
     symbol: Optional[str] = None

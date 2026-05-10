@@ -17,11 +17,13 @@ async def create_order(
     side: str,
     qty: float,
     order_type: str = "market",
+    asset_id: int | None = None,
     limit_price: float | None = None,
     stop_price: float | None = None,
     signal_id: int | None = None,
 ) -> int:
     record = Order(
+        asset_id=asset_id,
         symbol=symbol,
         side=side,
         qty=qty,
@@ -97,9 +99,11 @@ async def create_risk_event(
     description: str,
     severity: str = "warning",
     symbol: str | None = None,
+    asset_id: int | None = None,
     details: dict | None = None,
 ) -> int:
     record = RiskEvent(
+        asset_id=asset_id,
         event_type=event_type,
         severity=severity,
         symbol=symbol,

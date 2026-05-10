@@ -5,7 +5,12 @@ import type {
   AssetListResponse,
   BacktestRequest,
   BacktestResponse,
+  CompanyProfile,
+  DeleteAssetResponse,
   ExecutionStatusResponse,
+  FinancialStatement,
+  FinancialsIngestResponse,
+  FundamentalsOverview,
   IndicatorSnapshotResponse,
   IngestRequest,
   IngestResponse,
@@ -65,6 +70,9 @@ export const dataApi = {
     api
       .get<TickerSearchResponse>('/data/tickers/search', { params: { query, limit } })
       .then((r) => r.data),
+
+  deleteAsset: (symbol: string) =>
+    api.delete<DeleteAssetResponse>(`/data/assets/${symbol}`).then((r) => r.data),
 };
 
 export const simulationApi = {
@@ -128,6 +136,26 @@ export const liveApi = {
         params: { symbol, limit },
       })
       .then((r) => r.data),
+};
+
+export const financialsApi = {
+  getOverview: (symbol: string) =>
+    api.get<FundamentalsOverview>(`/financials/${symbol}/overview`).then((r) => r.data),
+
+  getIncomeStatement: (symbol: string) =>
+    api.get<FinancialStatement>(`/financials/${symbol}/income-statement`).then((r) => r.data),
+
+  getBalanceSheet: (symbol: string) =>
+    api.get<FinancialStatement>(`/financials/${symbol}/balance-sheet`).then((r) => r.data),
+
+  getCashFlow: (symbol: string) =>
+    api.get<FinancialStatement>(`/financials/${symbol}/cash-flow`).then((r) => r.data),
+
+  getProfile: (symbol: string) =>
+    api.get<CompanyProfile>(`/financials/${symbol}/profile`).then((r) => r.data),
+
+  ingest: (symbol: string) =>
+    api.post<FinancialsIngestResponse>(`/financials/${symbol}/ingest`).then((r) => r.data),
 };
 
 export const executionApi = {

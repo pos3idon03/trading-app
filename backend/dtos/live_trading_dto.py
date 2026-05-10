@@ -22,6 +22,7 @@ class StreamStatusResponse(BaseModel):
 
 
 class IndicatorSnapshotResponse(BaseModel):
+    asset_id: Optional[int] = None
     symbol: str
     timeframe: str
     close_price: float
@@ -39,6 +40,7 @@ class IndicatorSnapshotResponse(BaseModel):
 
 class TradingSignalResponse(BaseModel):
     id: int
+    asset_id: Optional[int] = None
     symbol: str
     timeframe: str
     action: str

@@ -4,8 +4,10 @@ SDE: dS_t = k(theta - S_t)dt + sigma*dW_t + dJ_d(t) + dJ_u(t)
 """
 import time
 from dataclasses import dataclass
+from typing import List, Tuple
 
 import numpy as np
+from scipy.stats import gaussian_kde, norm
 
 from features.quantitative_engine.jump_diffusion import JumpParams, compound_poisson_process
 from features.quantitative_engine.vasicek import VasicekParams
@@ -27,6 +29,15 @@ class SimulationStats:
     p95: float
     prob_positive_return: float
     mean_max_drawdown: float
+
+
+@dataclass
+class DistributionData:
+    """Decomposed return distribution for charting."""
+    histogram: List[Tuple[float, float]]       # (bin_midpoint, density)
+    mr_density: List[Tuple[float, float]]      # mean-reverting (normal) component
+    jump_up_density: List[Tuple[float, float]] # positive jump component
+    jump_down_density: List[Tuple[float, float]]  # negative jump component
 
 
 @dataclass
@@ -105,6 +116,63 @@ def extract_percentile_paths(paths: np.ndarray) -> dict:
         idx = int(np.argmin(np.abs(terminal - thresh)))
         result[str(pct)] = paths[:, idx].tolist()
     return result
+
+
+def _kde_points(data: np.ndarray, x_grid: np.ndarray) -> List[Tuple[float, float]]:
+    """Evaluate a Gaussian KDE on x_grid. Returns [(x, density), ...]."""
+    if len(data) < 2:
+        return [(float(x), 0.0) for x in x_grid]
+    kde = gaussian_kde(data)
+    return [(float(x), float(y)) for x, y in zip(x_grid, kde(x_grid))]
+
+
+def compute_return_distribution(
+    paths: np.ndarray,
+    vasicek: VasicekParams,
+    jump_params: JumpParams,
+    n_bins: int = 60,
+) -> DistributionData:
+    """Build decomposed log-return distribution from simulated paths.
+
+    Returns histogram of MC log-returns plus three density curves:
+    mean-reverting (normal) component, negative-jump component, positive-jump component.
+    """
+    # Flatten all step-to-step log-returns from every path
+    positive_paths = np.where(paths > 0, paths, np.nan)
+    log_returns = np.diff(np.log(positive_paths), axis=0).flatten()
+    log_returns = log_returns[np.isfinite(log_returns)]
+
+    counts, edges = np.histogram(log_returns, bins=n_bins, density=True)
+    midpoints = 0.5 * (edges[:-1] + edges[1:])
+    histogram = [(float(m), float(c)) for m, c in zip(midpoints, counts)]
+
+    x_min, x_max = float(edges[0]), float(edges[-1])
+    x_grid = np.linspace(x_min, x_max, 200)
+
+    # Mean-reverting component: normal distribution centred on drift
+    mr_sigma = vasicek.sigma
+    mr_densities = [(float(x), float(norm.pdf(x, loc=0.0, scale=mr_sigma))) for x in x_grid]
+
+    # Jump component densities via KDE on classified tails (|z| > 3 of log_returns)
+    mu_lr = float(np.mean(log_returns))
+    std_lr = float(np.std(log_returns))
+    if std_lr > 0:
+        z = (log_returns - mu_lr) / std_lr
+        up_jumps = log_returns[z > 3.0]
+        down_jumps = log_returns[z < -3.0]
+    else:
+        up_jumps = np.array([])
+        down_jumps = np.array([])
+
+    jump_up_density = _kde_points(up_jumps, x_grid)
+    jump_down_density = _kde_points(down_jumps, x_grid)
+
+    return DistributionData(
+        histogram=histogram,
+        mr_density=mr_densities,
+        jump_up_density=jump_up_density,
+        jump_down_density=jump_down_density,
+    )
 
 
 def run_simulation(

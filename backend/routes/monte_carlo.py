@@ -8,12 +8,14 @@ from db import get_db
 from dtos.simulation_dto import (
     CalibrationRequest,
     CalibrationResponse,
+    DistributionPoint,
+    ReturnDistribution,
     SimulationRequest,
     SimulationResponse,
     SimulationStats,
 )
 from features.quantitative_engine.calibration_service import calibrate_model_for_asset
-from features.quantitative_engine.monte_carlo import run_simulation
+from features.quantitative_engine.monte_carlo import compute_return_distribution, run_simulation
 from features.quantitative_engine.vasicek import VasicekParams as VasicekInternal
 from features.quantitative_engine.jump_diffusion import JumpParams as JumpInternal, JumpDistParams
 from utils.logging import get_logger
@@ -62,7 +64,10 @@ async def run_monte_carlo(
     if request.use_stored_params:
         try:
             calibrated = await calibrate_model_for_asset(
-                session, asset_id=asset_id, timeframe=request.timeframe
+                session,
+                asset_id=asset_id,
+                timeframe=request.timeframe,
+                calibration_years=request.calibration_years,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
@@ -103,6 +108,10 @@ async def run_monte_carlo(
             duration_ms=int(result.duration_ms),
         )
 
+        return_dist = None
+        if request.include_distribution:
+            return_dist = _build_return_distribution(result.paths, vasicek, jumps)
+
         return SimulationResponse(
             simulation_id=sim_id,
             asset_id=asset_id,
@@ -111,6 +120,7 @@ async def run_monte_carlo(
             stats=SimulationStats(**_stats_to_dict(stats)),
             percentile_paths=result.percentile_paths,
             duration_ms=int(result.duration_ms),
+            return_distribution=return_dist,
         )
     except Exception as exc:
         logger.error("simulation_run_error", sim_id=sim_id, error=str(exc))
@@ -172,6 +182,17 @@ def _timeframe_to_dt(timeframe: str) -> float:
                "30m": 30/252/390, "1h": 1/252/6.5, "4h": 4/252/6.5,
                "1d": 1/252, "1w": 1/52}
     return mapping.get(timeframe, 1/252)
+
+
+def _build_return_distribution(paths, vasicek, jumps) -> ReturnDistribution:
+    """Convert internal DistributionData into the API DTO."""
+    dist = compute_return_distribution(paths, vasicek, jumps)
+    return ReturnDistribution(
+        histogram=[DistributionPoint(x=x, density=d) for x, d in dist.histogram],
+        mr_density=[DistributionPoint(x=x, density=d) for x, d in dist.mr_density],
+        jump_up_density=[DistributionPoint(x=x, density=d) for x, d in dist.jump_up_density],
+        jump_down_density=[DistributionPoint(x=x, density=d) for x, d in dist.jump_down_density],
+    )
 
 
 async def _resolve_asset_id(

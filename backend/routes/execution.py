@@ -165,6 +165,7 @@ async def get_risk_events(
         events=[
             RiskEventResponse(
                 id=e.id,
+                asset_id=e.asset_id,
                 event_type=e.event_type,
                 severity=e.severity,
                 symbol=e.symbol,
@@ -195,6 +196,7 @@ def _build_status_response(session) -> ExecutionStatusResponse:
 def _order_to_response(order) -> OrderResponse:
     return OrderResponse(
         id=order.id,
+        asset_id=order.asset_id,
         symbol=order.symbol,
         side=order.side,
         qty=order.qty,

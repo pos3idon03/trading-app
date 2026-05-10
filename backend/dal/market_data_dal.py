@@ -1,5 +1,5 @@
 """DAL for OHLCV and fundamental market data."""
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import pandas as pd
@@ -7,22 +7,26 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dtos.market_data_dto import FundamentalRecord, OHLCVRecord
-from models.market_data import OHLCV, Fundamental
+from models.market_data import OHLCV, CompanyProfile, Fundamental
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 async def bulk_insert_ohlcv(session: AsyncSession, records: list[OHLCVRecord]) -> int:
-    """High-performance bulk insert using PostgreSQL COPY protocol via psycopg2.
+    """High-performance bulk insert using PostgreSQL COPY protocol via asyncpg.
 
-    Falls back to ORM upsert when raw connection is unavailable.
+    The COPY call is wrapped in a savepoint so that any failure (e.g. a
+    duplicate-key violation) only rolls back to the savepoint and leaves the
+    outer transaction alive. The ORM upsert fallback can then execute cleanly
+    on the same session.
     """
     if not records:
         return 0
 
     try:
-        return await _copy_insert_ohlcv(session, records)
+        async with session.begin_nested():
+            return await _copy_insert_ohlcv(session, records)
     except Exception as exc:
         logger.warning("copy_insert_failed_fallback", error=str(exc))
         return await _orm_upsert_ohlcv(session, records)
@@ -105,23 +109,41 @@ async def get_ohlcv(
             "timeframe": timeframe, "start": start, "end": end,
         })
     else:
-        stmt = (
-            select(OHLCV)
-            .where(OHLCV.asset_id == asset_id)
-            .where(OHLCV.timeframe == timeframe)
-            .where(OHLCV.time >= start)
-            .where(OHLCV.time <= end)
-            .order_by(OHLCV.time.asc())
-        )
-        result = await session.execute(stmt)
-        rows = result.scalars().all()
-        return pd.DataFrame([{
-            "time": r.time, "open": r.open, "high": r.high,
-            "low": r.low, "close": r.close, "volume": r.volume,
-            "vwap": r.vwap, "source": r.source,
-        } for r in rows])
+        # DISTINCT ON (time) ensures one row per timestamp when the same
+        # (time, asset_id, timeframe) exists under multiple sources (e.g.
+        # polygon + yfinance). ORDER BY time ASC, source ASC picks 'polygon'
+        # before 'yfinance' as the preferred source.
+        query = text("""
+            SELECT DISTINCT ON (time)
+                time, open, high, low, close, volume, vwap, source
+            FROM ohlcv
+            WHERE asset_id = :asset_id
+              AND timeframe = :timeframe
+              AND time >= :start
+              AND time <= :end
+            ORDER BY time ASC, source ASC
+        """)
+        result = await session.execute(query, {
+            "asset_id": asset_id, "timeframe": timeframe,
+            "start": start, "end": end,
+        })
 
-    return pd.DataFrame(result.mappings().all())
+        df = pd.DataFrame(list(result.mappings().all()))
+        return _sanitize_nan(df)
+
+    df = pd.DataFrame(result.mappings().all())
+    return _sanitize_nan(df)
+
+
+def _sanitize_nan(df: pd.DataFrame) -> pd.DataFrame:
+    """Replace NaN/Inf float values with Python None so they are JSON-serializable.
+
+    Converts to object dtype so that None is preserved as a Python object
+    rather than being coerced back to np.nan by float columns.
+    """
+    if df.empty:
+        return df
+    return df.astype(object).where(df.notna(), other=None)
 
 
 async def get_latest_timestamp(
@@ -158,6 +180,87 @@ async def bulk_insert_fundamentals(session: AsyncSession, records: list[Fundamen
     return result.rowcount
 
 
+async def get_fundamentals(session: AsyncSession, asset_id: int) -> list[dict]:
+    """Return the latest value for each scalar fundamental metric (non-statement rows)."""
+    query = text("""
+        SELECT DISTINCT ON (metric_name)
+            metric_name, value, time AS fetched_at
+        FROM fundamentals
+        WHERE asset_id = :asset_id
+          AND metric_name NOT LIKE 'income_stmt.%'
+          AND metric_name NOT LIKE 'balance_sheet.%'
+          AND metric_name NOT LIKE 'cashflow.%'
+        ORDER BY metric_name, time DESC
+    """)
+    result = await session.execute(query, {"asset_id": asset_id})
+    return [dict(r) for r in result.mappings().all()]
+
+
+async def get_financial_statements(
+    session: AsyncSession,
+    asset_id: int,
+    statement_type: str,
+) -> list[dict]:
+    """Return rows for a specific statement type, latest value per metric+period."""
+    prefix = f"{statement_type}.%"
+    query = text("""
+        SELECT DISTINCT ON (metric_name, period)
+            metric_name, value, period
+        FROM fundamentals
+        WHERE asset_id = :asset_id
+          AND metric_name LIKE :prefix
+          AND period IS NOT NULL
+        ORDER BY metric_name, period DESC, time DESC
+    """)
+    result = await session.execute(query, {"asset_id": asset_id, "prefix": prefix})
+    return [dict(r) for r in result.mappings().all()]
+
+
+async def get_company_profile(session: AsyncSession, asset_id: int) -> Optional[dict]:
+    """Return the company profile for an asset, or None if not yet ingested."""
+    stmt = select(CompanyProfile).where(CompanyProfile.asset_id == asset_id)
+    result = await session.execute(stmt)
+    row = result.scalars().first()
+    if row is None:
+        return None
+    return {
+        "sector": row.sector,
+        "industry": row.industry,
+        "business_summary": row.business_summary,
+        "website": row.website,
+        "country": row.country,
+        "employees": row.employees,
+        "officers": row.officers or [],
+        "source": row.source,
+        "fetched_at": row.fetched_at,
+    }
+
+
+async def upsert_company_profile(session: AsyncSession, asset_id: int, data: dict) -> None:
+    """Insert or replace the company profile for an asset."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    stmt = pg_insert(CompanyProfile).values(
+        asset_id=asset_id,
+        sector=data.get("sector"),
+        industry=data.get("industry"),
+        business_summary=data.get("business_summary"),
+        website=data.get("website"),
+        country=data.get("country"),
+        employees=data.get("employees"),
+        officers=data.get("officers", []),
+        source=data.get("source", "yfinance"),
+        fetched_at=datetime.now(timezone.utc),
+    )
+    update_cols = {
+        c: stmt.excluded[c]
+        for c in ["sector", "industry", "business_summary", "website",
+                  "country", "employees", "officers", "source", "fetched_at"]
+    }
+    stmt = stmt.on_conflict_do_update(index_elements=["asset_id"], set_=update_cols)
+    await session.execute(stmt)
+
+
 async def list_assets(session: AsyncSession) -> list[dict]:
     """Return all assets ordered by symbol."""
     from models.asset import Asset
@@ -190,9 +293,38 @@ async def upsert_asset(session: AsyncSession, symbol: str, **kwargs) -> int:
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from models.asset import Asset
 
+    symbol = symbol.upper()
     stmt = pg_insert(Asset).values(symbol=symbol, **kwargs)
     stmt = stmt.on_conflict_do_update(index_elements=["symbol"], set_=kwargs)
     result = await session.execute(stmt)
     await session.flush()
     asset_id = await get_asset_id_by_symbol(session, symbol)
+    return asset_id
+
+
+async def delete_asset(session: AsyncSession, symbol: str) -> bool:
+    """Delete an asset and all its associated data (cascades to OHLCV, fundamentals, profiles).
+
+    Returns True if a row was deleted, False if the symbol did not exist.
+    """
+    from sqlalchemy import delete as sql_delete
+    from models.asset import Asset
+
+    stmt = sql_delete(Asset).where(Asset.symbol == symbol.upper())
+    result = await session.execute(stmt)
+    return result.rowcount > 0
+
+
+async def require_asset_id(session: AsyncSession, symbol: str) -> int:
+    """Return the asset id for an existing symbol.
+
+    Raises ValueError if the symbol is not registered in the assets table.
+    Only the data ingestion pipeline should create new assets via upsert_asset.
+    """
+    asset_id = await get_asset_id_by_symbol(session, symbol)
+    if asset_id is None:
+        raise ValueError(
+            f"Asset '{symbol.upper()}' is not registered. "
+            "Ingest it first via the /ingest endpoint."
+        )
     return asset_id

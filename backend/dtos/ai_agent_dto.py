@@ -1,11 +1,16 @@
 """DTOs for the AI Agent analysis endpoints."""
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AgentAnalysisRequest(BaseModel):
     symbol: str = Field(..., description="Asset ticker symbol, e.g. AAPL")
+
+    @field_validator("symbol")
+    @classmethod
+    def uppercase_symbol(cls, v: str) -> str:
+        return v.strip().upper()
     llm: str = Field(
         default="gpt-4o-mini",
         description=(
@@ -38,6 +43,7 @@ class TradingSignal(BaseModel):
 
 class AgentAnalysisResponse(BaseModel):
     analysis_id: int
+    asset_id: Optional[int] = None
     symbol: str
     status: str
     signal: Optional[TradingSignal] = None

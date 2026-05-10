@@ -50,6 +50,12 @@ export interface IngestResponse {
   message: string;
 }
 
+export interface DeleteAssetResponse {
+  symbol: string;
+  deleted: boolean;
+  message: string;
+}
+
 export interface IngestionStatusResponse {
   status: string;
   last_run?: string;
@@ -75,6 +81,20 @@ export interface SimulationRequest {
   num_paths?: number;
   horizon_steps?: number;
   use_stored_params?: boolean;
+  include_distribution?: boolean;
+  calibration_years?: number;
+}
+
+export interface DistributionPoint {
+  x: number;
+  density: number;
+}
+
+export interface ReturnDistribution {
+  histogram: DistributionPoint[];
+  mr_density: DistributionPoint[];
+  jump_up_density: DistributionPoint[];
+  jump_down_density: DistributionPoint[];
 }
 
 export interface SimulationResponse {
@@ -85,6 +105,7 @@ export interface SimulationResponse {
   stats?: SimulationStats;
   percentile_paths?: Record<string, number[]>;
   duration_ms?: number;
+  return_distribution?: ReturnDistribution;
 }
 
 export interface BacktestRequest {
@@ -314,6 +335,55 @@ export interface ExecutionStatusResponse {
   subscribed_symbols: string[];
   recent_orders?: number;
   portfolio?: PortfolioResponse;
+}
+
+// ── Financials ────────────────────────────────────────────────────────────────
+
+export interface FundamentalsOverview {
+  symbol: string;
+  asset_id: number;
+  metrics: Record<string, number>;
+  fetched_at: string | null;
+}
+
+export interface FinancialStatementRow {
+  metric: string;
+  values: Record<string, number>;
+}
+
+export interface FinancialStatement {
+  symbol: string;
+  asset_id: number;
+  statement_type: string;
+  periods: string[];
+  rows: FinancialStatementRow[];
+}
+
+export interface CompanyOfficer {
+  name: string;
+  title: string;
+  age?: number;
+  totalPay?: number;
+}
+
+export interface CompanyProfile {
+  symbol: string;
+  asset_id: number;
+  sector: string | null;
+  industry: string | null;
+  business_summary: string | null;
+  website: string | null;
+  country: string | null;
+  employees: number | null;
+  officers: CompanyOfficer[] | null;
+  fetched_at: string | null;
+}
+
+export interface FinancialsIngestResponse {
+  symbol: string;
+  fundamentals_inserted: number;
+  profile_updated: boolean;
+  status: string;
 }
 
 export interface BacktestMetrics {

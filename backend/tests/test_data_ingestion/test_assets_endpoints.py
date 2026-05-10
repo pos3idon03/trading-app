@@ -1,7 +1,9 @@
 """Tests for assets listing and symbol-based OHLCV endpoints."""
+import math
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -258,3 +260,294 @@ class TestGetOHLCVBySymbolRoute:
 
         assert response.status_code == 404
         assert "No OHLCV data found" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_default_start_is_epoch(self):
+        """When no start param is given, the route must query from 1970-01-01 (not 2020)."""
+        from fastapi.testclient import TestClient
+        from fastapi import FastAPI
+        from routes.data_ingestion import router
+
+        app = FastAPI()
+        app.include_router(router)
+        df = _make_ohlcv_df()
+        mock_get_ohlcv = AsyncMock(return_value=df)
+
+        with patch("routes.data_ingestion.get_asset_id_by_symbol", new=AsyncMock(return_value=1)), \
+             patch("routes.data_ingestion.get_ohlcv", new=mock_get_ohlcv), \
+             patch("routes.data_ingestion.get_db"):
+            client = TestClient(app)
+            client.get("/ohlcv/by-symbol/AAPL?timeframe=1d")
+
+        _args, kwargs = mock_get_ohlcv.call_args
+        # signature: get_ohlcv(session, asset_id, timeframe, start, end, ...)
+        start_used = kwargs.get("start") if "start" in kwargs else _args[3]
+        assert start_used == datetime(1970, 1, 1, tzinfo=timezone.utc), (
+            f"Expected epoch start 1970-01-01, got {start_used}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_default_start_is_epoch_asset_id_route(self):
+        """When no start param is given on the asset_id route, query starts from 1970-01-01."""
+        from fastapi.testclient import TestClient
+        from fastapi import FastAPI
+        from routes.data_ingestion import router
+
+        app = FastAPI()
+        app.include_router(router)
+        df = _make_ohlcv_df()
+        mock_get_ohlcv = AsyncMock(return_value=df)
+
+        with patch("routes.data_ingestion.get_ohlcv", new=mock_get_ohlcv), \
+             patch("routes.data_ingestion.get_db"):
+            client = TestClient(app)
+            client.get("/ohlcv/1?timeframe=1d")
+
+        _args, kwargs = mock_get_ohlcv.call_args
+        # signature: get_ohlcv(session, asset_id, timeframe, start, end, ...)
+        start_used = kwargs.get("start") if "start" in kwargs else _args[3]
+        assert start_used == datetime(1970, 1, 1, tzinfo=timezone.utc), (
+            f"Expected epoch start 1970-01-01, got {start_used}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# NaN / Inf sanitization
+# ---------------------------------------------------------------------------
+
+def _make_ohlcv_df_with_nan(n: int = 3) -> pd.DataFrame:
+    base = datetime(2023, 1, 1, tzinfo=timezone.utc)
+    times = [base.replace(day=i + 1) for i in range(n)]
+    return pd.DataFrame({
+        "time": times,
+        "open": [100.0] * n,
+        "high": [105.0] * n,
+        "low": [95.0] * n,
+        "close": [102.0] * n,
+        "volume": [1_000_000] * n,
+        "vwap": [float("nan")] * n,
+        "source": ["yfinance"] * n,
+    })
+
+
+class TestNaNSanitization:
+    """Verify NaN values do not reach JSON serialization."""
+
+    def test_nan_to_none_helper_converts_nan(self):
+        from routes.data_ingestion import _nan_to_none
+
+        assert _nan_to_none(float("nan")) is None
+
+    def test_nan_to_none_helper_converts_inf(self):
+        from routes.data_ingestion import _nan_to_none
+
+        assert _nan_to_none(float("inf")) is None
+        assert _nan_to_none(float("-inf")) is None
+
+    def test_nan_to_none_helper_passes_valid_float(self):
+        from routes.data_ingestion import _nan_to_none
+
+        assert _nan_to_none(3.14) == 3.14
+
+    def test_nan_to_none_helper_passes_none(self):
+        from routes.data_ingestion import _nan_to_none
+
+        assert _nan_to_none(None) is None
+
+    def test_build_ohlcv_records_nan_vwap_becomes_none(self):
+        from routes.data_ingestion import _build_ohlcv_records
+
+        df = _make_ohlcv_df_with_nan(n=2)
+        records = _build_ohlcv_records(df, asset_id=1, timeframe="1d")
+
+        assert len(records) == 2
+        for rec in records:
+            assert rec.vwap is None
+
+    @pytest.mark.asyncio
+    async def test_endpoint_returns_200_with_nan_vwap(self):
+        """Route must return HTTP 200 (no 500) when vwap contains NaN."""
+        from fastapi.testclient import TestClient
+        from fastapi import FastAPI
+        from routes.data_ingestion import router
+
+        app = FastAPI()
+        app.include_router(router)
+        df = _make_ohlcv_df_with_nan(n=3)
+
+        with patch("routes.data_ingestion.get_asset_id_by_symbol", new=AsyncMock(return_value=3)), \
+             patch("routes.data_ingestion.get_ohlcv", new=AsyncMock(return_value=df)), \
+             patch("routes.data_ingestion.get_db"):
+            client = TestClient(app)
+            response = client.get("/ohlcv/by-symbol/MSFT?timeframe=1d")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["count"] == 3
+        for record in body["records"]:
+            assert record["vwap"] is None
+
+    def test_sanitize_nan_in_dal(self):
+        """_sanitize_nan should replace NaN with None in all float columns."""
+        from dal.market_data_dal import _sanitize_nan
+
+        df = pd.DataFrame({
+            "time": [datetime(2023, 1, 1, tzinfo=timezone.utc)],
+            "open": [100.0],
+            "vwap": [float("nan")],
+        })
+        result = _sanitize_nan(df)
+        assert result["vwap"].iloc[0] is None
+
+    def test_sanitize_nan_passes_valid_values(self):
+        """_sanitize_nan should leave non-NaN values unchanged."""
+        from dal.market_data_dal import _sanitize_nan
+
+        df = pd.DataFrame({
+            "time": [datetime(2023, 1, 1, tzinfo=timezone.utc)],
+            "open": [100.0],
+            "vwap": [101.5],
+        })
+        result = _sanitize_nan(df)
+        assert result["vwap"].iloc[0] == 101.5
+
+    def test_ohlcv_record_dto_coerces_nan_vwap_to_none(self):
+        """OHLCVRecord should coerce NaN vwap to None (not raise)."""
+        from dtos.market_data_dto import OHLCVRecord
+
+        rec = OHLCVRecord(
+            time=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            asset_id=1,
+            timeframe="1d",
+            open=100.0,
+            high=105.0,
+            low=95.0,
+            close=102.0,
+            volume=1000,
+            vwap=float("nan"),
+            source="yfinance",
+        )
+        assert rec.vwap is None
+
+    def test_ohlcv_record_dto_rejects_nan_price(self):
+        """OHLCVRecord should raise ValueError when a required price field is NaN."""
+        import pydantic
+
+        from dtos.market_data_dto import OHLCVRecord
+
+        with pytest.raises((ValueError, pydantic.ValidationError)):
+            OHLCVRecord(
+                time=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                asset_id=1,
+                timeframe="1d",
+                open=float("nan"),
+                high=105.0,
+                low=95.0,
+                close=102.0,
+                volume=1000,
+                source="yfinance",
+            )
+
+
+# ---------------------------------------------------------------------------
+# DAL: delete_asset
+# ---------------------------------------------------------------------------
+
+class TestDeleteAssetDAL:
+    @pytest.mark.asyncio
+    async def test_returns_true_when_asset_exists(self):
+        """delete_asset should return True when the DELETE affects one row."""
+        from dal.market_data_dal import delete_asset
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.rowcount = 1
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await delete_asset(mock_session, "AAPL")
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_asset_not_found(self):
+        """delete_asset should return False when no rows are affected."""
+        from dal.market_data_dal import delete_asset
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.rowcount = 0
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await delete_asset(mock_session, "UNKNOWN")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_uppercases_symbol(self):
+        """delete_asset should normalise the symbol to uppercase."""
+        from dal.market_data_dal import delete_asset
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.rowcount = 1
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        result = await delete_asset(mock_session, "aapl")
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# Route: DELETE /assets/{symbol}
+# ---------------------------------------------------------------------------
+
+class TestDeleteAssetRoute:
+    @pytest.mark.asyncio
+    async def test_delete_existing_asset_returns_200(self):
+        """DELETE /assets/{symbol} should return 200 and deleted=True for an existing asset."""
+        from httpx import AsyncClient, ASGITransport
+        from main import app
+
+        with (
+            patch("routes.data_ingestion.delete_asset", new_callable=AsyncMock) as mock_del,
+            patch("db.get_db"),
+        ):
+            mock_del.return_value = True
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.delete("/data/assets/AAPL")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["deleted"] is True
+        assert body["symbol"] == "AAPL"
+        assert "deleted" in body["message"].lower() or "success" in body["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_delete_unknown_asset_returns_404(self):
+        """DELETE /assets/{symbol} should return 404 when the asset does not exist."""
+        from httpx import AsyncClient, ASGITransport
+        from main import app
+
+        with (
+            patch("routes.data_ingestion.delete_asset", new_callable=AsyncMock) as mock_del,
+            patch("db.get_db"),
+        ):
+            mock_del.return_value = False
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.delete("/data/assets/UNKNOWN")
+
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_normalises_symbol_to_uppercase(self):
+        """DELETE /assets/{symbol} should uppercase the symbol before passing it to the DAL."""
+        from httpx import AsyncClient, ASGITransport
+        from main import app
+
+        with (
+            patch("routes.data_ingestion.delete_asset", new_callable=AsyncMock) as mock_del,
+            patch("db.get_db"),
+        ):
+            mock_del.return_value = True
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.delete("/data/assets/msft")
+
+        assert resp.status_code == 200
+        assert resp.json()["symbol"] == "MSFT"

@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 from typing import Optional
 
@@ -26,6 +27,23 @@ class OHLCVRecord(BaseModel):
         if v not in VALID_TIMEFRAMES:
             raise ValueError(f"Invalid timeframe '{v}'. Valid: {VALID_TIMEFRAMES}")
         return v
+
+    @field_validator("open", "high", "low", "close", mode="before")
+    @classmethod
+    def reject_non_finite_prices(cls, v: float) -> float:
+        if v is not None and (math.isnan(v) or math.isinf(v)):
+            raise ValueError(f"Price field contains non-finite value: {v}")
+        return v
+
+    @field_validator("vwap", mode="before")
+    @classmethod
+    def coerce_nan_vwap(cls, v: Optional[float]) -> Optional[float]:
+        if v is None:
+            return None
+        try:
+            return None if (math.isnan(v) or math.isinf(v)) else v
+        except (TypeError, ValueError):
+            return None
 
     @field_validator("high")
     @classmethod
@@ -60,7 +78,12 @@ class IngestRequest(BaseModel):
     timeframes: list[str] = Field(default=["1d"], description="Timeframes to ingest")
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
-    provider: str = Field(default="polygon", description="Data provider: polygon|alpaca|yfinance|fmp")
+    provider: str = Field(default="yfinance", description="Data provider: yfinance|polygon|alpaca|fmp")
+
+    @field_validator("symbols")
+    @classmethod
+    def uppercase_symbols(cls, v: list[str]) -> list[str]:
+        return [s.strip().upper() for s in v]
 
     @field_validator("timeframes")
     @classmethod
@@ -109,3 +132,51 @@ class TickerSearchResult(BaseModel):
 class TickerSearchResponse(BaseModel):
     results: list[TickerSearchResult]
     count: int
+
+
+# ── Financials ────────────────────────────────────────────────────────────────
+
+class FundamentalsOverviewResponse(BaseModel):
+    symbol: str
+    asset_id: int
+    metrics: dict[str, float]
+    fetched_at: Optional[datetime] = None
+
+
+class FinancialStatementRow(BaseModel):
+    metric: str
+    values: dict[str, float]
+
+
+class FinancialStatementResponse(BaseModel):
+    symbol: str
+    asset_id: int
+    statement_type: str
+    periods: list[str]
+    rows: list[FinancialStatementRow]
+
+
+class CompanyProfileResponse(BaseModel):
+    symbol: str
+    asset_id: int
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+    business_summary: Optional[str] = None
+    website: Optional[str] = None
+    country: Optional[str] = None
+    employees: Optional[int] = None
+    officers: Optional[list[dict]] = None
+    fetched_at: Optional[datetime] = None
+
+
+class FinancialsIngestResponse(BaseModel):
+    symbol: str
+    fundamentals_inserted: int
+    profile_updated: bool
+    status: str
+
+
+class DeleteAssetResponse(BaseModel):
+    symbol: str
+    deleted: bool
+    message: str

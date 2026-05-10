@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -10,6 +10,14 @@ class VasicekParams(BaseModel):
     sigma: float = Field(..., description="Volatility (diffusion coefficient)")
 
 
+class JumpCI(BaseModel):
+    """95% confidence intervals for a single jump component's log-normal parameters."""
+    mu_low: float
+    mu_high: float
+    sigma_low: float
+    sigma_high: float
+
+
 class JumpParams(BaseModel):
     lambda_up: float = Field(..., description="Poisson intensity for upward jumps")
     lambda_down: float = Field(..., description="Poisson intensity for downward jumps")
@@ -17,6 +25,8 @@ class JumpParams(BaseModel):
     sigma_up: float = Field(..., description="Std dev of upward jumps")
     mu_down: float = Field(..., description="Mean size of downward jumps")
     sigma_down: float = Field(..., description="Std dev of downward jumps")
+    ci_up: Optional[JumpCI] = Field(default=None, description="95% CI for upward jump parameters")
+    ci_down: Optional[JumpCI] = Field(default=None, description="95% CI for downward jump parameters")
 
 
 class CalibratedModelParams(BaseModel):
@@ -48,6 +58,8 @@ class SimulationRequest(BaseModel):
     horizon_steps: int = Field(default=252, ge=1, le=2520, description="Number of time steps forward")
     use_stored_params: bool = Field(default=True, description="Use previously calibrated params")
     custom_params: Optional[CalibratedModelParams] = None
+    include_distribution: bool = Field(default=False, description="Include return distribution data in response")
+    calibration_years: int = Field(default=10, ge=1, le=20, description="Years of historical data for calibration")
 
     @model_validator(mode="after")
     def require_asset_or_symbol(self) -> "SimulationRequest":
@@ -68,6 +80,20 @@ class SimulationStats(BaseModel):
     mean_max_drawdown: float
 
 
+class DistributionPoint(BaseModel):
+    """A single (x, density) point for a density curve or histogram bar."""
+    x: float
+    density: float
+
+
+class ReturnDistribution(BaseModel):
+    """Decomposed return distribution: histogram + three density curves."""
+    histogram: List[DistributionPoint]
+    mr_density: List[DistributionPoint]
+    jump_up_density: List[DistributionPoint]
+    jump_down_density: List[DistributionPoint]
+
+
 class SimulationResponse(BaseModel):
     simulation_id: int
     asset_id: int
@@ -76,3 +102,4 @@ class SimulationResponse(BaseModel):
     stats: Optional[SimulationStats] = None
     percentile_paths: Optional[dict] = None
     duration_ms: Optional[int] = None
+    return_distribution: Optional[ReturnDistribution] = None
