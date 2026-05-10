@@ -151,7 +151,7 @@ async def get_simulation_result(
 
 
 def _to_internal_vasicek(dto) -> VasicekInternal:
-    return VasicekInternal(k=dto.k, theta=dto.theta, sigma=dto.sigma)
+    return VasicekInternal(k=dto.k, theta=dto.theta, sigma=dto.sigma, mu=dto.mu)
 
 
 def _to_internal_jumps(dto) -> JumpInternal:
