@@ -6,8 +6,9 @@ from pydantic import BaseModel, Field, model_validator
 
 class VasicekParams(BaseModel):
     k: float = Field(..., description="Mean reversion speed")
-    theta: float = Field(..., description="Long-term mean level")
+    theta: float = Field(..., description="Long-term mean level (θ_0)")
     sigma: float = Field(..., description="Volatility (diffusion coefficient)")
+    mu: float = Field(default=0.0, description="Expected drift rate for dynamic theta: θ_t = θ_0 * exp(μ * t)")
 
 
 class JumpCI(BaseModel):

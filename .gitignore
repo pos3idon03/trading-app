@@ -16,6 +16,9 @@ build/
 .venv/
 venv/
 *.so
+.coverage
+htmlcov/
+coverage.xml
 
 # Node / Frontend
 node_modules/

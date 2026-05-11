@@ -16,9 +16,10 @@ MIN_OBSERVATIONS = 30
 
 @dataclass
 class VasicekParams:
-    k: float       # mean reversion speed
-    theta: float   # long-term mean
-    sigma: float   # diffusion coefficient
+    k: float            # mean reversion speed
+    theta: float        # long-term mean (θ_0 in dynamic mode)
+    sigma: float        # diffusion coefficient
+    mu: float = 0.0     # expected drift rate: θ_t = θ_0 * exp(μ * t); 0 = static theta
     r_squared: float = 0.0
 
 

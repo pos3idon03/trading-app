@@ -1,6 +1,11 @@
 """Vectorized Monte Carlo simulator using Euler-Maruyama discretization of Vasicek+Jump SDE.
 
-SDE: dS_t = k(theta - S_t)dt + sigma*dW_t + dJ_d(t) + dJ_u(t)
+SDE: dS_t = k(θ_t - S_t)dt + sigma*dW_t + dJ_d(t) + dJ_u(t)
+
+Where the long-term mean target follows a deterministic trend:
+    θ_t = θ_0 * exp(μ * t)
+
+Setting μ=0 (default) recovers the classic static-theta Vasicek model.
 """
 import time
 from dataclasses import dataclass
@@ -48,6 +53,11 @@ class SimulationResult:
     duration_ms: float
 
 
+def _dynamic_theta(theta0: float, mu: float, t: int, dt: float) -> float:
+    """Compute the dynamic mean reversion target: θ_t = θ_0 * exp(μ * t * dt)."""
+    return theta0 * np.exp(mu * t * dt)
+
+
 def simulate_paths(
     vasicek: VasicekParams,
     jump_params: JumpParams,
@@ -57,7 +67,11 @@ def simulate_paths(
     n_paths: int,
     seed: int | None = None,
 ) -> np.ndarray:
-    """Core Euler-Maruyama simulation. Returns array of shape (steps+1, n_paths)."""
+    """Core Euler-Maruyama simulation. Returns array of shape (steps+1, n_paths).
+
+    The drift uses a time-varying mean reversion target θ_t = θ_0 * exp(μ * t * dt).
+    When vasicek.mu == 0, θ_t = θ_0 (classic static Vasicek).
+    """
     if seed is not None:
         np.random.seed(seed)
 
@@ -69,7 +83,8 @@ def simulate_paths(
 
     for t in range(steps):
         s_t = paths[t]
-        drift = vasicek.k * (vasicek.theta - s_t) * dt
+        theta_t = _dynamic_theta(vasicek.theta, vasicek.mu, t, dt)
+        drift = vasicek.k * (theta_t - s_t) * dt
         diffusion = vasicek.sigma * dW[t]
         j_up = compound_poisson_process(jump_params.lambda_up, jump_params.up, n_paths, dt, sign=1.0)
         j_down = compound_poisson_process(jump_params.lambda_down, jump_params.down, n_paths, dt, sign=-1.0)
