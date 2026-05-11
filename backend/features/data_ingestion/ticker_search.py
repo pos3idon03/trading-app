@@ -1,56 +1,50 @@
-"""Ticker symbol search via Polygon reference API."""
-from config import get_settings
+"""Ticker symbol search via yfinance."""
+import asyncio
+from functools import partial
+
+import yfinance as yf
+
 from dtos.market_data_dto import TickerSearchResponse, TickerSearchResult
-from utils.api_client import fetch_json
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-POLYGON_BASE = "https://api.polygon.io"
-_POLYGON_TYPE_MAP = {
-    "CS": "stock",
+_QUOTE_TYPE_MAP = {
+    "EQUITY": "stock",
     "ETF": "etf",
-    "ADRC": "stock",
-    "ADRP": "stock",
-    "ADRR": "stock",
-    "UNIT": "other",
-    "RIGHT": "other",
-    "PFD": "stock",
-    "FUND": "etf",
-    "SP": "other",
-    "WARRANT": "other",
+    "MUTUALFUND": "etf",
+    "CRYPTOCURRENCY": "crypto",
+    "CURRENCY": "forex",
+    "INDEX": "index",
+    "FUTURE": "future",
+    "OPTION": "option",
 }
 
 
-def _map_asset_type(polygon_type: str | None) -> str:
-    return _POLYGON_TYPE_MAP.get(polygon_type or "", "stock")
+def _map_asset_type(quote_type: str | None) -> str:
+    return _QUOTE_TYPE_MAP.get((quote_type or "").upper(), "stock")
 
 
-def _parse_result(item: dict) -> TickerSearchResult:
+def _parse_quote(item: dict) -> TickerSearchResult:
+    name = item.get("longname") or item.get("shortname") or ""
     return TickerSearchResult(
-        symbol=item.get("ticker", ""),
-        name=item.get("name", ""),
-        asset_type=_map_asset_type(item.get("type")),
-        exchange=item.get("primary_exchange"),
+        symbol=item.get("symbol", ""),
+        name=name,
+        asset_type=_map_asset_type(item.get("typeDisp") or item.get("quoteType")),
+        exchange=item.get("exchange"),
     )
 
 
-async def search_tickers(query: str, limit: int = 10) -> TickerSearchResponse:
-    """Search tickers by name or symbol using Polygon reference API."""
-    api_key = get_settings().polygon_api_key
-    url = f"{POLYGON_BASE}/v3/reference/tickers"
-    params = {
-        "search": query,
-        "active": "true",
-        "market": "stocks",
-        "limit": min(limit, 50),
-        "apiKey": api_key,
-    }
+def _run_yfinance_search(query: str) -> list[dict]:
+    return yf.Search(query).quotes
 
+
+async def search_tickers(query: str, limit: int = 10) -> TickerSearchResponse:
+    """Search tickers by name or symbol using yfinance."""
     try:
-        data = await fetch_json(url, params=params)
-        items = data.get("results") or []
-        results = [_parse_result(item) for item in items]
+        loop = asyncio.get_running_loop()
+        quotes = await loop.run_in_executor(None, partial(_run_yfinance_search, query))
+        results = [_parse_quote(q) for q in (quotes or [])[:limit]]
         logger.info("ticker_search_completed", query=query, count=len(results))
         return TickerSearchResponse(results=results, count=len(results))
     except Exception as exc:

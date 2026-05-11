@@ -190,7 +190,7 @@ async def ticker_search(
     query: str = Query(..., min_length=2, description="Search query (name or symbol)"),
     limit: int = Query(default=10, ge=1, le=50, description="Maximum results to return"),
 ) -> TickerSearchResponse:
-    """Search for ticker symbols by name or symbol using Polygon reference API."""
+    """Search for ticker symbols by name or symbol using yfinance."""
     return await search_tickers(query=query, limit=limit)
 
 
