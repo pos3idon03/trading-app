@@ -35,6 +35,35 @@ async def _scheduled_ingest_job(symbols: list[str], timeframes: list[str], provi
             logger.error("scheduled_ingest_error", error=str(exc))
 
 
+async def _nightly_full_ingest() -> None:
+    """Midnight job: ingest daily prices for ALL assets stored in the database."""
+    from dal.market_data_dal import list_assets
+
+    async with AsyncSessionLocal() as session:
+        try:
+            assets = await list_assets(session)
+            active_symbols = [
+                a["symbol"] for a in assets if a.get("is_active", True)
+            ]
+
+            if not active_symbols:
+                logger.info("nightly_ingest_skipped", reason="no_active_assets")
+                return
+
+            logger.info("nightly_ingest_starting", asset_count=len(active_symbols))
+            request = IngestRequest(
+                symbols=active_symbols,
+                timeframes=["1d"],
+                provider="yfinance",
+            )
+            results = await run_ingest_job(session, request)
+            await session.commit()
+            logger.info("nightly_ingest_done", results=results)
+        except Exception as exc:
+            await session.rollback()
+            logger.error("nightly_ingest_error", error=str(exc))
+
+
 def register_default_jobs(scheduler: AsyncIOScheduler) -> None:
     """Register default ingestion schedules (configurable via env/API in later phases)."""
     default_symbols = ["AAPL", "MSFT", "SPY", "QQQ"]
@@ -57,6 +86,15 @@ def register_default_jobs(scheduler: AsyncIOScheduler) -> None:
         kwargs={"symbols": default_symbols, "timeframes": ["1d"], "provider": "yfinance"},
         replace_existing=True,
         misfire_grace_time=600,
+    )
+
+    scheduler.add_job(
+        _nightly_full_ingest,
+        CronTrigger(hour=0, minute=0),
+        id="ingest_nightly_all_assets",
+        name="Nightly full price ingestion (all DB assets)",
+        replace_existing=True,
+        misfire_grace_time=900,
     )
 
     logger.info("default_scheduler_jobs_registered", job_count=scheduler.get_jobs().__len__())

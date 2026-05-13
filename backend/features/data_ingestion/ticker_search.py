@@ -1,13 +1,16 @@
-"""Ticker symbol search via yfinance."""
+"""Ticker symbol search via Yahoo Finance search API."""
 import asyncio
 from functools import partial
 
-import yfinance as yf
+import requests
 
 from dtos.market_data_dto import TickerSearchResponse, TickerSearchResult
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+_YF_SEARCH_URL = "https://query1.finance.yahoo.com/v1/finance/search"
+_YF_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; trading-app/1.0)"}
 
 _QUOTE_TYPE_MAP = {
     "EQUITY": "stock",
@@ -35,16 +38,26 @@ def _parse_quote(item: dict) -> TickerSearchResult:
     )
 
 
-def _run_yfinance_search(query: str) -> list[dict]:
-    return yf.Search(query).quotes
+def _fetch_quotes(query: str, limit: int) -> list[dict]:
+    params = {
+        "q": query,
+        "quotesCount": min(limit, 50),
+        "newsCount": 0,
+        "enableFuzzyQuery": "false",
+        "region": "US",
+        "lang": "en-US",
+    }
+    response = requests.get(_YF_SEARCH_URL, params=params, headers=_YF_HEADERS, timeout=10.0)
+    response.raise_for_status()
+    return response.json().get("quotes") or []
 
 
 async def search_tickers(query: str, limit: int = 10) -> TickerSearchResponse:
-    """Search tickers by name or symbol using yfinance."""
+    """Search tickers by name or symbol using Yahoo Finance search API."""
     try:
         loop = asyncio.get_running_loop()
-        quotes = await loop.run_in_executor(None, partial(_run_yfinance_search, query))
-        results = [_parse_quote(q) for q in (quotes or [])[:limit]]
+        quotes = await loop.run_in_executor(None, partial(_fetch_quotes, query, limit))
+        results = [_parse_quote(q) for q in quotes[:limit]]
         logger.info("ticker_search_completed", query=query, count=len(results))
         return TickerSearchResponse(results=results, count=len(results))
     except Exception as exc:

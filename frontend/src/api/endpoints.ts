@@ -3,10 +3,15 @@ import type {
   AgentAnalysisRequest,
   AgentAnalysisResponse,
   AssetListResponse,
+  AttachBacktestRequest,
+  AutoTradingAssetRow,
   BacktestRequest,
   BacktestResponse,
+  ComboBacktestRequest,
   CompanyProfile,
+  CreateStrategyRequest,
   DeleteAssetResponse,
+  DetachBacktestRequest,
   ExecutionStatusResponse,
   FinancialStatement,
   FinancialsIngestResponse,
@@ -26,10 +31,15 @@ import type {
   SignalHistoryResponse,
   SimulationRequest,
   SimulationResponse,
+  StrategyFullResponse,
+  StrategyRecord,
+  StrategySignalsResponse,
   StreamStartRequest,
   StreamStatusResponse,
   TickerSearchResponse,
   TradingSignalItem,
+  UpdatePositionSizingRequest,
+  UpdateThresholdsRequest,
 } from './types';
 
 export const dataApi = {
@@ -100,6 +110,9 @@ export const backtestApi = {
 
   getOptimization: (optId: number) =>
     api.get<OptimizationResponse>(`/backtest/${optId}/optimization`).then((r) => r.data),
+
+  runCombo: (req: ComboBacktestRequest) =>
+    api.post<BacktestResponse>('/backtest/combo', req).then((r) => r.data),
 };
 
 export const agentApi = {
@@ -136,6 +149,13 @@ export const liveApi = {
         params: { symbol, limit },
       })
       .then((r) => r.data),
+
+  getStrategySignals: (symbol: string, timeframe = '1h') =>
+    api
+      .get<StrategySignalsResponse>(`/live/strategy-signals/${symbol}`, {
+        params: { timeframe },
+      })
+      .then((r) => r.data),
 };
 
 export const financialsApi = {
@@ -156,6 +176,40 @@ export const financialsApi = {
 
   ingest: (symbol: string) =>
     api.post<FinancialsIngestResponse>(`/financials/${symbol}/ingest`).then((r) => r.data),
+};
+
+export const strategyBuilderApi = {
+  create: (req: CreateStrategyRequest) =>
+    api.post<StrategyRecord>('/strategy-builder/create', req).then((r) => r.data),
+
+  list: () =>
+    api.get<StrategyRecord[]>('/strategy-builder/strategies').then((r) => r.data),
+
+  getFull: (strategyId: number) =>
+    api.get<StrategyFullResponse>(`/strategy-builder/${strategyId}/full`).then((r) => r.data),
+
+  updateThresholds: (strategyId: number, req: UpdateThresholdsRequest) =>
+    api.patch<StrategyRecord>(`/strategy-builder/${strategyId}/thresholds`, req).then((r) => r.data),
+
+  attachBacktest: (req: AttachBacktestRequest) =>
+    api.post<StrategyRecord>('/strategy-builder/attach-backtest', req).then((r) => r.data),
+
+  detachBacktest: (req: DetachBacktestRequest) =>
+    api.delete('/strategy-builder/detach-backtest', { data: req }).then((r) => r.data),
+
+  remove: (strategyId: number) =>
+    api.delete(`/strategy-builder/${strategyId}`).then((r) => r.data),
+};
+
+export const autoTradingApi = {
+  list: () =>
+    api.get<AutoTradingAssetRow[]>('/auto-trading/assets').then((r) => r.data),
+
+  start: (strategyId: number, req: UpdatePositionSizingRequest) =>
+    api.patch<AutoTradingAssetRow>(`/auto-trading/${strategyId}/start`, req).then((r) => r.data),
+
+  stop: (strategyId: number) =>
+    api.patch<AutoTradingAssetRow>(`/auto-trading/${strategyId}/stop`).then((r) => r.data),
 };
 
 export const executionApi = {

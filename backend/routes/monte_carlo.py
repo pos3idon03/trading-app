@@ -15,6 +15,7 @@ from dtos.simulation_dto import (
     SimulationStats,
 )
 from features.quantitative_engine.calibration_service import calibrate_model_for_asset
+from features.quantitative_engine.merton_jump_diffusion import MertonParams as MertonInternal, run_merton_simulation
 from features.quantitative_engine.monte_carlo import compute_return_distribution, run_simulation
 from features.quantitative_engine.vasicek import VasicekParams as VasicekInternal
 from features.quantitative_engine.jump_diffusion import JumpParams as JumpInternal, JumpDistParams
@@ -79,6 +80,8 @@ async def run_monte_carlo(
     dt = _timeframe_to_dt(request.timeframe)
     params_dict = calibrated.model_dump(mode="json")
 
+    s0 = calibrated.last_price
+
     sim_id = await create_simulation(
         session,
         asset_id=asset_id,
@@ -87,17 +90,23 @@ async def run_monte_carlo(
         num_paths=request.num_paths,
         horizon_steps=request.horizon_steps,
         dt=dt,
-        s0=0.0,
+        s0=s0,
         calibration_start=calibrated.calibration_start,
         calibration_end=calibrated.calibration_end,
     )
 
     try:
-        vasicek = _to_internal_vasicek(calibrated.vasicek)
         jumps = _to_internal_jumps(calibrated.jumps)
-        s0 = calibrated.vasicek.theta
 
-        result = run_simulation(vasicek, jumps, s0, dt, request.horizon_steps, request.num_paths)
+        if request.model_type == "merton":
+            if calibrated.merton is None:
+                raise HTTPException(status_code=422, detail="Merton params not available; re-run calibration")
+            merton = _to_internal_merton(calibrated.merton)
+            result = run_merton_simulation(merton, jumps, s0, dt, request.horizon_steps, request.num_paths)
+        else:
+            vasicek = _to_internal_vasicek(calibrated.vasicek)
+            result = run_simulation(vasicek, jumps, s0, dt, request.horizon_steps, request.num_paths)
+
         stats = result.stats
 
         await update_simulation_result(
@@ -110,7 +119,8 @@ async def run_monte_carlo(
 
         return_dist = None
         if request.include_distribution:
-            return_dist = _build_return_distribution(result.paths, vasicek, jumps)
+            vasicek_for_dist = _to_internal_vasicek(calibrated.vasicek)
+            return_dist = _build_return_distribution(result.paths, vasicek_for_dist, jumps)
 
         return SimulationResponse(
             simulation_id=sim_id,
@@ -152,6 +162,10 @@ async def get_simulation_result(
 
 def _to_internal_vasicek(dto) -> VasicekInternal:
     return VasicekInternal(k=dto.k, theta=dto.theta, sigma=dto.sigma, mu=dto.mu)
+
+
+def _to_internal_merton(dto) -> MertonInternal:
+    return MertonInternal(mu=dto.mu, sigma=dto.sigma)
 
 
 def _to_internal_jumps(dto) -> JumpInternal:

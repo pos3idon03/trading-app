@@ -23,6 +23,21 @@ class VasicekParams:
     r_squared: float = 0.0
 
 
+def estimate_drift_rate(prices: np.ndarray, dt: float) -> float:
+    """Estimate the annualized log-return drift rate mu from historical prices.
+
+    mu is the expected continuous growth rate (per year-fraction) used as the
+    dynamic theta trend: θ_t = θ_0 * exp(μ * t). Computed as the mean log-return
+    divided by the time step dt to annualise it.
+    """
+    prices = np.asarray(prices, dtype=float)
+    prices = prices[prices > 0]
+    if len(prices) < 2:
+        return 0.0
+    log_returns = np.diff(np.log(prices))
+    return float(np.mean(log_returns) / dt)
+
+
 def estimate_mean_reversion_params(prices: np.ndarray, dt: float = 1.0) -> VasicekParams:
     """Estimate Vasicek SDE parameters via OLS regression.
 
@@ -44,9 +59,16 @@ def estimate_mean_reversion_params(prices: np.ndarray, dt: float = 1.0) -> Vasic
 
     residuals = ds - (intercept + slope * s_t)
     sigma = float(np.std(residuals) / np.sqrt(dt))
+    mu = estimate_drift_rate(s, dt)
 
-    logger.info("vasicek_params_estimated", k=round(k, 6), theta=round(theta, 4), sigma=round(sigma, 6))
-    return VasicekParams(k=k, theta=theta, sigma=sigma, r_squared=r_value ** 2)
+    logger.info(
+        "vasicek_params_estimated",
+        k=round(k, 6),
+        theta=round(theta, 4),
+        sigma=round(sigma, 6),
+        mu=round(mu, 6),
+    )
+    return VasicekParams(k=k, theta=theta, sigma=sigma, mu=mu, r_squared=r_value ** 2)
 
 
 def _compute_log_returns(prices: np.ndarray) -> np.ndarray:

@@ -65,6 +65,7 @@ export default function MonteCarloPage() {
   const [numPaths, setNumPaths] = useState(1000);
   const [horizonSteps, setHorizonSteps] = useState(252);
   const [calibrationYears, setCalibrationYears] = useState(10);
+  const [modelType, setModelType] = useState<'vasicek' | 'merton'>('merton');
   const [showDistribution, setShowDistribution] = useState(false);
   const [result, setResult] = useState<SimulationResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -91,6 +92,7 @@ export default function MonteCarloPage() {
         use_stored_params: true,
         include_distribution: showDistribution,
         calibration_years: calibrationYears,
+        model_type: modelType,
       });
       setResult(resp);
     } catch (err) {
@@ -117,7 +119,9 @@ export default function MonteCarloPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-100">Monte Carlo Simulation</h1>
         <p className="text-slate-400 text-sm mt-1">
-          Vasicek + Jump Diffusion model &mdash; simulate future price paths
+          {modelType === 'merton'
+            ? 'Merton Jump-Diffusion (GBM + jumps) — equity-style trending paths'
+            : 'Vasicek + Jump Diffusion (mean-reverting) — spreads & rates'}
         </p>
       </div>
 
@@ -126,6 +130,19 @@ export default function MonteCarloPage() {
       <div className="card">
         <h2 className="text-slate-200 font-semibold mb-4">Configuration</h2>
         <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <label className="metric-label block mb-1">Model</label>
+            <select
+              className="bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500"
+              value={modelType}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                setModelType(e.target.value as 'vasicek' | 'merton')
+              }
+            >
+              <option value="merton">Merton Jump-Diffusion</option>
+              <option value="vasicek">Vasicek + Jump</option>
+            </select>
+          </div>
           <div>
             <label className="metric-label block mb-1">Ticker</label>
             <select
@@ -293,7 +310,7 @@ export default function MonteCarloPage() {
                   />
                   <Legend wrapperStyle={{ fontSize: 12, color: '#94a3b8' }} />
                   <Bar dataKey="histogram" name="Historical log-returns" fill="#3b82f6" fillOpacity={0.5} />
-                  <Line type="monotone" dataKey="mr" name="Mean-reverting process" stroke="#ef4444" strokeWidth={2} dot={false} connectNulls />
+                  <Line type="monotone" dataKey="mr" name={modelType === 'merton' ? 'GBM diffusion component' : 'Mean-reverting process'} stroke="#ef4444" strokeWidth={2} dot={false} connectNulls />
                   <Line type="monotone" dataKey="jumpDown" name="Negative jumps dist." stroke="#22c55e" strokeWidth={1.5} dot={false} connectNulls />
                   <Line type="monotone" dataKey="jumpUp" name="Positive jumps dist." stroke="#d946ef" strokeWidth={1.5} dot={false} connectNulls />
                 </ComposedChart>

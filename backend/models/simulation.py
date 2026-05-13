@@ -70,6 +70,7 @@ class BacktestResult(Base):
     num_trades: Mapped[int | None] = mapped_column(Integer)
     equity_curve: Mapped[dict | None] = mapped_column(JSONB)
     trade_log: Mapped[dict | None] = mapped_column(JSONB)
+    buy_hold_curve: Mapped[dict | None] = mapped_column(JSONB)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     error_message: Mapped[str | None] = mapped_column(Text)

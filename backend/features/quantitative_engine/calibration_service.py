@@ -6,9 +6,9 @@ import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal.market_data_dal import get_ohlcv
-from dtos.simulation_dto import CalibratedModelParams, JumpCI, JumpParams, VasicekParams
+from dtos.simulation_dto import CalibratedModelParams, JumpCI, JumpParams, MertonParams, VasicekParams
 from features.quantitative_engine.jump_diffusion import estimate_jump_params
-from features.quantitative_engine.vasicek import calibrate_vasicek
+from features.quantitative_engine.vasicek import calibrate_vasicek, estimate_drift_rate
 from utils.logging import get_logger
 from utils.time_utils import utcnow
 
@@ -29,7 +29,11 @@ async def calibrate_model_for_asset(
     end: Optional[datetime] = None,
     calibration_years: Optional[int] = None,
 ) -> CalibratedModelParams:
-    """Fetch stored OHLCV and fit Vasicek+Jump parameters."""
+    """Fetch stored OHLCV and fit both Vasicek+Jump and Merton+Jump parameters.
+
+    Both model parameter sets are always computed from the same price series so
+    that the caller can dispatch on model_type without a second DB round-trip.
+    """
     start = start or _default_start(calibration_years or DEFAULT_CALIBRATION_YEARS)
     end = end or utcnow()
 
@@ -44,7 +48,8 @@ async def calibrate_model_for_asset(
     vasicek_raw = calibrate_vasicek(prices, dt=dt)
     jump_raw = estimate_jump_params(log_returns, dt=dt)
 
-    vasicek_dto = VasicekParams(k=vasicek_raw.k, theta=vasicek_raw.theta, sigma=vasicek_raw.sigma)
+    vasicek_dto = VasicekParams(k=vasicek_raw.k, theta=vasicek_raw.theta, sigma=vasicek_raw.sigma, mu=vasicek_raw.mu)
+    merton_dto = _calibrate_merton_params(log_returns, dt)
 
     ci_up = JumpCI(**vars(jump_raw.ci_up)) if jump_raw.ci_up else None
     ci_down = JumpCI(**vars(jump_raw.ci_down)) if jump_raw.ci_down else None
@@ -65,7 +70,9 @@ async def calibrate_model_for_asset(
         asset_id=asset_id,
         timeframe=timeframe,
         n_obs=len(prices),
-        k=round(vasicek_raw.k, 6),
+        vasicek_k=round(vasicek_raw.k, 6),
+        merton_mu=round(merton_dto.mu, 6),
+        merton_sigma=round(merton_dto.sigma, 6),
     )
     return CalibratedModelParams(
         vasicek=vasicek_dto,
@@ -73,7 +80,20 @@ async def calibrate_model_for_asset(
         calibration_start=start,
         calibration_end=end,
         num_observations=len(prices),
+        last_price=float(prices[-1]),
+        merton=merton_dto,
     )
+
+
+def _calibrate_merton_params(log_returns: np.ndarray, dt: float) -> MertonParams:
+    """Estimate Merton GBM parameters from log-returns.
+
+    mu    = annualized mean log-return = mean(r) / dt
+    sigma = annualized volatility      = std(r)  / sqrt(dt)
+    """
+    mu = float(np.mean(log_returns) / dt)
+    sigma = float(np.std(log_returns) / np.sqrt(dt))
+    return MertonParams(mu=mu, sigma=sigma)
 
 
 def _timeframe_to_dt(timeframe: str) -> float:

@@ -30,6 +30,7 @@ Return your synthesis as a valid JSON object:
   "conviction_score": <float 0.0-1.0>,
   "fundamental_summary": "<one sentence>",
   "macro_summary": "<one sentence>",
+  "macro_score": <float -1.0 to 1.0>,
   "sentiment_score": <float -1.0 to 1.0>,
   "reasoning": "<3-5 sentence synthesis>",
   "key_risk": "<single biggest risk to the thesis>",
@@ -39,5 +40,6 @@ Return your synthesis as a valid JSON object:
 
 MANAGER_TASK_EXPECTED_OUTPUT = """
 A valid JSON trading signal object with fields: asset, bias, conviction_score (0-1),
-fundamental_summary, macro_summary, sentiment_score (-1 to 1), reasoning, key_risk, timestamp.
+fundamental_summary, macro_summary, macro_score (-1 to 1), sentiment_score (-1 to 1),
+reasoning, key_risk, timestamp.
 """

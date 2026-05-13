@@ -93,6 +93,7 @@ async def update_backtest_result(
     equity_curve: list,
     trade_log: list,
     duration_ms: int,
+    buy_hold_curve: Optional[list] = None,
     status: str = "done",
     error_message: Optional[str] = None,
 ) -> None:
@@ -104,6 +105,7 @@ async def update_backtest_result(
             setattr(bt, key, value)
     bt.equity_curve = equity_curve
     bt.trade_log = trade_log
+    bt.buy_hold_curve = buy_hold_curve
     bt.duration_ms = duration_ms
     bt.status = status
     bt.error_message = error_message

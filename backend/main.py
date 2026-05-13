@@ -18,7 +18,18 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("startup", env=settings.app_env)
+
+    if settings.enable_scheduler:
+        from features.data_ingestion.scheduler import start_scheduler, stop_scheduler
+        start_scheduler()
+        logger.info("scheduler_enabled")
+
     yield
+
+    if settings.enable_scheduler:
+        from features.data_ingestion.scheduler import stop_scheduler
+        stop_scheduler()
+
     from features.live_trading.websocket_stream import get_stream
     await get_stream().stop()
     logger.info("shutdown")
@@ -60,7 +71,7 @@ async def logging_middleware(request: Request, call_next) -> Response:
     return response
 
 
-from routes import ai_agents, backtest, data_ingestion, execution, financials, live_trading, monte_carlo  # noqa: E402
+from routes import ai_agents, auto_trading, backtest, data_ingestion, execution, financials, live_trading, monte_carlo, strategy_builder  # noqa: E402
 
 app.include_router(data_ingestion.router, prefix="/api/v1/data", tags=["Data Ingestion"])
 app.include_router(financials.router, prefix="/api/v1/financials", tags=["Financials"])
@@ -69,6 +80,8 @@ app.include_router(backtest.router, prefix="/api/v1/backtest", tags=["Backtestin
 app.include_router(ai_agents.router, prefix="/api/v1/agents", tags=["AI Agents"])
 app.include_router(live_trading.router, prefix="/api/v1/live", tags=["Live Trading"])
 app.include_router(execution.router, prefix="/api/v1/execution", tags=["Execution"])
+app.include_router(strategy_builder.router, prefix="/api/v1/strategy-builder", tags=["Strategy Builder"])
+app.include_router(auto_trading.router, prefix="/api/v1/auto-trading", tags=["Auto-Trading"])
 
 
 @app.get("/health", tags=["Health"])

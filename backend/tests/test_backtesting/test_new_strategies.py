@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from features.backtesting.strategies import (
+    aroon_signals,
     atr_trailing_stop_signals,
     build_signal_array,
     ema_cross_signals,
@@ -21,6 +22,7 @@ from features.backtesting.strategies import (
     seasonal_signals,
     sma_break_signals,
     sma_cross_signals,
+    stoch_rsi_signals,
     vwap_cross_signals,
     wedge_compression_signals,
 )
@@ -483,6 +485,8 @@ class TestBuildSignalArrayNewStrategies:
         ("range_breakout", {"lookback": 10}),
         ("orb", {"opening_bars": 5}),
         ("seasonal", {"buy_month": 11, "sell_month": 5}),
+        ("aroon", {"period": 26, "threshold": 50.0}),
+        ("stoch_rsi", {"rsi_period": 14, "stoch_period": 14, "smooth_k": 3, "smooth_d": 3}),
     ])
     def test_dispatch_returns_valid_signal_pair(self, ohlcv_df, strategy, params):
         entries, exits = build_signal_array(ohlcv_df, strategy, params)
@@ -495,3 +499,77 @@ class TestBuildSignalArrayNewStrategies:
     def test_unknown_strategy_still_raises(self, ohlcv_df):
         with pytest.raises(ValueError, match="Unknown strategy"):
             build_signal_array(ohlcv_df, "made_up_strategy", {})
+
+
+# ---------------------------------------------------------------------------
+# Aroon 52 strategy tests
+# ---------------------------------------------------------------------------
+
+class TestAroonSignals:
+    def test_returns_correct_shape(self, ohlcv_df):
+        entries, exits = aroon_signals(ohlcv_df)
+        _assert_signal_pair(entries, exits, ohlcv_df)
+
+    def test_default_period_52(self, ohlcv_df):
+        entries, exits = aroon_signals(ohlcv_df, period=52)
+        _assert_signal_pair(entries, exits, ohlcv_df)
+
+    def test_custom_period_and_threshold(self, ohlcv_df):
+        entries, exits = aroon_signals(ohlcv_df, period=26, threshold=70.0)
+        _assert_signal_pair(entries, exits, ohlcv_df)
+
+    def test_no_simultaneous_entry_and_exit(self, ohlcv_df):
+        entries, exits = aroon_signals(ohlcv_df)
+        assert not (entries & exits).any()
+
+    def test_high_threshold_reduces_entries(self, ohlcv_df):
+        e_low, _ = aroon_signals(ohlcv_df, threshold=0.0)
+        e_high, _ = aroon_signals(ohlcv_df, threshold=90.0)
+        assert e_low.sum() >= e_high.sum()
+
+    def test_dispatch_via_build_signal_array(self, ohlcv_df):
+        entries, exits = build_signal_array(ohlcv_df, "aroon", {"period": 52})
+        _assert_signal_pair(entries, exits, ohlcv_df)
+
+    def test_default_params_via_build_signal_array(self, ohlcv_df):
+        entries, exits = build_signal_array(ohlcv_df, "aroon", {})
+        _assert_signal_pair(entries, exits, ohlcv_df)
+
+
+# ---------------------------------------------------------------------------
+# Stochastic RSI strategy tests
+# ---------------------------------------------------------------------------
+
+class TestStochRSISignals:
+    def test_returns_correct_shape(self, ohlcv_df):
+        entries, exits = stoch_rsi_signals(ohlcv_df)
+        _assert_signal_pair(entries, exits, ohlcv_df)
+
+    def test_custom_periods(self, ohlcv_df):
+        entries, exits = stoch_rsi_signals(ohlcv_df, rsi_period=10, stoch_period=10)
+        _assert_signal_pair(entries, exits, ohlcv_df)
+
+    def test_custom_thresholds(self, ohlcv_df):
+        entries, exits = stoch_rsi_signals(ohlcv_df, overbought=0.9, oversold=0.1)
+        _assert_signal_pair(entries, exits, ohlcv_df)
+
+    def test_no_simultaneous_entry_and_exit(self, ohlcv_df):
+        entries, exits = stoch_rsi_signals(ohlcv_df)
+        assert not (entries & exits).any()
+
+    def test_tight_thresholds_reduce_signals(self, ohlcv_df):
+        e_wide, x_wide = stoch_rsi_signals(ohlcv_df, overbought=0.6, oversold=0.4)
+        e_tight, x_tight = stoch_rsi_signals(ohlcv_df, overbought=0.95, oversold=0.05)
+        assert e_wide.sum() >= e_tight.sum()
+        assert x_wide.sum() >= x_tight.sum()
+
+    def test_dispatch_via_build_signal_array(self, ohlcv_df):
+        entries, exits = build_signal_array(
+            ohlcv_df, "stoch_rsi",
+            {"rsi_period": 14, "stoch_period": 14, "smooth_k": 3, "smooth_d": 3},
+        )
+        _assert_signal_pair(entries, exits, ohlcv_df)
+
+    def test_default_params_via_build_signal_array(self, ohlcv_df):
+        entries, exits = build_signal_array(ohlcv_df, "stoch_rsi", {})
+        _assert_signal_pair(entries, exits, ohlcv_df)

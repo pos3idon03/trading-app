@@ -66,3 +66,17 @@ class LiveDataUpdate(BaseModel):
     symbol: str
     data: dict
     timestamp: datetime
+
+
+class StrategySignalItem(BaseModel):
+    strategy: str
+    label: str
+    group: str
+    signal: str  # BUY | SELL | NEUTRAL
+
+
+class StrategySignalsResponse(BaseModel):
+    symbol: str
+    timeframe: str
+    bar_count: int
+    strategies: list[StrategySignalItem]

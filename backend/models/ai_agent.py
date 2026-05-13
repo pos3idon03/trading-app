@@ -24,6 +24,7 @@ class AgentAnalysis(Base):
     sentiment_report: Mapped[str | None] = mapped_column(Text)
     bias: Mapped[str | None] = mapped_column(String)
     conviction_score: Mapped[float | None] = mapped_column(Double)
+    macro_score: Mapped[float | None] = mapped_column(Double)
     sentiment_score: Mapped[float | None] = mapped_column(Double)
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")

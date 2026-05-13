@@ -28,6 +28,7 @@ class TestParseSignal:
             "conviction_score": 0.82,
             "fundamental_summary": "Strong revenue growth with improving margins.",
             "macro_summary": "Fed pausing; supportive rate environment.",
+            "macro_score": 0.55,
             "sentiment_score": 0.6,
             "reasoning": "Multiple catalysts align for a bullish thesis on AAPL.",
             "key_risk": "Regulatory scrutiny in EU may pressure margins.",
@@ -41,24 +42,27 @@ class TestParseSignal:
         assert signal.bias == "bullish"
         assert signal.conviction_score == pytest.approx(0.82)
         assert signal.sentiment_score == pytest.approx(0.6)
+        assert signal.macro_score == pytest.approx(0.55)
 
     def test_falls_back_to_default_on_malformed_output(self):
         signal = _parse_signal("No JSON here at all.", "AAPL")
         assert signal.asset == "AAPL"
         assert signal.bias == "neutral"
         assert signal.conviction_score == 0.0
+        assert signal.macro_score == 0.0
 
     def test_parses_signal_embedded_in_prose(self):
         output = (
             "After careful analysis here is my recommendation:\n"
             '{"asset": "MSFT", "bias": "bearish", "conviction_score": 0.7, '
             '"fundamental_summary": "Slowing cloud", "macro_summary": "Rate pressure", '
-            '"sentiment_score": -0.4, "reasoning": "Bears have edge.", "key_risk": "AI competition.", '
-            '"timestamp": "2024-05-09T00:00:00Z"}'
+            '"macro_score": -0.35, "sentiment_score": -0.4, "reasoning": "Bears have edge.", '
+            '"key_risk": "AI competition.", "timestamp": "2024-05-09T00:00:00Z"}'
         )
         signal = _parse_signal(output, "MSFT")
         assert signal.bias == "bearish"
         assert signal.asset == "MSFT"
+        assert signal.macro_score == pytest.approx(-0.35)
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +78,7 @@ class TestSignalFromDict:
             "conviction_score": 0.9,
             "fundamental_summary": "AI tailwind.",
             "macro_summary": "Supportive rates.",
+            "macro_score": 0.55,
             "sentiment_score": 0.75,
             "reasoning": "Strong AI demand drives upside.",
             "key_risk": "Supply chain concentration.",
@@ -84,6 +89,7 @@ class TestSignalFromDict:
         signal = _signal_from_dict(self._base_dict(), "NVDA")
         assert isinstance(signal, TradingSignal)
         assert signal.conviction_score == pytest.approx(0.9)
+        assert signal.macro_score == pytest.approx(0.55)
         assert signal.reasoning == "Strong AI demand drives upside."
 
     def test_handles_missing_optional_fields_with_defaults(self):
@@ -92,6 +98,17 @@ class TestSignalFromDict:
         assert signal.asset == "TEST"
         assert signal.bias == "neutral"
         assert signal.conviction_score == pytest.approx(0.5)
+        assert signal.macro_score == pytest.approx(0.0)
+
+    def test_parses_negative_macro_score(self):
+        data = {**self._base_dict(), "macro_score": -0.75}
+        signal = _signal_from_dict(data, "NVDA")
+        assert signal.macro_score == pytest.approx(-0.75)
+
+    def test_parses_zero_macro_score_without_falsy_bug(self):
+        data = {**self._base_dict(), "macro_score": 0.0}
+        signal = _signal_from_dict(data, "NVDA")
+        assert signal.macro_score == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +121,7 @@ class TestDefaultSignal:
         signal = _default_signal("AAPL", "raw output text")
         assert signal.bias == "neutral"
         assert signal.conviction_score == 0.0
+        assert signal.macro_score == 0.0
         assert signal.asset == "AAPL"
 
     def test_includes_raw_output_in_reasoning(self):
@@ -124,6 +142,7 @@ class TestRunAnalysisCrew:
             "conviction_score": 0.78,
             "fundamental_summary": "Solid balance sheet.",
             "macro_summary": "Supportive macro.",
+            "macro_score": 0.45,
             "sentiment_score": 0.5,
             "reasoning": "Multiple positive signals.",
             "key_risk": "Valuation stretch.",

@@ -1,8 +1,7 @@
-"""Tests verifying that the live indicator endpoint validates asset existence."""
+"""Tests verifying live indicator endpoint asset validation and graceful fallback."""
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from main import app
@@ -10,27 +9,116 @@ from main import app
 client = TestClient(app)
 
 
+def _make_bars(n: int = 35) -> list:
+    """Return a minimal list of mock OHLCV bars sufficient for indicator calculation."""
+    bar = MagicMock()
+    bar.open = 150.0
+    bar.high = 155.0
+    bar.low = 148.0
+    bar.close = 152.0
+    bar.volume = 1_000_000
+    return [bar] * n
+
+
 # ---------------------------------------------------------------------------
-# GET /indicators/{symbol}: requires asset to be registered
+# GET /indicators/{symbol}: 404 path (no bars + unregistered asset)
 # ---------------------------------------------------------------------------
 
 class TestIndicatorsAssetValidation:
-    def test_unknown_asset_returns_404(self):
+    def test_unknown_asset_no_bars_returns_404(self):
         with (
-            patch("routes.live_trading.get_asset_id_by_symbol", new=AsyncMock(return_value=None)),
-            patch("routes.live_trading.get_db"),
+            patch("routes.live_trading._get_resampler") as mock_res,
+            patch(
+                "routes.live_trading.get_asset_id_by_symbol",
+                new=AsyncMock(return_value=None),
+            ),
         ):
+            mock_res.return_value.get_bars.return_value = []
             response = client.get("/api/v1/live/indicators/FAKE?timeframe=1h")
 
         assert response.status_code == 404
         assert "not registered" in response.json()["detail"].lower()
 
+    def test_unknown_asset_with_live_bars_returns_200(self):
+        """Graceful fallback: bars are present but asset is not in DB yet."""
+        with (
+            patch("routes.live_trading._get_resampler") as mock_res,
+            patch(
+                "routes.live_trading.get_asset_id_by_symbol",
+                new=AsyncMock(return_value=None),
+            ),
+            patch("routes.live_trading.compute_indicators") as mock_compute,
+            patch("routes.live_trading.live_trading_dal") as mock_dal,
+        ):
+            mock_res.return_value.get_bars.return_value = _make_bars()
+            snapshot = MagicMock()
+            snapshot.symbol = "AAPL"
+            snapshot.timeframe = "1h"
+            snapshot.close_price = 152.0
+            snapshot.rsi = 55.0
+            snapshot.macd = 0.5
+            snapshot.macd_signal = 0.3
+            snapshot.macd_histogram = 0.2
+            snapshot.bb_upper = 160.0
+            snapshot.bb_middle = 152.0
+            snapshot.bb_lower = 144.0
+            snapshot.vwap = 151.0
+            snapshot.bb_percent = 0.5
+            mock_compute.return_value = snapshot
+            mock_dal.create_indicator = AsyncMock()
+
+            response = client.get("/api/v1/live/indicators/AAPL?timeframe=1h")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["symbol"] == "AAPL"
+        assert data["close_price"] == 152.0
+        assert data["asset_id"] is None
+        mock_dal.create_indicator.assert_not_awaited()
+
+    def test_known_asset_with_live_bars_persists_and_returns(self):
+        """When asset IS registered and bars exist, indicator is persisted to DB."""
+        with (
+            patch("routes.live_trading._get_resampler") as mock_res,
+            patch(
+                "routes.live_trading.get_asset_id_by_symbol",
+                new=AsyncMock(return_value=7),
+            ),
+            patch("routes.live_trading.compute_indicators") as mock_compute,
+            patch("routes.live_trading.live_trading_dal") as mock_dal,
+        ):
+            mock_res.return_value.get_bars.return_value = _make_bars()
+            snapshot = MagicMock()
+            snapshot.symbol = "AAPL"
+            snapshot.timeframe = "1h"
+            snapshot.close_price = 152.0
+            snapshot.rsi = 55.0
+            snapshot.macd = 0.5
+            snapshot.macd_signal = 0.3
+            snapshot.macd_histogram = 0.2
+            snapshot.bb_upper = 160.0
+            snapshot.bb_middle = 152.0
+            snapshot.bb_lower = 144.0
+            snapshot.vwap = 151.0
+            snapshot.bb_percent = 0.5
+            mock_compute.return_value = snapshot
+            mock_dal.create_indicator = AsyncMock()
+
+            response = client.get("/api/v1/live/indicators/AAPL?timeframe=1h")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["asset_id"] == 7
+        mock_dal.create_indicator.assert_awaited_once()
+
     def test_known_asset_with_no_bars_returns_empty_snapshot(self):
         with (
-            patch("routes.live_trading.get_asset_id_by_symbol", new=AsyncMock(return_value=1)),
+            patch(
+                "routes.live_trading.get_asset_id_by_symbol",
+                new=AsyncMock(return_value=1),
+            ),
             patch("routes.live_trading._get_resampler") as mock_res,
             patch("routes.live_trading.live_trading_dal") as mock_dal,
-            patch("routes.live_trading.get_db"),
         ):
             mock_res.return_value.get_bars.return_value = []
             mock_dal.get_latest_indicator = AsyncMock(return_value=None)
@@ -43,7 +131,7 @@ class TestIndicatorsAssetValidation:
         assert data["asset_id"] == 1
         assert data["close_price"] == 0.0
 
-    def test_symbol_is_uppercased_for_lookup(self):
+    def test_symbol_is_uppercased_in_db_path(self):
         looked_up = {}
 
         async def capture_lookup(session, symbol):
@@ -51,9 +139,13 @@ class TestIndicatorsAssetValidation:
             return None
 
         with (
-            patch("routes.live_trading.get_asset_id_by_symbol", side_effect=capture_lookup),
-            patch("routes.live_trading.get_db"),
+            patch("routes.live_trading._get_resampler") as mock_res,
+            patch(
+                "routes.live_trading.get_asset_id_by_symbol",
+                side_effect=capture_lookup,
+            ),
         ):
+            mock_res.return_value.get_bars.return_value = []
             client.get("/api/v1/live/indicators/aapl?timeframe=1h")
 
         assert looked_up.get("symbol") == "AAPL"
@@ -75,10 +167,12 @@ class TestIndicatorsAssetValidation:
         mock_stored.created_at = None
 
         with (
-            patch("routes.live_trading.get_asset_id_by_symbol", new=AsyncMock(return_value=5)),
+            patch(
+                "routes.live_trading.get_asset_id_by_symbol",
+                new=AsyncMock(return_value=5),
+            ),
             patch("routes.live_trading._get_resampler") as mock_res,
             patch("routes.live_trading.live_trading_dal") as mock_dal,
-            patch("routes.live_trading.get_db"),
         ):
             mock_res.return_value.get_bars.return_value = []
             mock_dal.get_latest_indicator = AsyncMock(return_value=mock_stored)
@@ -88,3 +182,65 @@ class TestIndicatorsAssetValidation:
         assert response.status_code == 200
         data = response.json()
         assert data["asset_id"] == 5
+
+
+# ---------------------------------------------------------------------------
+# POST /start: auto-registers assets in the DB
+# ---------------------------------------------------------------------------
+
+class TestStreamStartAutoRegistration:
+    def test_start_stream_calls_register_for_each_symbol(self):
+        registered = {}
+
+        async def capture_upsert(session, symbol, **kwargs):
+            registered[symbol] = True
+            return 1
+
+        with (
+            patch("routes.live_trading.get_stream") as mock_stream,
+            patch("routes.live_trading.upsert_asset", side_effect=capture_upsert),
+        ):
+            mock_status = MagicMock()
+            mock_status.connected = True
+            mock_status.subscribed_symbols = ["AAPL", "MSFT"]
+            mock_status.last_tick_at = None
+            mock_status.error = None
+            mock_status.reconnect_count = 0
+            stream_instance = MagicMock()
+            stream_instance.status = mock_status
+            stream_instance.start = AsyncMock()
+            stream_instance.on_tick = MagicMock()
+            mock_stream.return_value = stream_instance
+
+            response = client.post(
+                "/api/v1/live/start", json={"symbols": ["AAPL", "MSFT"]}
+            )
+
+        assert response.status_code == 200
+        assert "AAPL" in registered
+        assert "MSFT" in registered
+
+    def test_start_stream_continues_when_upsert_fails(self):
+        """A DB error during asset registration must not abort the stream start."""
+        async def failing_upsert(session, symbol, **kwargs):
+            raise RuntimeError("DB unavailable")
+
+        with (
+            patch("routes.live_trading.get_stream") as mock_stream,
+            patch("routes.live_trading.upsert_asset", side_effect=failing_upsert),
+        ):
+            mock_status = MagicMock()
+            mock_status.connected = True
+            mock_status.subscribed_symbols = ["AAPL"]
+            mock_status.last_tick_at = None
+            mock_status.error = None
+            mock_status.reconnect_count = 0
+            stream_instance = MagicMock()
+            stream_instance.status = mock_status
+            stream_instance.start = AsyncMock()
+            stream_instance.on_tick = MagicMock()
+            mock_stream.return_value = stream_instance
+
+            response = client.post("/api/v1/live/start", json={"symbols": ["AAPL"]})
+
+        assert response.status_code == 200

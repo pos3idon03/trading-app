@@ -36,6 +36,7 @@ class TradingSignal:
     conviction_score: float
     fundamental_summary: str
     macro_summary: str
+    macro_score: float
     sentiment_score: float
     reasoning: str
     key_risk: str
@@ -120,6 +121,7 @@ def _signal_from_dict(data: dict, ticker: str) -> TradingSignal:
         conviction_score=float(data.get("conviction_score", 0.5)),
         fundamental_summary=data.get("fundamental_summary", ""),
         macro_summary=data.get("macro_summary", ""),
+        macro_score=float(data.get("macro_score", 0.0)),
         sentiment_score=float(data.get("sentiment_score", 0.0)),
         reasoning=data.get("reasoning", ""),
         key_risk=data.get("key_risk", ""),
@@ -134,6 +136,7 @@ def _default_signal(ticker: str, raw_output: str) -> TradingSignal:
         conviction_score=0.0,
         fundamental_summary="Parsing failed — see raw_output.",
         macro_summary="",
+        macro_score=0.0,
         sentiment_score=0.0,
         reasoning=raw_output[:500],
         key_risk="Signal parsing failed; manual review required.",

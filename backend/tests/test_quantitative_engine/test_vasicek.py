@@ -6,6 +6,7 @@ from features.quantitative_engine.vasicek import (
     VasicekParams,
     calibrate_vasicek,
     compute_historical_volatility,
+    estimate_drift_rate,
     estimate_mean_reversion_params,
 )
 
@@ -52,6 +53,35 @@ class TestComputeHistoricalVolatility:
         assert vol == 0.0
 
 
+class TestEstimateDriftRate:
+    def test_positive_drift_for_trending_prices(self):
+        """Monotonically increasing prices should yield a positive mu."""
+        prices = np.array([100.0 * (1.01 ** i) for i in range(50)])
+        mu = estimate_drift_rate(prices, dt=1 / 252)
+        assert mu > 0
+
+    def test_negative_drift_for_declining_prices(self):
+        """Monotonically decreasing prices should yield a negative mu."""
+        prices = np.array([100.0 * (0.99 ** i) for i in range(50)])
+        mu = estimate_drift_rate(prices, dt=1 / 252)
+        assert mu < 0
+
+    def test_zero_drift_for_flat_prices(self):
+        """Constant prices should yield mu close to zero."""
+        prices = np.full(50, 100.0)
+        mu = estimate_drift_rate(prices, dt=1 / 252)
+        assert abs(mu) < 1e-10
+
+    def test_returns_float(self):
+        prices = np.linspace(100, 200, 50)
+        result = estimate_drift_rate(prices, dt=1 / 252)
+        assert isinstance(result, float)
+
+    def test_short_series_returns_zero(self):
+        """Less than 2 valid prices should return 0.0 without error."""
+        assert estimate_drift_rate(np.array([100.0]), dt=1 / 252) == 0.0
+
+
 class TestCalibrateVasicek:
     def test_log_price_calibration(self, sample_prices):
         params = calibrate_vasicek(sample_prices, log_prices=True)
@@ -62,3 +92,15 @@ class TestCalibrateVasicek:
     def test_linear_calibration(self, sample_prices):
         params = calibrate_vasicek(sample_prices, log_prices=False)
         assert isinstance(params, VasicekParams)
+
+    def test_mu_is_populated_after_calibration(self, sample_prices):
+        """calibrate_vasicek must return a nonzero mu for a trending price series."""
+        trending = np.array([100.0 * (1.001 ** i) for i in range(60)])
+        params = calibrate_vasicek(trending, dt=1 / 252)
+        assert params.mu != 0.0
+
+    def test_estimate_mean_reversion_params_sets_mu(self, sample_prices):
+        """estimate_mean_reversion_params must populate mu on the returned dataclass."""
+        params = estimate_mean_reversion_params(sample_prices)
+        assert hasattr(params, "mu")
+        assert isinstance(params.mu, float)

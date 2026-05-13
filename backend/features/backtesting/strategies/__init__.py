@@ -25,11 +25,13 @@ from features.backtesting.strategies.mean_reversion_strategies import (
     reverting_market_signals,
 )
 from features.backtesting.strategies.momentum_strategies import (
+    aroon_signals,
     lrsi_signals,
     macd_signals,
     momentum_rotation_signals,
     new_high_low_signals,
     rsi_signals,
+    stoch_rsi_signals,
 )
 from features.backtesting.strategies.other_strategies import (
     gap_fade_signals,
@@ -58,6 +60,8 @@ __all__ = [
     "lrsi_signals",
     "new_high_low_signals",
     "momentum_rotation_signals",
+    "aroon_signals",
+    "stoch_rsi_signals",
     # Volatility
     "atr_trailing_stop_signals",
     "vwap_cross_signals",
@@ -156,6 +160,20 @@ _STRATEGY_MAP: dict = {
     "new_high_low": lambda df, p: new_high_low_signals(
         df,
         lookback=p.get("lookback", 252),
+    ),
+    "aroon": lambda df, p: aroon_signals(
+        df,
+        period=p.get("period", 52),
+        threshold=p.get("threshold", 50.0),
+    ),
+    "stoch_rsi": lambda df, p: stoch_rsi_signals(
+        df,
+        rsi_period=p.get("rsi_period", 14),
+        stoch_period=p.get("stoch_period", 14),
+        smooth_k=p.get("smooth_k", 3),
+        smooth_d=p.get("smooth_d", 3),
+        overbought=p.get("overbought", 0.8),
+        oversold=p.get("oversold", 0.2),
     ),
     "momentum_rotation": lambda df, p: momentum_rotation_signals(
         df,

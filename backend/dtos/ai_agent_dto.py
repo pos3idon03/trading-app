@@ -35,6 +35,7 @@ class TradingSignal(BaseModel):
     conviction_score: float = Field(description="Confidence in the bias, 0.0 to 1.0")
     fundamental_summary: str
     macro_summary: str
+    macro_score: float = Field(default=0.0, description="Macro environment score from -1.0 (bearish) to +1.0 (bullish)")
     sentiment_score: float = Field(description="Sentiment from -1.0 (bearish) to +1.0 (bullish)")
     reasoning: str
     key_risk: str

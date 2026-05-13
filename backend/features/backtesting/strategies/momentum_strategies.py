@@ -2,9 +2,11 @@
 import pandas as pd
 
 from features.backtesting.strategies.helpers import (
+    _calc_aroon,
     _calc_laguerre_rsi,
     _calc_macd,
     _calc_rsi,
+    _calc_stoch_rsi,
     _extract_ohlcv,
     _reindex_to_df,
 )
@@ -88,6 +90,52 @@ def new_high_low_signals(
     at_low = close <= rolling_low
     prev_at_low = at_low.shift(1).infer_objects(copy=False).fillna(False)
     exits = at_low & ~prev_at_low
+    return _reindex_to_df(entries, df), _reindex_to_df(exits, df)
+
+
+def aroon_signals(
+    df: pd.DataFrame,
+    period: int = 52,
+    threshold: float = 50.0,
+) -> tuple[pd.Series, pd.Series]:
+    """Aroon 52 trend-following strategy.
+
+    Entry when Aroon Up crosses above Aroon Down and Aroon Up > threshold.
+    Exit when Aroon Down crosses above Aroon Up.
+    """
+    _, high, low, _, _ = _extract_ohlcv(df)
+    aroon_up, aroon_down = _calc_aroon(high, low, period)
+    up_above = aroon_up > aroon_down
+    prev_up_above = up_above.shift(1).infer_objects(copy=False).fillna(False)
+    entries = up_above & ~prev_up_above & (aroon_up > threshold)
+    exits = ~up_above & prev_up_above
+    return _reindex_to_df(entries, df), _reindex_to_df(exits, df)
+
+
+def stoch_rsi_signals(
+    df: pd.DataFrame,
+    rsi_period: int = 14,
+    stoch_period: int = 14,
+    smooth_k: int = 3,
+    smooth_d: int = 3,
+    overbought: float = 0.8,
+    oversold: float = 0.2,
+) -> tuple[pd.Series, pd.Series]:
+    """Stochastic RSI oscillator strategy.
+
+    Entry when %K crosses above %D from below the oversold level.
+    Exit when %K crosses below %D from above the overbought level.
+    """
+    _, _, _, close, _ = _extract_ohlcv(df)
+    k, d = _calc_stoch_rsi(close, rsi_period, stoch_period, smooth_k, smooth_d)
+    was_oversold = k.shift(1) < oversold
+    k_above_d = k > d
+    prev_k_above_d = k_above_d.shift(1).infer_objects(copy=False).fillna(False)
+    entries = was_oversold & k_above_d & ~prev_k_above_d
+    was_overbought = k.shift(1) > overbought
+    k_below_d = k < d
+    prev_k_below_d = k_below_d.shift(1).infer_objects(copy=False).fillna(False)
+    exits = was_overbought & k_below_d & ~prev_k_below_d
     return _reindex_to_df(entries, df), _reindex_to_df(exits, df)
 
 

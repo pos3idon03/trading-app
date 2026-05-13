@@ -57,5 +57,24 @@ services:
       - backend
     restart: unless-stopped
 
+  openbb:
+    build:
+      context: ./openbb-platform
+      dockerfile: Dockerfile
+    container_name: trading_openbb
+    env_file: .env
+    ports:
+      - "6900:6900"
+    volumes:
+      - openbb_data:/root/.openbb_platform
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:6900/"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  openbb_data:

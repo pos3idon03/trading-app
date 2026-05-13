@@ -1,5 +1,6 @@
 """Backtesting API routes."""
 import time
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,10 +20,13 @@ from dtos.backtest_dto import (
     BacktestMetrics,
     BacktestRequest,
     BacktestResponse,
+    ComboBacktestRequest,
     OptimizationRequest,
     OptimizationResponse,
     OptimizationSummary,
 )
+from features.backtesting.combo_runner import ComboStrategyConfig, run_combo_backtest
+from features.backtesting.indicator_snapshot import compute_monthly_breakdown
 from features.backtesting.optimizer import walk_forward_optimize
 from features.backtesting.runner import prepare_simulated_dataframe, run_backtest
 from utils.logging import get_logger
@@ -66,9 +70,170 @@ async def get_backtest_results(
         metrics=metrics,
         equity_curve=bt.equity_curve,
         trade_log=bt.trade_log,
+        buy_hold_curve=bt.buy_hold_curve,
         duration_ms=bt.duration_ms,
         error_message=bt.error_message,
     )
+
+
+@router.post("/combo", response_model=BacktestResponse, status_code=202)
+async def execute_combo_backtest(
+    request: ComboBacktestRequest,
+    session: AsyncSession = Depends(get_db),
+) -> BacktestResponse:
+    """Execute a combination backtest that merges signals from 2+ strategies.
+
+    Supports AND (unanimous), majority voting, and weighted-threshold modes.
+    """
+    if request.simulation_id is not None:
+        return await _run_combo_simulated(session, request)
+    return await _run_combo_historical(session, request)
+
+
+async def _run_combo_historical(
+    session: AsyncSession,
+    request: ComboBacktestRequest,
+) -> BacktestResponse:
+    asset_id = await _resolve_asset_id(session, request.asset_id, request.symbol)
+
+    df = await get_ohlcv(
+        session,
+        asset_id=asset_id,
+        start=request.start_date,
+        end=request.end_date,
+        **_ohlcv_query_args(request.timeframe),
+    )
+
+    if df.empty or len(df) < 20:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Insufficient data for combo backtest: {len(df)} rows",
+        )
+
+    return await _execute_and_persist_combo(session, request, df, asset_id)
+
+
+async def _run_combo_simulated(
+    session: AsyncSession,
+    request: ComboBacktestRequest,
+) -> BacktestResponse:
+    sim = await get_simulation(session, request.simulation_id)
+    if sim is None:
+        raise HTTPException(
+            status_code=404, detail=f"Simulation {request.simulation_id} not found"
+        )
+    if sim.status != "done":
+        raise HTTPException(
+            status_code=422,
+            detail=f"Simulation {request.simulation_id} is not completed (status: {sim.status})",
+        )
+
+    try:
+        df = prepare_simulated_dataframe(sim)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    if len(df) < 20:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Simulated path too short for combo backtest: {len(df)} rows",
+        )
+
+    return await _execute_and_persist_combo(session, request, df, sim.asset_id)
+
+
+def _build_combo_strategy_name(request: ComboBacktestRequest) -> str:
+    return f"combo:{request.combination_mode}"
+
+
+def _build_combo_params(request: ComboBacktestRequest) -> dict:
+    return {
+        "combination_mode": request.combination_mode,
+        "threshold": request.threshold,
+        "strategies": [
+            {
+                "strategy_name": s.strategy_name,
+                "strategy_params": s.strategy_params,
+                "weight": s.weight,
+            }
+            for s in request.strategies
+        ],
+    }
+
+
+async def _execute_and_persist_combo(
+    session: AsyncSession,
+    request: ComboBacktestRequest,
+    df,
+    asset_id: int,
+) -> BacktestResponse:
+    strategy_name = _build_combo_strategy_name(request)
+    params = _build_combo_params(request)
+
+    bt_id = await create_backtest(
+        session,
+        asset_id=asset_id,
+        strategy_name=strategy_name,
+        timeframe=request.timeframe,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        params=params,
+    )
+
+    configs = [
+        ComboStrategyConfig(
+            strategy_name=s.strategy_name,
+            strategy_params=s.strategy_params,
+            weight=s.weight,
+        )
+        for s in request.strategies
+    ]
+
+    try:
+        result = run_combo_backtest(
+            df,
+            strategies=configs,
+            combination_mode=request.combination_mode,
+            threshold=request.threshold,
+            initial_capital=request.initial_capital,
+            timeframe=request.timeframe,
+        )
+
+        monthly_breakdown = compute_monthly_breakdown(
+            df,
+            strategies=configs,
+            mode=request.combination_mode,
+            threshold=request.threshold,
+        )
+
+        await update_backtest_result(
+            session,
+            bt_id=bt_id,
+            metrics=result.metrics,
+            equity_curve=result.equity_curve,
+            trade_log=result.trade_log,
+            duration_ms=int(result.duration_ms),
+            buy_hold_curve=result.buy_hold_curve,
+        )
+
+        return BacktestResponse(
+            backtest_id=bt_id,
+            asset_id=asset_id,
+            strategy_name=strategy_name,
+            status="done",
+            metrics=BacktestMetrics(**result.metrics),
+            equity_curve=result.equity_curve,
+            trade_log=result.trade_log,
+            buy_hold_curve=result.buy_hold_curve,
+            duration_ms=int(result.duration_ms),
+            monthly_breakdown=monthly_breakdown,
+        )
+    except Exception as exc:
+        logger.error("combo_backtest_error", bt_id=bt_id, error=str(exc))
+        await update_backtest_result(
+            session, bt_id, {}, [], [], 0, status="error", error_message=str(exc)
+        )
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post("/optimize", response_model=OptimizationResponse, status_code=202)
@@ -177,6 +342,17 @@ async def get_optimization_results(
     )
 
 
+def _ohlcv_query_args(timeframe: str) -> dict:
+    """Return get_ohlcv keyword args for the given timeframe.
+
+    Weekly backtests resample stored daily bars via TimescaleDB time_bucket.
+    asyncpg requires a timedelta for interval parameters, not a plain string.
+    """
+    if timeframe == "1w":
+        return {"timeframe": "1d", "bucket_interval": timedelta(weeks=1)}
+    return {"timeframe": timeframe}
+
+
 async def _run_historical_backtest(
     session: AsyncSession,
     request: BacktestRequest,
@@ -186,9 +362,9 @@ async def _run_historical_backtest(
     df = await get_ohlcv(
         session,
         asset_id=asset_id,
-        timeframe=request.timeframe,
         start=request.start_date,
         end=request.end_date,
+        **_ohlcv_query_args(request.timeframe),
     )
 
     if df.empty or len(df) < 20:
@@ -240,6 +416,7 @@ async def _execute_and_persist_backtest(
             strategy=request.strategy_name,
             params=request.strategy_params,
             initial_capital=request.initial_capital,
+            timeframe=request.timeframe,
         )
 
         await update_backtest_result(
@@ -249,6 +426,7 @@ async def _execute_and_persist_backtest(
             equity_curve=result.equity_curve,
             trade_log=result.trade_log,
             duration_ms=int(result.duration_ms),
+            buy_hold_curve=result.buy_hold_curve,
         )
 
         return BacktestResponse(
@@ -259,6 +437,8 @@ async def _execute_and_persist_backtest(
             metrics=BacktestMetrics(**result.metrics),
             equity_curve=result.equity_curve,
             trade_log=result.trade_log,
+            buy_hold_curve=result.buy_hold_curve,
+            indicator_series=result.indicator_series or None,
             duration_ms=int(result.duration_ms),
         )
     except Exception as exc:

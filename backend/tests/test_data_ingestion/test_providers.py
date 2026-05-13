@@ -272,3 +272,29 @@ class TestYFinanceProviderFetchFundamentals:
         ):
             records = await provider.fetch_fundamentals("AAPL", asset_id=1)
         assert records == []
+
+    @pytest.mark.asyncio
+    async def test_dividend_yield_fraction_unchanged(self):
+        provider = get_provider("yfinance")
+        mock_ticker = MagicMock()
+        mock_ticker.info = {"dividendYield": 0.04}
+        with patch(
+            "features.data_ingestion.yfinance_provider.yf.Ticker",
+            return_value=mock_ticker,
+        ):
+            records = await provider.fetch_fundamentals("XOM", asset_id=1)
+        dy = next(r for r in records if r.metric_name == "dividendYield")
+        assert dy.value == pytest.approx(0.04)
+
+    @pytest.mark.asyncio
+    async def test_dividend_yield_percent_points_normalized(self):
+        provider = get_provider("yfinance")
+        mock_ticker = MagicMock()
+        mock_ticker.info = {"dividendYield": 2.16}
+        with patch(
+            "features.data_ingestion.yfinance_provider.yf.Ticker",
+            return_value=mock_ticker,
+        ):
+            records = await provider.fetch_fundamentals("SBLK", asset_id=1)
+        dy = next(r for r in records if r.metric_name == "dividendYield")
+        assert dy.value == pytest.approx(0.0216)

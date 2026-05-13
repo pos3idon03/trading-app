@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 VALID_STRATEGIES = {
@@ -22,6 +22,8 @@ VALID_STRATEGIES = {
     "lrsi",
     "new_high_low",
     "momentum_rotation",
+    "aroon",
+    "stoch_rsi",
     # Volatility / price-level
     "atr_trailing_stop",
     "vwap_cross",
@@ -135,6 +137,20 @@ class MomentumRotationParams(BaseModel):
     threshold: float = Field(default=0.0, ge=-0.5, le=0.5)
 
 
+class AroonParams(BaseModel):
+    period: int = Field(default=52, ge=5, le=252)
+    threshold: float = Field(default=50.0, ge=0.0, le=100.0)
+
+
+class StochRSIParams(BaseModel):
+    rsi_period: int = Field(default=14, ge=2, le=100)
+    stoch_period: int = Field(default=14, ge=2, le=100)
+    smooth_k: int = Field(default=3, ge=1, le=20)
+    smooth_d: int = Field(default=3, ge=1, le=20)
+    overbought: float = Field(default=0.8, ge=0.5, le=0.99)
+    oversold: float = Field(default=0.2, ge=0.01, le=0.5)
+
+
 # ---------------------------------------------------------------------------
 # New volatility / price-level param models
 # ---------------------------------------------------------------------------
@@ -215,7 +231,7 @@ class BacktestRequest(BaseModel):
     asset_id: Optional[int] = None
     symbol: Optional[str] = Field(default=None, description="Ticker symbol (alternative to asset_id)")
     strategy_name: str = Field(..., description=_STRATEGY_DESCRIPTIONS)
-    timeframe: str = "1d"
+    timeframe: Literal["1d", "1w"] = "1d"
     start_date: datetime
     end_date: datetime
     strategy_params: dict = Field(default_factory=dict)
@@ -235,7 +251,7 @@ class OptimizationRequest(BaseModel):
     asset_id: Optional[int] = None
     symbol: Optional[str] = Field(default=None, description="Ticker symbol (alternative to asset_id)")
     strategy_name: str = Field(..., description=_STRATEGY_DESCRIPTIONS)
-    timeframe: str = "1d"
+    timeframe: Literal["1d", "1w"] = "1d"
     start_date: datetime
     end_date: datetime
     param_grid: dict = Field(
@@ -300,5 +316,77 @@ class BacktestResponse(BaseModel):
     metrics: Optional[BacktestMetrics] = None
     equity_curve: Optional[list[dict]] = None
     trade_log: Optional[list[TradeRecord]] = None
+    buy_hold_curve: Optional[list[dict]] = None
+    indicator_series: Optional[list[dict]] = None
     duration_ms: Optional[int] = None
     error_message: Optional[str] = None
+    monthly_breakdown: Optional[list["ComboMonthlyRow"]] = None
+
+
+# ---------------------------------------------------------------------------
+# Monthly breakdown DTOs (combo backtest only)
+# ---------------------------------------------------------------------------
+
+class StrategyMonthlyState(BaseModel):
+    strategy_name: str
+    position: Literal["Buy", "Sell"]
+    indicators: dict[str, Optional[float]]
+
+
+class ComboMonthlyRow(BaseModel):
+    month: str
+    combined_position: Literal["Buy", "Sell"]
+    strategies: list[StrategyMonthlyState]
+
+
+BacktestResponse.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# Combo backtest DTOs
+# ---------------------------------------------------------------------------
+
+CombinationMode = Literal["and", "majority", "weighted"]
+
+
+class ComboStrategyEntry(BaseModel):
+    strategy_name: str = Field(..., description=_STRATEGY_DESCRIPTIONS)
+    strategy_params: dict = Field(default_factory=dict)
+    weight: float = Field(default=1.0, ge=0.0, le=1.0)
+
+    @field_validator("strategy_name")
+    @classmethod
+    def validate_strategy(cls, v: str) -> str:
+        if v not in VALID_STRATEGIES:
+            raise ValueError(f"Unknown strategy: {v!r}. Valid: {sorted(VALID_STRATEGIES)}")
+        return v
+
+
+class ComboBacktestRequest(BaseModel):
+    asset_id: Optional[int] = None
+    symbol: Optional[str] = Field(default=None, description="Ticker symbol (alternative to asset_id)")
+    simulation_id: Optional[int] = Field(default=None, description="Run on Monte Carlo simulated data")
+    strategies: list[ComboStrategyEntry] = Field(..., min_length=2)
+    combination_mode: CombinationMode = Field(default="majority")
+    threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Signal fires when weighted sum exceeds this (weighted mode only)",
+    )
+    timeframe: Literal["1d", "1w"] = "1d"
+    start_date: datetime
+    end_date: datetime
+    initial_capital: float = Field(default=100_000.0, ge=1000.0)
+
+    @model_validator(mode="after")
+    def require_asset_or_symbol(self) -> "ComboBacktestRequest":
+        if self.asset_id is None and self.symbol is None and self.simulation_id is None:
+            raise ValueError("Provide either asset_id, symbol, or simulation_id")
+        if self.combination_mode == "weighted":
+            for entry in self.strategies:
+                if entry.weight == 0.0:
+                    raise ValueError(
+                        f"Strategy '{entry.strategy_name}' has weight 0 in weighted mode"
+                    )
+        return self

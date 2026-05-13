@@ -66,6 +66,7 @@ async def analyze_asset(
             sentiment_report=trading_signal.sentiment_report,
             bias=trading_signal.bias,
             conviction_score=trading_signal.conviction_score,
+            macro_score=trading_signal.macro_score,
             sentiment_score=trading_signal.sentiment_score,
             duration_ms=trading_signal.duration_ms,
             provider_used=trading_signal.provider_used,

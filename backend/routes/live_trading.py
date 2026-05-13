@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal import live_trading_dal
-from dal.market_data_dal import get_asset_id_by_symbol
+from dal.market_data_dal import ensure_asset_for_live_stream, get_asset_id_by_symbol
 from db import get_db
 from dtos.live_trading_dto import (
     IndicatorSnapshotResponse,
@@ -16,9 +16,12 @@ from dtos.live_trading_dto import (
     SignalHistoryResponse,
     StreamStartRequest,
     StreamStatusResponse,
+    StrategySignalItem,
+    StrategySignalsResponse,
     TradingSignalResponse,
 )
 from features.live_trading.indicator_engine import compute_indicators
+from features.live_trading.strategy_signals import compute_strategy_signals
 from features.live_trading.resampler import ResamplingEngine
 from features.live_trading.signal_aggregator import (
     AISignalInput,
@@ -42,8 +45,34 @@ def _get_resampler() -> ResamplingEngine:
     return _resampler
 
 
+async def _await_stream_connected(
+    stream,
+    poll_interval: float = 0.2,
+    timeout: float = 3.0,
+) -> None:
+    """Poll the stream status until connected or the timeout elapses."""
+    elapsed = 0.0
+    while elapsed < timeout and not stream.status.connected:
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+
+async def _register_streaming_assets(session: AsyncSession, symbols: list[str]) -> None:
+    """Ensure each streamed symbol has an assets row so indicators can be persisted."""
+    for symbol in symbols:
+        try:
+            await ensure_asset_for_live_stream(session, symbol)
+        except Exception as exc:
+            logger.warning("asset_ensure_failed", symbol=symbol, error=str(exc))
+
+
 @router.post("/start", response_model=StreamStatusResponse)
-async def start_stream(req: StreamStartRequest):
+async def start_stream(
+    req: StreamStartRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    await _register_streaming_assets(session, req.symbols)
+
     stream = get_stream()
     resampler = _get_resampler()
 
@@ -70,6 +99,7 @@ async def start_stream(req: StreamStartRequest):
 
     stream.on_tick(on_tick)
     await stream.start(req.symbols)
+    await _await_stream_connected(stream)
 
     status = stream.status
     return StreamStatusResponse(
@@ -114,49 +144,69 @@ async def get_indicators(
     session: AsyncSession = Depends(get_db),
 ):
     symbol = symbol.upper()
+    bars = _get_resampler().get_bars(symbol, timeframe)
+    if bars:
+        return await _indicators_from_bars(session, bars, symbol, timeframe)
+    return await _indicators_from_db(session, symbol, timeframe)
+
+
+async def _indicators_from_bars(
+    session: AsyncSession,
+    bars: list,
+    symbol: str,
+    timeframe: str,
+) -> IndicatorSnapshotResponse:
+    """Compute indicators from live resampler bars; persist only when asset is registered."""
+    snapshot = compute_indicators(bars, symbol, timeframe)
+    if snapshot is None:
+        return IndicatorSnapshotResponse(symbol=symbol, timeframe=timeframe, close_price=0.0)
+
+    asset_id = await get_asset_id_by_symbol(session, symbol)
+    if asset_id is not None:
+        await live_trading_dal.create_indicator(
+            session,
+            asset_id=asset_id,
+            symbol=snapshot.symbol,
+            timeframe=snapshot.timeframe,
+            rsi=snapshot.rsi,
+            macd=snapshot.macd,
+            macd_signal=snapshot.macd_signal,
+            macd_histogram=snapshot.macd_histogram,
+            bb_upper=snapshot.bb_upper,
+            bb_middle=snapshot.bb_middle,
+            bb_lower=snapshot.bb_lower,
+            vwap=snapshot.vwap,
+            close_price=snapshot.close_price,
+        )
+    return IndicatorSnapshotResponse(
+        asset_id=asset_id,
+        symbol=snapshot.symbol,
+        timeframe=snapshot.timeframe,
+        close_price=snapshot.close_price,
+        rsi=snapshot.rsi,
+        macd=snapshot.macd,
+        macd_signal=snapshot.macd_signal,
+        macd_histogram=snapshot.macd_histogram,
+        bb_upper=snapshot.bb_upper,
+        bb_middle=snapshot.bb_middle,
+        bb_lower=snapshot.bb_lower,
+        vwap=snapshot.vwap,
+        bb_percent=snapshot.bb_percent,
+    )
+
+
+async def _indicators_from_db(
+    session: AsyncSession,
+    symbol: str,
+    timeframe: str,
+) -> IndicatorSnapshotResponse:
+    """Fall back to stored indicators or raise 404 when no live bars are available."""
     asset_id = await get_asset_id_by_symbol(session, symbol)
     if asset_id is None:
         raise HTTPException(
             status_code=404,
             detail=f"Asset '{symbol}' is not registered. Ingest it first via /ingest.",
         )
-
-    resampler = _get_resampler()
-    bars = resampler.get_bars(symbol, timeframe)
-
-    if bars:
-        snapshot = compute_indicators(bars, symbol, timeframe)
-        if snapshot is not None:
-            await live_trading_dal.create_indicator(
-                session,
-                asset_id=asset_id,
-                symbol=snapshot.symbol,
-                timeframe=snapshot.timeframe,
-                rsi=snapshot.rsi,
-                macd=snapshot.macd,
-                macd_signal=snapshot.macd_signal,
-                macd_histogram=snapshot.macd_histogram,
-                bb_upper=snapshot.bb_upper,
-                bb_middle=snapshot.bb_middle,
-                bb_lower=snapshot.bb_lower,
-                vwap=snapshot.vwap,
-                close_price=snapshot.close_price,
-            )
-            return IndicatorSnapshotResponse(
-                asset_id=asset_id,
-                symbol=snapshot.symbol,
-                timeframe=snapshot.timeframe,
-                close_price=snapshot.close_price,
-                rsi=snapshot.rsi,
-                macd=snapshot.macd,
-                macd_signal=snapshot.macd_signal,
-                macd_histogram=snapshot.macd_histogram,
-                bb_upper=snapshot.bb_upper,
-                bb_middle=snapshot.bb_middle,
-                bb_lower=snapshot.bb_lower,
-                vwap=snapshot.vwap,
-                bb_percent=snapshot.bb_percent,
-            )
 
     stored = await live_trading_dal.get_latest_indicator(session, symbol, timeframe)
     if stored:
@@ -181,6 +231,30 @@ async def get_indicators(
         symbol=symbol,
         timeframe=timeframe,
         close_price=0.0,
+    )
+
+
+@router.get("/strategy-signals/{symbol}", response_model=StrategySignalsResponse)
+async def get_strategy_signals(
+    symbol: str,
+    timeframe: str = Query("1h", description="Timeframe for strategy evaluation"),
+):
+    symbol = symbol.upper()
+    bars = _get_resampler().get_bars(symbol, timeframe)
+    strategies = compute_strategy_signals(bars, symbol)
+    return StrategySignalsResponse(
+        symbol=symbol,
+        timeframe=timeframe,
+        bar_count=len(bars),
+        strategies=[
+            StrategySignalItem(
+                strategy=s.strategy,
+                label=s.label,
+                group=s.group,
+                signal=s.signal,
+            )
+            for s in strategies
+        ],
     )
 
 

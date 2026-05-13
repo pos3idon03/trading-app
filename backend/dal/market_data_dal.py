@@ -289,6 +289,30 @@ async def get_asset_id_by_symbol(session: AsyncSession, symbol: str) -> Optional
     return row[0] if row else None
 
 
+async def ensure_asset_for_live_stream(session: AsyncSession, symbol: str) -> int:
+    """Insert asset row if missing; never overwrite name or other existing fields.
+
+    Live streaming only needs a stable ``asset_id`` for persisted data. Symbols
+    that already exist (e.g. after full ingestion with a company name) are left
+    unchanged.
+    """
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from models.asset import Asset
+
+    sym = symbol.upper()
+    stmt = (
+        pg_insert(Asset)
+        .values(symbol=sym, asset_type="stock", currency="USD")
+        .on_conflict_do_nothing(index_elements=["symbol"])
+    )
+    await session.execute(stmt)
+    await session.flush()
+    asset_id = await get_asset_id_by_symbol(session, sym)
+    if asset_id is None:
+        raise ValueError(f"asset row missing after ensure: {sym}")
+    return asset_id
+
+
 async def upsert_asset(session: AsyncSession, symbol: str, **kwargs) -> int:
     from sqlalchemy.dialects.postgresql import insert as pg_insert
     from models.asset import Asset

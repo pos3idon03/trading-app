@@ -148,3 +148,42 @@ def _calc_vwap(
     cum_tp_vol = (typical_price * volume).cumsum()
     cum_vol = volume.cumsum()
     return cum_tp_vol / cum_vol.replace(0, np.nan)
+
+
+def _calc_aroon(
+    high: pd.Series,
+    low: pd.Series,
+    period: int = 52,
+) -> tuple[pd.Series, pd.Series]:
+    """Aroon Up and Aroon Down oscillators.
+
+    Aroon Up  = 100 * (bars since period high) / period
+    Aroon Down = 100 * (bars since period low)  / period
+    Both range 0–100.
+    """
+    rolling_high_idx = high.rolling(period + 1).apply(np.argmax, raw=True)
+    rolling_low_idx = low.rolling(period + 1).apply(np.argmin, raw=True)
+    aroon_up = (rolling_high_idx / period) * 100
+    aroon_down = (rolling_low_idx / period) * 100
+    return aroon_up, aroon_down
+
+
+def _calc_stoch_rsi(
+    close: pd.Series,
+    rsi_period: int = 14,
+    stoch_period: int = 14,
+    smooth_k: int = 3,
+    smooth_d: int = 3,
+) -> tuple[pd.Series, pd.Series]:
+    """Stochastic RSI %K and %D lines (range 0–1).
+
+    Applies the stochastic formula to RSI values for a more sensitive oscillator.
+    """
+    rsi = _calc_rsi(close, rsi_period)
+    lowest_rsi = rsi.rolling(stoch_period).min()
+    highest_rsi = rsi.rolling(stoch_period).max()
+    rsi_range = (highest_rsi - lowest_rsi).replace(0, np.nan)
+    raw_k = (rsi - lowest_rsi) / rsi_range
+    k = raw_k.rolling(smooth_k).mean()
+    d = k.rolling(smooth_d).mean()
+    return k, d

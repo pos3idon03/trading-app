@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react';
-import { backtestApi, dataApi } from '../api/endpoints';
+import { backtestApi, dataApi, strategyBuilderApi } from '../api/endpoints';
 import type { AssetItem, BacktestResponse, OptimizationResponse } from '../api/types';
 import { STRATEGIES, DEFAULT_PARAMS_MAP, DEFAULT_GRID_MAP, OPTIMIZE_METRICS } from '../constants/strategies';
 import Spinner from '../components/Spinner';
 import ErrorAlert from '../components/ErrorAlert';
 import StatusBadge from '../components/StatusBadge';
 import StrategyMultiSelect from '../components/StrategyMultiSelect';
+import StrategyParamsEditor from '../components/StrategyParamsEditor';
 import BacktestResultCard from '../components/BacktestResultCard';
 import ParamGridEditor from '../components/ParamGridEditor';
 import OptimizationResultsTable from '../components/OptimizationResultsTable';
+import ComboTab from '../components/ComboTab';
+import StrategyGuideTab from '../components/StrategyGuideTab';
 
-type TabId = 'backtest' | 'optimize';
+type TabId = 'backtest' | 'optimize' | 'combo' | 'guide';
 
 function useAssets() {
   const [assets, setAssets] = useState<AssetItem[]>([]);
@@ -77,6 +80,39 @@ function DateRangeInputs({
   );
 }
 
+type Timeframe = '1d' | '1w';
+
+const TIMEFRAME_OPTIONS: { value: Timeframe; label: string }[] = [
+  { value: '1d', label: 'Daily' },
+  { value: '1w', label: 'Weekly' },
+];
+
+function PriceFrequencySelect({
+  value,
+  onChange,
+}: {
+  value: Timeframe;
+  onChange: (v: Timeframe) => void;
+}) {
+  return (
+    <div>
+      <label htmlFor="price-frequency" className="metric-label block mb-1">Price Frequency</label>
+      <select
+        id="price-frequency"
+        className="bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500"
+        value={value}
+        onChange={(e) => onChange(e.target.value as Timeframe)}
+      >
+        {TIMEFRAME_OPTIONS.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => void }) {
   const cls = (t: TabId) =>
     `px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
@@ -88,6 +124,8 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
     <div className="flex gap-1 border-b border-slate-700">
       <button className={cls('backtest')} onClick={() => onChange('backtest')}>Backtest</button>
       <button className={cls('optimize')} onClick={() => onChange('optimize')}>Optimize</button>
+      <button className={cls('combo')} onClick={() => onChange('combo')}>Combo</button>
+      <button className={cls('guide')} onClick={() => onChange('guide')}>Strategy guide</button>
     </div>
   );
 }
@@ -102,6 +140,10 @@ function PendingStrategyCard({ strategyValue }: { strategyValue: string }) {
   );
 }
 
+async function handleAddToStrategy(backtestId: number, assetId: number): Promise<void> {
+  await strategyBuilderApi.attachBacktest({ asset_id: assetId, backtest_id: backtestId });
+}
+
 function BacktestResultsGrid({
   results,
   pending,
@@ -114,7 +156,11 @@ function BacktestResultsGrid({
   return (
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
       {results.map((r) => (
-        <BacktestResultCard key={r.backtest_id} result={r} />
+        <BacktestResultCard
+          key={r.backtest_id}
+          result={r}
+          onAddToStrategy={handleAddToStrategy}
+        />
       ))}
       {pending.map((s) => (
         <PendingStrategyCard key={s} strategyValue={s} />
@@ -128,6 +174,8 @@ async function runStrategiesParallel(
   strategies: string[],
   startDate: string,
   endDate: string,
+  timeframe: Timeframe,
+  paramsMap: Record<string, Record<string, number>>,
   onResult: (r: BacktestResponse) => void,
   onError: (strategy: string, msg: string) => void
 ) {
@@ -136,10 +184,10 @@ async function runStrategiesParallel(
       .run({
         symbol,
         strategy_name: strategyName,
-        timeframe: '1d',
+        timeframe,
         start_date: new Date(startDate).toISOString(),
         end_date: new Date(endDate).toISOString(),
-        strategy_params: DEFAULT_PARAMS_MAP[strategyName] ?? DEFAULT_PARAMS_MAP['ma_crossover'],
+        strategy_params: paramsMap[strategyName] ?? DEFAULT_PARAMS_MAP[strategyName] ?? {},
         initial_capital: 100_000,
       })
       .then((r) => { onResult(r); })
@@ -148,11 +196,32 @@ async function runStrategiesParallel(
   await Promise.allSettled(promises);
 }
 
+function buildInitialParamsMap(strategies: string[]): Record<string, Record<string, number>> {
+  return Object.fromEntries(
+    strategies.map((s) => [s, { ...(DEFAULT_PARAMS_MAP[s] ?? {}) }])
+  );
+}
+
+function syncParamsMap(
+  prev: Record<string, Record<string, number>>,
+  next: string[]
+): Record<string, Record<string, number>> {
+  const synced: Record<string, Record<string, number>> = {};
+  for (const s of next) {
+    synced[s] = prev[s] ?? { ...(DEFAULT_PARAMS_MAP[s] ?? {}) };
+  }
+  return synced;
+}
+
 function BacktestTab({ assets }: { assets: AssetItem[] }) {
   const [symbol, setSymbol] = useState('');
   const [selectedStrategies, setSelectedStrategies] = useState<string[]>(['ma_crossover']);
+  const [paramsMap, setParamsMap] = useState<Record<string, Record<string, number>>>(
+    buildInitialParamsMap(['ma_crossover'])
+  );
   const [startDate, setStartDate] = useState('2022-01-01');
   const [endDate, setEndDate] = useState('2024-12-31');
+  const [timeframe, setTimeframe] = useState<Timeframe>('1d');
   const [btResults, setBtResults] = useState<BacktestResponse[]>([]);
   const [pendingStrategies, setPendingStrategies] = useState<string[]>([]);
   const [btErrors, setBtErrors] = useState<string[]>([]);
@@ -160,6 +229,11 @@ function BacktestTab({ assets }: { assets: AssetItem[] }) {
   useEffect(() => {
     if (assets.length > 0 && !symbol) setSymbol(assets[0].symbol);
   }, [assets, symbol]);
+
+  const handleStrategiesChange = (strategies: string[]) => {
+    setSelectedStrategies(strategies);
+    setParamsMap((prev) => syncParamsMap(prev, strategies));
+  };
 
   const handleResult = (r: BacktestResponse) => {
     setBtResults((prev) => [...prev, r]);
@@ -176,7 +250,9 @@ function BacktestTab({ assets }: { assets: AssetItem[] }) {
     setBtResults([]);
     setBtErrors([]);
     setPendingStrategies([...selectedStrategies]);
-    await runStrategiesParallel(symbol, selectedStrategies, startDate, endDate, handleResult, handleError);
+    await runStrategiesParallel(
+      symbol, selectedStrategies, startDate, endDate, timeframe, paramsMap, handleResult, handleError,
+    );
   };
 
   const isRunning = pendingStrategies.length > 0;
@@ -195,9 +271,17 @@ function BacktestTab({ assets }: { assets: AssetItem[] }) {
             onStartChange={setStartDate}
             onEndChange={setEndDate}
           />
+          <PriceFrequencySelect value={timeframe} onChange={setTimeframe} />
         </div>
         <div className="mb-4">
-          <StrategyMultiSelect selected={selectedStrategies} onChange={setSelectedStrategies} />
+          <StrategyMultiSelect selected={selectedStrategies} onChange={handleStrategiesChange} />
+        </div>
+        <div className="mb-4">
+          <StrategyParamsEditor
+            selectedStrategies={selectedStrategies}
+            paramsMap={paramsMap}
+            onChange={setParamsMap}
+          />
         </div>
         <button
           onClick={runBacktest}
@@ -383,6 +467,8 @@ export default function BacktestPage() {
       <TabBar active={activeTab} onChange={setActiveTab} />
       {activeTab === 'backtest' && <BacktestTab assets={assets} />}
       {activeTab === 'optimize' && <OptimizeTab assets={assets} />}
+      {activeTab === 'combo' && <ComboTab assets={assets} />}
+      {activeTab === 'guide' && <StrategyGuideTab />}
     </div>
   );
 }

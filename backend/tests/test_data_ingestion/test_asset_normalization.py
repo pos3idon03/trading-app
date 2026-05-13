@@ -46,6 +46,35 @@ class TestUpsertAssetNormalization:
 
 
 # ---------------------------------------------------------------------------
+# ensure_asset_for_live_stream: insert-if-missing, never overwrites name
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureAssetForLiveStream:
+    @pytest.mark.asyncio
+    async def test_inserts_with_on_conflict_do_nothing_and_uppercases_symbol(self):
+        from dal.market_data_dal import ensure_asset_for_live_stream
+
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=MagicMock())
+        mock_session.flush = AsyncMock()
+
+        with patch("dal.market_data_dal.get_asset_id_by_symbol", new=AsyncMock(return_value=9)):
+            asset_id = await ensure_asset_for_live_stream(mock_session, "amzn")
+
+        assert asset_id == 9
+        compiled = str(mock_session.execute.call_args[0][0].compile(
+            compile_kwargs={"literal_binds": True},
+        ))
+        upper = compiled.upper()
+        assert "ON CONFLICT" in upper
+        assert "DO NOTHING" in upper
+        assert "DO UPDATE" not in upper
+        assert "AMZN" in compiled
+        assert "amzn" not in compiled
+
+
+# ---------------------------------------------------------------------------
 # require_asset_id: raises ValueError when symbol not registered
 # ---------------------------------------------------------------------------
 

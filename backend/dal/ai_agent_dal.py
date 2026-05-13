@@ -30,6 +30,7 @@ async def update_analysis_result(
     sentiment_report: str,
     bias: str,
     conviction_score: float,
+    macro_score: float,
     sentiment_score: float,
     duration_ms: int,
     provider_used: str = "",
@@ -45,6 +46,7 @@ async def update_analysis_result(
     record.sentiment_report = sentiment_report
     record.bias = bias
     record.conviction_score = conviction_score
+    record.macro_score = macro_score
     record.sentiment_score = sentiment_score
     record.duration_ms = duration_ms
     record.provider_used = provider_used or None

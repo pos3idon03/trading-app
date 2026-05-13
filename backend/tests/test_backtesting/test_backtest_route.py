@@ -177,6 +177,8 @@ class TestSimulatedBacktestRoute:
             },
             equity_curve=[{"time": "2024-01-01", "value": 100000}],
             trade_log=[],
+            buy_hold_curve=[{"time": "2024-01-01", "value": 100000}],
+            indicator_series=[],
             duration_ms=50.0,
         )
 

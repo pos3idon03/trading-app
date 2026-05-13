@@ -83,6 +83,7 @@ export interface SimulationRequest {
   use_stored_params?: boolean;
   include_distribution?: boolean;
   calibration_years?: number;
+  model_type?: 'vasicek' | 'merton';
 }
 
 export interface DistributionPoint {
@@ -133,6 +134,27 @@ export interface OptimizationRequest {
   initial_capital?: number;
 }
 
+export type CombinationMode = 'and' | 'majority' | 'weighted';
+
+export interface ComboStrategyEntry {
+  strategy_name: string;
+  strategy_params: Record<string, unknown>;
+  weight?: number;
+}
+
+export interface ComboBacktestRequest {
+  symbol?: string;
+  asset_id?: number;
+  simulation_id?: number;
+  strategies: ComboStrategyEntry[];
+  combination_mode: CombinationMode;
+  threshold?: number;
+  timeframe: string;
+  start_date: string;
+  end_date: string;
+  initial_capital?: number;
+}
+
 export interface OptimizationSummary {
   params: Record<string, number>;
   avg_oos_metric: number;
@@ -163,6 +185,7 @@ export interface TradingSignal {
   conviction_score: number;
   fundamental_summary: string;
   macro_summary: string;
+  macro_score: number;
   sentiment_score: number;
   reasoning: string;
   key_risk: string;
@@ -248,6 +271,20 @@ export interface TradingSignalItem {
 export interface SignalHistoryResponse {
   signals: TradingSignalItem[];
   total: number;
+}
+
+export interface LiveStrategySignalItem {
+  strategy: string;
+  label: string;
+  group: string;
+  signal: 'BUY' | 'SELL' | 'NEUTRAL';
+}
+
+export interface StrategySignalsResponse {
+  symbol: string;
+  timeframe: string;
+  bar_count: number;
+  strategies: LiveStrategySignalItem[];
 }
 
 // ── Execution (Phase 6) ─────────────────────────────────────────────────
@@ -397,6 +434,28 @@ export interface BacktestMetrics {
   num_trades?: number;
 }
 
+export interface TradeRecord {
+  entry_time: string;
+  exit_time: string;
+  direction: string;
+  entry_price: number;
+  exit_price: number;
+  pnl: number;
+  return_pct: number;
+}
+
+export interface StrategyMonthlyState {
+  strategy_name: string;
+  position: 'Buy' | 'Sell';
+  indicators: Record<string, number | null>;
+}
+
+export interface ComboMonthlyRow {
+  month: string;
+  combined_position: 'Buy' | 'Sell';
+  strategies: StrategyMonthlyState[];
+}
+
 export interface BacktestResponse {
   backtest_id: number;
   asset_id: number;
@@ -404,7 +463,194 @@ export interface BacktestResponse {
   status: string;
   metrics?: BacktestMetrics;
   equity_curve?: { time: string; value: number }[];
-  trade_log?: unknown[];
+  trade_log?: TradeRecord[];
+  buy_hold_curve?: { time: string; value: number }[];
+  indicator_series?: Record<string, string | number | null>[];
   duration_ms?: number;
   error_message?: string;
+  monthly_breakdown?: ComboMonthlyRow[];
+}
+
+// ---------------------------------------------------------------------------
+// Strategy Builder
+// ---------------------------------------------------------------------------
+
+export type AlgoTimeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '3h' | '1d' | '1w';
+
+export interface StrategyRecord {
+  id: number;
+  asset_id: number;
+  symbol: string;
+  asset_name: string | null;
+  is_active: boolean;
+  // Monte Carlo thresholds (BUY / SELL)
+  mc_buy_prob_positive: number | null;
+  mc_sell_prob_positive: number | null;
+  // AI Agent thresholds (BUY / SELL per score)
+  ai_buy_conviction: number | null;
+  ai_sell_conviction: number | null;
+  ai_buy_sentiment: number | null;
+  ai_sell_sentiment: number | null;
+  ai_buy_macro: number | null;
+  ai_sell_macro: number | null;
+  // Signal configuration
+  combination_mode: 'all' | 'majority' | 'any';
+  algo_timeframe: AlgoTimeframe;
+  // Auto-trading lifecycle
+  auto_trading_enabled: boolean;
+  auto_trading_started: boolean;
+  // Position sizing
+  max_amount_per_position: number | null;
+  max_pct_of_capital: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateThresholdsRequest {
+  mc_buy_prob_positive?: number | null;
+  mc_sell_prob_positive?: number | null;
+  ai_buy_conviction?: number | null;
+  ai_sell_conviction?: number | null;
+  ai_buy_sentiment?: number | null;
+  ai_sell_sentiment?: number | null;
+  ai_buy_macro?: number | null;
+  ai_sell_macro?: number | null;
+  combination_mode?: 'all' | 'majority' | 'any';
+  algo_timeframe?: AlgoTimeframe;
+  auto_trading_enabled?: boolean;
+}
+
+export interface UpdatePositionSizingRequest {
+  max_amount_per_position?: number | null;
+  max_pct_of_capital?: number | null;
+}
+
+export interface AutoTradingAssetRow {
+  strategy_id: number;
+  asset_id: number;
+  symbol: string;
+  asset_name: string | null;
+  // Latest MC value
+  mc_prob_positive: number | null;
+  // MC thresholds
+  mc_buy_prob_positive: number | null;
+  mc_sell_prob_positive: number | null;
+  // Latest AI values
+  ai_conviction: number | null;
+  ai_sentiment: number | null;
+  ai_macro: number | null;
+  // AI thresholds
+  ai_buy_conviction: number | null;
+  ai_sell_conviction: number | null;
+  ai_buy_sentiment: number | null;
+  ai_sell_sentiment: number | null;
+  ai_buy_macro: number | null;
+  ai_sell_macro: number | null;
+  // Config
+  combination_mode: 'all' | 'majority' | 'any';
+  algo_timeframe: AlgoTimeframe;
+  auto_trading_started: boolean;
+  // Position sizing
+  max_amount_per_position: number | null;
+  max_pct_of_capital: number | null;
+}
+
+export interface MonteCarloSummary {
+  simulation_id: number;
+  prob_positive_return: number;
+  mean_max_drawdown: number;
+  p5: number;
+  p25: number;
+  p50: number;
+  p75: number;
+  p95: number;
+  mean_terminal: number;
+  std_terminal: number;
+  cached: boolean;
+}
+
+export interface AIAgentSummary {
+  analysis_id: number;
+  bias: string | null;
+  conviction_score: number | null;
+  sentiment_score: number | null;
+  macro_score: number | null;
+  fundamental_summary: string | null;
+  macro_summary: string | null;
+  reasoning: string | null;
+  key_risk: string | null;
+  created_at: string | null;
+}
+
+export interface FinancialsSummary {
+  revenue_growth: number | null;
+  free_cash_flow: number | null;
+  current_ratio: number | null;
+  pe_ttm: number | null;
+  pe_forward: number | null;
+  pb_ratio: number | null;
+  eps_ttm: number | null;
+  eps_forward: number | null;
+  market_cap: number | null;
+  fetched_at: string | null;
+  is_stale: boolean;
+}
+
+export interface AlgoStrategySummary {
+  backtest_id: number;
+  strategy_name: string;
+  total_return: number | null;
+  sharpe_ratio: number | null;
+  max_drawdown: number | null;
+  win_rate: number | null;
+  num_trades: number | null;
+  added_at: string;
+}
+
+export interface StrategyFullResponse {
+  strategy_id: number;
+  asset_id: number;
+  symbol: string;
+  asset_name: string | null;
+  is_active: boolean;
+  created_at: string;
+  // MC thresholds (BUY / SELL)
+  mc_buy_prob_positive: number | null;
+  mc_sell_prob_positive: number | null;
+  // AI thresholds (BUY / SELL per score)
+  ai_buy_conviction: number | null;
+  ai_sell_conviction: number | null;
+  ai_buy_sentiment: number | null;
+  ai_sell_sentiment: number | null;
+  ai_buy_macro: number | null;
+  ai_sell_macro: number | null;
+  // Configuration
+  combination_mode: 'all' | 'majority' | 'any';
+  algo_timeframe: AlgoTimeframe;
+  auto_trading_enabled: boolean;
+  auto_trading_started: boolean;
+  max_amount_per_position: number | null;
+  max_pct_of_capital: number | null;
+  // Data sections
+  monte_carlo: MonteCarloSummary | null;
+  ai_agents: AIAgentSummary | null;
+  financials: FinancialsSummary | null;
+  algo_strategies: AlgoStrategySummary[];
+  monte_carlo_error: string | null;
+  ai_agents_error: string | null;
+  financials_error: string | null;
+}
+
+export interface CreateStrategyRequest {
+  asset_id: number;
+}
+
+export interface AttachBacktestRequest {
+  asset_id: number;
+  backtest_id: number;
+}
+
+export interface DetachBacktestRequest {
+  strategy_id: number;
+  backtest_id: number;
 }

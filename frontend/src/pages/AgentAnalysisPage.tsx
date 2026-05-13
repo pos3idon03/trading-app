@@ -4,6 +4,7 @@ import type { AgentAnalysisResponse, AgentReports, AssetItem, TradingSignal } fr
 import Spinner from '../components/Spinner';
 import ErrorAlert from '../components/ErrorAlert';
 import StatusBadge from '../components/StatusBadge';
+import RangeScoreBar from '../components/RangeScoreBar';
 
 const LLM_OPTIONS = [
   { group: 'OpenAI', value: 'gpt-4o-mini', label: 'GPT-4o Mini — fast (fallback: Gemini 3 Flash)' },
@@ -14,48 +15,6 @@ const LLM_OPTIONS = [
 
 const LLM_GROUPS = ['OpenAI', 'Gemini (Google AI Studio)'];
 
-function ConvictionGauge({ score, bias }: { score: number; bias: string }) {
-  const pct = Math.min(100, Math.max(0, score * 100));
-  const color =
-    bias === 'bullish' ? 'bg-green-500' : bias === 'bearish' ? 'bg-red-500' : 'bg-yellow-500';
-  const textColor =
-    bias === 'bullish' ? 'text-green-400' : bias === 'bearish' ? 'text-red-400' : 'text-yellow-400';
-
-  return (
-    <div className="space-y-2">
-      <div className="flex justify-between text-xs">
-        <span className="text-slate-400">Conviction</span>
-        <span className={`font-semibold ${textColor}`}>{(score * 100).toFixed(0)}%</span>
-      </div>
-      <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all duration-500 ${color}`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function SentimentMeter({ score }: { score: number }) {
-  const normalised = (score + 1) / 2;
-  const pct = normalised * 100;
-  const color = score > 0.2 ? 'bg-green-500' : score < -0.2 ? 'bg-red-500' : 'bg-yellow-500';
-
-  return (
-    <div className="space-y-2">
-      <div className="flex justify-between text-xs">
-        <span className="text-slate-400">Bearish</span>
-        <span className="text-slate-400 font-mono">{score.toFixed(2)}</span>
-        <span className="text-slate-400">Bullish</span>
-      </div>
-      <div className="relative h-2 bg-slate-700 rounded-full overflow-hidden">
-        <div className="absolute left-1/2 top-0 h-full w-px bg-slate-500" />
-        <div
-          className={`absolute h-full rounded-full transition-all duration-500 ${color}`}
-          style={{ left: '50%', width: `${Math.abs(normalised - 0.5) * 100}%`, ...(score < 0 ? { transform: 'translateX(-100%)' } : {}) }}
-        />
-      </div>
-    </div>
-  );
-}
 
 function BiasChip({ bias }: { bias: string }) {
   const styles: Record<string, string> = {
@@ -104,9 +63,10 @@ function SignalCard({ signal, duration_ms }: { signal: TradingSignal; duration_m
           )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-4">
-          <ConvictionGauge score={signal.conviction_score} bias={signal.bias} />
-          <SentimentMeter score={signal.sentiment_score} />
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-4">
+          <RangeScoreBar label="Conviction" value={signal.conviction_score} min={0} max={1} />
+          <RangeScoreBar label="Sentiment Score" value={signal.sentiment_score} min={-1} max={1} />
+          <RangeScoreBar label="Macro Score" value={signal.macro_score} min={-1} max={1} />
         </div>
 
         <div className="space-y-3 border-t border-slate-700 pt-4">

@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     llm_fallback_enabled: bool = True
     llm_request_timeout: int = 120
 
+    # Scheduler
+    enable_scheduler: bool = True
+
     # Live Trading & Execution (Phase 5-6)
     trading_mode: str = "paper"
     max_position_pct: float = 5.0

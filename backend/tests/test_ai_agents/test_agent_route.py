@@ -41,6 +41,7 @@ def _make_trading_signal():
         conviction_score=0.82,
         fundamental_summary="Strong fundamentals.",
         macro_summary="Supportive macro.",
+        macro_score=0.45,
         sentiment_score=0.6,
         reasoning="Multiple signals align bullishly.",
         key_risk="Regulatory headwinds.",
@@ -136,6 +137,7 @@ class TestGetAgentAnalysisRoute:
             "conviction_score": 0.82,
             "fundamental_summary": "Strong.",
             "macro_summary": "Supportive.",
+            "macro_score": 0.45,
             "sentiment_score": 0.6,
             "reasoning": "Bullish thesis.",
             "key_risk": "Regulatory.",
@@ -202,6 +204,7 @@ class TestSignalToDict:
             conviction_score=0.8,
             fundamental_summary="Strong.",
             macro_summary="Good.",
+            macro_score=0.45,
             sentiment_score=0.5,
             reasoning="Thesis.",
             key_risk="Risk.",
@@ -218,3 +221,23 @@ class TestSignalToDict:
         assert "duration_ms" not in d
         assert d["asset"] == "AAPL"
         assert d["bias"] == "bullish"
+        assert d["macro_score"] == pytest.approx(0.45)
+
+    def test_macro_score_included_in_signal_dict(self):
+        from routes.ai_agents import _signal_to_dict
+        from features.ai_agents.crew import TradingSignal
+
+        signal = TradingSignal(
+            asset="TSLA",
+            bias="bearish",
+            conviction_score=0.7,
+            fundamental_summary="Declining margins.",
+            macro_summary="Rate headwinds.",
+            macro_score=-0.6,
+            sentiment_score=-0.5,
+            reasoning="Bears dominate.",
+            key_risk="FSD rollout.",
+            timestamp="2024-05-09T00:00:00Z",
+        )
+        d = _signal_to_dict(signal)
+        assert d["macro_score"] == pytest.approx(-0.6)

@@ -1,27 +1,123 @@
+import type { ReactNode } from 'react';
 import {
-  AreaChart,
+  ComposedChart,
   Area,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  ReferenceDot,
 } from 'recharts';
+import type { TradeRecord } from '../api/types';
 
 interface BacktestEquityCurveProps {
   data: { time: string; value: number }[];
   gradientId: string;
+  tradeLog?: TradeRecord[];
+  buyHoldData?: { time: string; value: number }[];
   compact?: boolean;
 }
 
-export default function BacktestEquityCurve({ data, gradientId, compact = false }: BacktestEquityCurveProps) {
-  const height = compact ? 180 : 320;
+interface ChartPoint {
+  time: string;
+  value: number | null;
+  buyHold: number | null;
+}
+
+function buildChartData(
+  equityCurve: { time: string; value: number }[],
+  buyHoldData: { time: string; value: number }[] | undefined,
+): ChartPoint[] {
+  const buyHoldMap = new Map<string, number>();
+  buyHoldData?.forEach(({ time, value }) => buyHoldMap.set(time, value));
+
+  return equityCurve.map(({ time, value }) => ({
+    time,
+    value,
+    buyHold: buyHoldMap.get(time) ?? null,
+  }));
+}
+
+function dateKeyFromTimestamp(ts: string): string {
+  if (!ts || ts.length < 10) return '';
+  return ts.substring(0, 10);
+}
+
+function findEquityBarForTradeTime(
+  equityCurve: { time: string; value: number }[],
+  tradeTimestamp: string,
+): { time: string; value: number } | undefined {
+  const target = dateKeyFromTimestamp(tradeTimestamp);
+  if (!target) return undefined;
+  return equityCurve.find((row) => dateKeyFromTimestamp(row.time) === target);
+}
+
+interface BuyMarkerProps {
+  cx?: number;
+  cy?: number;
+}
+
+function BuyMarker({ cx = 0, cy = 0 }: BuyMarkerProps) {
+  const size = 7;
+  const points = `${cx},${cy - size} ${cx - size},${cy + size * 0.5} ${cx + size},${cy + size * 0.5}`;
+  return <polygon points={points} fill="#22c55e" stroke="#15803d" strokeWidth={1} />;
+}
+
+interface SellMarkerProps {
+  cx?: number;
+  cy?: number;
+}
+
+function SellMarker({ cx = 0, cy = 0 }: SellMarkerProps) {
+  const size = 7;
+  const points = `${cx},${cy + size} ${cx - size},${cy - size * 0.5} ${cx + size},${cy - size * 0.5}`;
+  return <polygon points={points} fill="#ef4444" stroke="#b91c1c" strokeWidth={1} />;
+}
+
+function renderLegend() {
+  return (
+    <div className="flex items-center gap-4 justify-end mt-1 mb-2 text-xs">
+      <span className="flex items-center gap-1">
+        <span className="inline-block w-3 h-0.5 bg-green-500" />
+        <span className="text-slate-400">Strategy</span>
+      </span>
+      <span className="flex items-center gap-1">
+        <span className="inline-block w-3 h-0.5 bg-purple-500" style={{ borderTop: '2px dashed #a855f7', display: 'inline-block', height: 0 }} />
+        <span className="text-slate-400">Buy &amp; Hold</span>
+      </span>
+      <span className="flex items-center gap-1">
+        <svg width="10" height="10"><polygon points="5,0 0,10 10,10" fill="#22c55e" /></svg>
+        <span className="text-slate-400">Buy</span>
+      </span>
+      <span className="flex items-center gap-1">
+        <svg width="10" height="10"><polygon points="5,10 0,0 10,0" fill="#ef4444" /></svg>
+        <span className="text-slate-400">Sell</span>
+      </span>
+    </div>
+  );
+}
+
+export default function BacktestEquityCurve({
+  data,
+  gradientId,
+  tradeLog,
+  buyHoldData,
+  compact = false,
+}: BacktestEquityCurveProps) {
+  const height = compact ? 200 : 320;
+  const chartData = buildChartData(data, buyHoldData);
+
+  const hasBuyHold = (buyHoldData ?? []).length > 0;
+  const hasTrades = (tradeLog ?? []).length > 0;
 
   return (
     <div className="card">
-      {!compact && <h2 className="text-slate-200 font-semibold mb-4">Equity Curve</h2>}
+      {!compact && <h2 className="text-slate-200 font-semibold mb-2">Equity Curve</h2>}
+      {renderLegend()}
       <ResponsiveContainer width="100%" height={height}>
-        <AreaChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+        <ComposedChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
           <defs>
             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%"  stopColor="#22c55e" stopOpacity={0.3} />
@@ -43,7 +139,12 @@ export default function BacktestEquityCurve({ data, gradientId, compact = false 
           <Tooltip
             contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8 }}
             labelStyle={{ color: '#94a3b8' }}
-            formatter={(v: number) => [`$${v.toFixed(2)}`, 'Portfolio Value']}
+            labelFormatter={(v: string) => v.substring(0, 10)}
+            formatter={(v: number, name: string) => {
+              if (name === 'value') return [`$${v.toFixed(2)}`, 'Strategy'];
+              if (name === 'buyHold') return [`$${v.toFixed(2)}`, 'Buy & Hold'];
+              return [v, name];
+            }}
           />
           <Area
             type="monotone"
@@ -52,8 +153,51 @@ export default function BacktestEquityCurve({ data, gradientId, compact = false 
             strokeWidth={2}
             fill={`url(#${gradientId})`}
             dot={false}
+            isAnimationActive={false}
           />
-        </AreaChart>
+          {hasBuyHold && (
+            <Line
+              type="monotone"
+              dataKey="buyHold"
+              stroke="#a855f7"
+              strokeWidth={1.5}
+              strokeDasharray="5 3"
+              dot={false}
+              isAnimationActive={false}
+            />
+          )}
+          {hasTrades &&
+            tradeLog!.flatMap((trade, i) => {
+              const entryBar = findEquityBarForTradeTime(data, trade.entry_time);
+              const exitTs = trade.exit_time?.trim();
+              const exitBar =
+                exitTs && exitTs.length >= 10
+                  ? findEquityBarForTradeTime(data, exitTs)
+                  : undefined;
+              const nodes: ReactNode[] = [];
+              if (entryBar) {
+                nodes.push(
+                  <ReferenceDot
+                    key={`buy-${i}`}
+                    x={entryBar.time}
+                    y={entryBar.value}
+                    shape={<BuyMarker />}
+                  />,
+                );
+              }
+              if (exitBar) {
+                nodes.push(
+                  <ReferenceDot
+                    key={`sell-${i}`}
+                    x={exitBar.time}
+                    y={exitBar.value}
+                    shape={<SellMarker />}
+                  />,
+                );
+              }
+              return nodes;
+            })}
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );

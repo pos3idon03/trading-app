@@ -95,6 +95,17 @@ def _is_missing(value) -> bool:
         return True
 
 
+def _normalize_dividend_yield_from_yahoo(raw: float) -> float:
+    """Store dividend yield as a fraction (0.04 == 4%) for API/UI consistency.
+
+    Yahoo `dividendYield` is usually a fraction, but some payloads use percentage
+    points (e.g. 2.16 for 2.16%). Treat values >= 1 as percentage points.
+    """
+    if raw >= 1.0:
+        return raw / 100.0
+    return raw
+
+
 def _fetch_statements_sync(symbol: str) -> dict:
     """Blocking call: fetch all financial statement DataFrames for a symbol."""
     ticker = yf.Ticker(symbol)
@@ -217,11 +228,14 @@ class YFinanceProvider(DataProvider):
         for metric in FUNDAMENTAL_METRICS:
             value = info.get(metric)
             if value is not None:
+                fv = float(value)
+                if metric == "dividendYield":
+                    fv = _normalize_dividend_yield_from_yahoo(fv)
                 records.append(FundamentalRecord(
                     time=now,
                     asset_id=asset_id,
                     metric_name=metric,
-                    value=float(value),
+                    value=fv,
                     source=self.name,
                 ))
         logger.info("yfinance_fundamentals_fetched", symbol=symbol, count=len(records))

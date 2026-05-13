@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -9,6 +9,11 @@ class VasicekParams(BaseModel):
     theta: float = Field(..., description="Long-term mean level (θ_0)")
     sigma: float = Field(..., description="Volatility (diffusion coefficient)")
     mu: float = Field(default=0.0, description="Expected drift rate for dynamic theta: θ_t = θ_0 * exp(μ * t)")
+
+
+class MertonParams(BaseModel):
+    mu: float = Field(..., description="Annualized drift rate (mean log-return / dt)")
+    sigma: float = Field(..., description="Annualized volatility (std log-return / sqrt(dt))")
 
 
 class JumpCI(BaseModel):
@@ -36,6 +41,8 @@ class CalibratedModelParams(BaseModel):
     calibration_start: datetime
     calibration_end: datetime
     num_observations: int
+    last_price: float = Field(default=0.0, description="Last observed close price; used as s0 for simulation")
+    merton: Optional[MertonParams] = Field(default=None, description="Merton GBM+Jump params; populated when model_type=merton")
 
 
 class CalibrationRequest(BaseModel):
@@ -61,6 +68,7 @@ class SimulationRequest(BaseModel):
     custom_params: Optional[CalibratedModelParams] = None
     include_distribution: bool = Field(default=False, description="Include return distribution data in response")
     calibration_years: int = Field(default=10, ge=1, le=20, description="Years of historical data for calibration")
+    model_type: Literal["vasicek", "merton"] = Field(default="vasicek", description="Simulation model: vasicek (mean-reverting) or merton (GBM+jumps)")
 
     @model_validator(mode="after")
     def require_asset_or_symbol(self) -> "SimulationRequest":

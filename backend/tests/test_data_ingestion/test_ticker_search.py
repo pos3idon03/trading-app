@@ -17,14 +17,12 @@ def _make_quote(symbol: str, name: str, quote_type: str, exchange: str = "NMS") 
     }
 
 
-def _patch_yf_search(quotes: list[dict]):
-    """Patch yfinance.Search so .quotes returns the given list."""
-    mock_search_instance = MagicMock()
-    mock_search_instance.quotes = quotes
-    return patch(
-        "features.data_ingestion.ticker_search._run_yfinance_search",
-        return_value=quotes,
-    )
+def _mock_requests_get(quotes: list[dict]):
+    """Patch requests.get to return the given quotes list."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"quotes": quotes}
+    mock_response.raise_for_status = MagicMock()
+    return patch("features.data_ingestion.ticker_search.requests.get", return_value=mock_response)
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +38,7 @@ class TestSearchTickers:
             _make_quote("MSFT", "Microsoft Corporation", "EQUITY", "NMS"),
             _make_quote("MSTR", "MicroStrategy Incorporated", "EQUITY", "NMS"),
         ]
-        with _patch_yf_search(quotes):
+        with _mock_requests_get(quotes):
             response = await search_tickers(query="Micro", limit=10)
 
         assert response.count == 2
@@ -53,8 +51,7 @@ class TestSearchTickers:
     async def test_maps_equity_to_stock(self):
         from features.data_ingestion.ticker_search import search_tickers
 
-        quotes = [_make_quote("AAPL", "Apple Inc.", "EQUITY")]
-        with _patch_yf_search(quotes):
+        with _mock_requests_get([_make_quote("AAPL", "Apple Inc.", "EQUITY")]):
             response = await search_tickers(query="Apple", limit=10)
 
         assert response.results[0].asset_type == "stock"
@@ -63,8 +60,7 @@ class TestSearchTickers:
     async def test_maps_etf_type(self):
         from features.data_ingestion.ticker_search import search_tickers
 
-        quotes = [_make_quote("SPY", "SPDR S&P 500 ETF", "ETF")]
-        with _patch_yf_search(quotes):
+        with _mock_requests_get([_make_quote("SPY", "SPDR S&P 500 ETF", "ETF")]):
             response = await search_tickers(query="SPY", limit=10)
 
         assert response.results[0].asset_type == "etf"
@@ -73,8 +69,7 @@ class TestSearchTickers:
     async def test_maps_mutualfund_to_etf(self):
         from features.data_ingestion.ticker_search import search_tickers
 
-        quotes = [_make_quote("VTSAX", "Vanguard Total Stock Market", "MUTUALFUND")]
-        with _patch_yf_search(quotes):
+        with _mock_requests_get([_make_quote("VTSAX", "Vanguard Total Stock Market", "MUTUALFUND")]):
             response = await search_tickers(query="Vanguard", limit=10)
 
         assert response.results[0].asset_type == "etf"
@@ -83,8 +78,7 @@ class TestSearchTickers:
     async def test_maps_cryptocurrency_type(self):
         from features.data_ingestion.ticker_search import search_tickers
 
-        quotes = [_make_quote("BTC-USD", "Bitcoin USD", "CRYPTOCURRENCY")]
-        with _patch_yf_search(quotes):
+        with _mock_requests_get([_make_quote("BTC-USD", "Bitcoin USD", "CRYPTOCURRENCY")]):
             response = await search_tickers(query="Bitcoin", limit=10)
 
         assert response.results[0].asset_type == "crypto"
@@ -93,8 +87,7 @@ class TestSearchTickers:
     async def test_maps_currency_to_forex(self):
         from features.data_ingestion.ticker_search import search_tickers
 
-        quotes = [_make_quote("EURUSD=X", "EUR/USD", "CURRENCY")]
-        with _patch_yf_search(quotes):
+        with _mock_requests_get([_make_quote("EURUSD=X", "EUR/USD", "CURRENCY")]):
             response = await search_tickers(query="EUR", limit=10)
 
         assert response.results[0].asset_type == "forex"
@@ -103,8 +96,7 @@ class TestSearchTickers:
     async def test_maps_index_type(self):
         from features.data_ingestion.ticker_search import search_tickers
 
-        quotes = [_make_quote("^GSPC", "S&P 500", "INDEX")]
-        with _patch_yf_search(quotes):
+        with _mock_requests_get([_make_quote("^GSPC", "S&P 500", "INDEX")]):
             response = await search_tickers(query="S&P", limit=10)
 
         assert response.results[0].asset_type == "index"
@@ -113,8 +105,7 @@ class TestSearchTickers:
     async def test_maps_unknown_type_to_stock(self):
         from features.data_ingestion.ticker_search import search_tickers
 
-        quotes = [_make_quote("XYZ", "Unknown Asset", "EXOTIC")]
-        with _patch_yf_search(quotes):
+        with _mock_requests_get([_make_quote("XYZ", "Unknown Asset", "EXOTIC")]):
             response = await search_tickers(query="XYZ", limit=10)
 
         assert response.results[0].asset_type == "stock"
@@ -124,7 +115,7 @@ class TestSearchTickers:
         from features.data_ingestion.ticker_search import search_tickers
 
         quotes = [_make_quote(f"SYM{i}", f"Company {i}", "EQUITY") for i in range(20)]
-        with _patch_yf_search(quotes):
+        with _mock_requests_get(quotes):
             response = await search_tickers(query="Company", limit=5)
 
         assert response.count == 5
@@ -135,7 +126,7 @@ class TestSearchTickers:
         from features.data_ingestion.ticker_search import search_tickers
 
         with patch(
-            "features.data_ingestion.ticker_search._run_yfinance_search",
+            "features.data_ingestion.ticker_search.requests.get",
             side_effect=Exception("network error"),
         ):
             response = await search_tickers(query="AAPL", limit=10)
@@ -147,7 +138,7 @@ class TestSearchTickers:
     async def test_handles_empty_results(self):
         from features.data_ingestion.ticker_search import search_tickers
 
-        with _patch_yf_search([]):
+        with _mock_requests_get([]):
             response = await search_tickers(query="ZZZZ", limit=10)
 
         assert response.count == 0
@@ -157,19 +148,31 @@ class TestSearchTickers:
     async def test_uses_shortname_when_longname_missing(self):
         from features.data_ingestion.ticker_search import search_tickers
 
-        quote = {
-            "symbol": "TST",
-            "shortname": "Test Corp",
-            "quoteType": "EQUITY",
-            "exchange": "NMS",
-        }
-        with patch(
-            "features.data_ingestion.ticker_search._run_yfinance_search",
-            return_value=[quote],
-        ):
+        quote = {"symbol": "TST", "shortname": "Test Corp", "quoteType": "EQUITY", "exchange": "NMS"}
+        with _mock_requests_get([quote]):
             response = await search_tickers(query="Test", limit=10)
 
         assert response.results[0].name == "Test Corp"
+
+    @pytest.mark.asyncio
+    async def test_passes_query_params(self):
+        from features.data_ingestion.ticker_search import search_tickers
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"quotes": []}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch(
+            "features.data_ingestion.ticker_search.requests.get",
+            return_value=mock_response,
+        ) as mock_get:
+            await search_tickers(query="Tesla", limit=5)
+
+        call_kwargs = mock_get.call_args.kwargs
+        params = call_kwargs["params"]
+        assert params["q"] == "Tesla"
+        assert params["quotesCount"] == 5
+        assert params["newsCount"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +205,6 @@ class TestTickerSearchDTOs:
 
 class TestTickerSearchRoute:
     def _make_client(self):
-        """Build a test client with a mocked DB session."""
         import os
         os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
         os.environ.setdefault("DATABASE_SYNC_URL", "postgresql://test:test@localhost/test")
@@ -216,16 +218,11 @@ class TestTickerSearchRoute:
         from dtos.market_data_dto import TickerSearchResponse, TickerSearchResult
 
         mock_response = TickerSearchResponse(
-            results=[
-                TickerSearchResult(symbol="MSFT", name="Microsoft Corporation", exchange="NMS")
-            ],
+            results=[TickerSearchResult(symbol="MSFT", name="Microsoft Corporation", exchange="NMS")],
             count=1,
         )
 
-        with patch(
-            "routes.data_ingestion.search_tickers",
-            new=AsyncMock(return_value=mock_response),
-        ):
+        with patch("routes.data_ingestion.search_tickers", new=AsyncMock(return_value=mock_response)):
             client = self._make_client()
             response = client.get("/api/v1/data/tickers/search?query=Micro")
 
@@ -272,10 +269,7 @@ class TestTickerSearchRoute:
             count=3,
         )
 
-        with patch(
-            "routes.data_ingestion.search_tickers",
-            new=AsyncMock(return_value=mock_response),
-        ):
+        with patch("routes.data_ingestion.search_tickers", new=AsyncMock(return_value=mock_response)):
             client = self._make_client()
             response = client.get("/api/v1/data/tickers/search?query=test")
 
