@@ -1,19 +1,20 @@
 """Monthly indicator snapshots for multi-strategy combination backtests.
 
 For each strategy in a combo, computes the key indicator readings at month-end
-and the strategy's position state (Buy / Sell).  Used to populate the monthly
+and the strategy's stance (Buy / Neutral / Sell).  Used to populate the monthly
 breakdown table returned by the /combo endpoint.
 """
 import numpy as np
 import pandas as pd
 
-from features.backtesting.combo_runner import (
-    ComboStrategyConfig,
-    _signals_to_position,
-    combine_signals,
-)
+from features.backtesting.combo_runner import ComboStrategyConfig
 from features.backtesting.indicator_functions import INDICATOR_MAP, _empty_indicators
-from features.backtesting.strategies import build_signal_array
+from features.backtesting.stance import (
+    STANCE_BUY,
+    STANCE_SELL,
+    combine_stances,
+    compute_strategy_stance,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -39,31 +40,29 @@ def _build_strategy_monthly_df(
     df: pd.DataFrame,
     cfg: ComboStrategyConfig,
     time_idx: pd.DatetimeIndex,
-) -> tuple[pd.DataFrame, tuple]:
-    """Compute resampled indicator+position DataFrame and raw signals for one strategy."""
-    entries, exits = build_signal_array(df, cfg.strategy_name, cfg.strategy_params)
-    position = _signals_to_position(entries, exits).reset_index(drop=True)
+) -> pd.DataFrame:
+    """Compute resampled indicator + stance DataFrame for one strategy."""
+    stance = compute_strategy_stance(df, cfg.strategy_name, cfg.strategy_params)
     indicator_fn = INDICATOR_MAP.get(cfg.strategy_name, _empty_indicators)
     ind_df = indicator_fn(df, cfg.strategy_params).reset_index(drop=True)
-    ind_df["_position"] = position.values
+    ind_df["_stance"] = stance.reset_index(drop=True).values
     ind_df.index = time_idx
-    return ind_df.resample("ME").last(), (entries, exits)
+    return ind_df.resample("ME").last()
 
 
 def _row_indicators(row: pd.Series) -> dict[str, float | None]:
     return {
         col: _safe_float(row[col])
         for col in row.index
-        if col != "_position"
+        if col not in ("_position", "_stance")
     }
 
 
-def _position_label(current: bool) -> str:
-    """Return Buy or Sell based on the current month-end position state.
+def _stance_label(stance: str) -> str:
+    return stance if stance in (STANCE_BUY, STANCE_SELL, "Neutral") else "Neutral"
 
-    Buy  — strategy is currently in position (long).
-    Sell — strategy is currently out of position (flat / short).
-    """
+
+def _position_label(current: bool) -> str:
     return "Buy" if current else "Sell"
 
 
@@ -80,10 +79,10 @@ def _build_monthly_rows(
             if month_ts not in sdf.index:
                 continue
             row = sdf.loc[month_ts]
-            cur_pos = bool(row["_position"]) if "_position" in row.index else False
+            cur_stance = str(row["_stance"]) if "_stance" in row.index else "Neutral"
             strategy_states.append({
                 "strategy_name": cfg.strategy_name,
-                "position": _position_label(cur_pos),
+                "position": _stance_label(cur_stance),
                 "indicators": _row_indicators(row),
             })
         cur_combo = month_ts in combo_monthly.index and bool(combo_monthly.loc[month_ts])
@@ -107,16 +106,16 @@ def compute_monthly_breakdown(
     """
     time_idx = _get_time_index(df)
     strategy_dfs: list[pd.DataFrame] = []
-    signal_list: list[tuple] = []
+    stance_list: list[pd.Series] = []
 
     for cfg in strategies:
-        monthly_df, signals = _build_strategy_monthly_df(df, cfg, time_idx)
-        strategy_dfs.append(monthly_df)
-        signal_list.append(signals)
+        strategy_dfs.append(_build_strategy_monthly_df(df, cfg, time_idx))
+        stance_list.append(
+            compute_strategy_stance(df, cfg.strategy_name, cfg.strategy_params)
+        )
 
     weights = [cfg.weight for cfg in strategies]
-    combo_e, combo_x = combine_signals(signal_list, mode, weights, threshold)
-    combo_pos = _signals_to_position(combo_e, combo_x).reset_index(drop=True)
+    combo_pos = combine_stances(stance_list, mode, weights, threshold)
     combo_pos.index = time_idx
     combo_monthly = combo_pos.resample("ME").last()
 

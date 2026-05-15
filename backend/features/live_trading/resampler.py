@@ -16,6 +16,7 @@ TIMEFRAME_DELTAS: dict[str, timedelta] = {
     "1h": timedelta(hours=1),
     "4h": timedelta(hours=4),
     "1d": timedelta(days=1),
+    "1w": timedelta(weeks=1),
 }
 
 

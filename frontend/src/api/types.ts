@@ -13,6 +13,23 @@ export interface AssetListResponse {
   count: number;
 }
 
+export interface AssetWithPrice {
+  id: number;
+  symbol: string;
+  name: string | null;
+  asset_type: string;
+  exchange: string | null;
+  currency: string;
+  is_active: boolean;
+  latest_close: number | null;
+  latest_update: string | null;
+}
+
+export interface AssetWithPriceListResponse {
+  assets: AssetWithPrice[];
+  count: number;
+}
+
 export interface OHLCVRecord {
   time: string;
   asset_id: number;
@@ -161,7 +178,7 @@ export interface OptimizationSummary {
 }
 
 export interface OptimizationResponse {
-  optimization_id: number;
+  optimization_id?: number;
   asset_id: number;
   strategy_name: string;
   status: string;
@@ -278,6 +295,9 @@ export interface LiveStrategySignalItem {
   label: string;
   group: string;
   signal: 'BUY' | 'SELL' | 'NEUTRAL';
+  indicator_value: number | null;
+  indicator_label: string | null;
+  params: Record<string, unknown> | null;
 }
 
 export interface StrategySignalsResponse {
@@ -423,6 +443,33 @@ export interface FinancialsIngestResponse {
   status: string;
 }
 
+export interface ChartOverlayRequest {
+  symbol?: string;
+  asset_id?: number;
+  strategy_name: string;
+  timeframe: string;
+  start_date: string;
+  end_date: string;
+  strategy_params?: Record<string, unknown>;
+}
+
+export interface ChartOverlayTradeEntry {
+  entry_time: string;
+  exit_time: string | null;
+  direction: string;
+  entry_price: number;
+  exit_price: number | null;
+  pnl: number | null;
+  return_pct: number | null;
+}
+
+export interface ChartOverlayResponse {
+  strategy_name: string;
+  trade_log: ChartOverlayTradeEntry[];
+  indicator_series: Record<string, string | number | null>[];
+  duration_ms: number;
+}
+
 export interface BacktestMetrics {
   sharpe_ratio?: number;
   sortino_ratio?: number;
@@ -446,7 +493,7 @@ export interface TradeRecord {
 
 export interface StrategyMonthlyState {
   strategy_name: string;
-  position: 'Buy' | 'Sell';
+  position: 'Buy' | 'Neutral' | 'Sell';
   indicators: Record<string, number | null>;
 }
 
@@ -456,10 +503,28 @@ export interface ComboMonthlyRow {
   strategies: StrategyMonthlyState[];
 }
 
+export interface SignalPoint {
+  time: string;
+  signal: 'Buy' | 'Neutral' | 'Sell';
+}
+
+export interface ComboStrategySignal {
+  strategy_name: string;
+  trade_log: TradeRecord[];
+  indicator_series: Record<string, string | number | null>[];
+  equity_curve: { time: string; value: number }[];
+  signal_timeline: SignalPoint[];
+}
+
+export interface ComboSignalsResponse {
+  strategies: ComboStrategySignal[];
+}
+
 export interface BacktestResponse {
-  backtest_id: number;
+  backtest_id?: number;
   asset_id: number;
   strategy_name: string;
+  strategy_params?: Record<string, unknown>;
   status: string;
   metrics?: BacktestMetrics;
   equity_curve?: { time: string; value: number }[];
@@ -597,13 +662,9 @@ export interface FinancialsSummary {
 }
 
 export interface AlgoStrategySummary {
-  backtest_id: number;
+  algo_attachment_id: number;
   strategy_name: string;
-  total_return: number | null;
-  sharpe_ratio: number | null;
-  max_drawdown: number | null;
-  win_rate: number | null;
-  num_trades: number | null;
+  params: Record<string, unknown> | null;
   added_at: string;
 }
 
@@ -645,12 +706,67 @@ export interface CreateStrategyRequest {
   asset_id: number;
 }
 
-export interface AttachBacktestRequest {
+export interface AttachAlgoRequest {
   asset_id: number;
-  backtest_id: number;
+  strategy_name: string;
+  params?: Record<string, unknown> | null;
 }
 
-export interface DetachBacktestRequest {
+export interface DetachAlgoRequest {
   strategy_id: number;
-  backtest_id: number;
+  algo_attachment_id: number;
+}
+
+// ── Execution monitoring (live auto-trading) ──────────────────────────────────
+
+export type CriteriaSignal = 'BUY' | 'SELL' | 'NEUTRAL';
+
+export interface CriterionEvaluation {
+  label: string;
+  value: number | null;
+  buyThreshold: number | null;
+  sellThreshold: number | null;
+  signal: CriteriaSignal;
+}
+
+export interface AttachedAlgoSignal {
+  strategy: string;
+  label: string;
+  signal: 'BUY' | 'SELL' | 'NEUTRAL';
+  /** Set when this signal belongs to a combo backtest group */
+  comboGroup?: string;
+  indicatorValue?: number | null;
+  indicatorLabel?: string | null;
+  params?: Record<string, unknown> | null;
+}
+
+export interface ComboGroupSignal {
+  /** e.g. "combo:majority" */
+  comboName: string;
+  combinationMode: string;
+  signal: CriteriaSignal;
+}
+
+export interface ExecutionAssetMonitor {
+  strategyId: number;
+  symbol: string;
+  assetName: string | null;
+  combinationMode: 'all' | 'majority' | 'any';
+  algoTimeframe: AlgoTimeframe;
+  // Live criteria snapshot (from AutoTradingAssetRow values + thresholds)
+  criteria: CriterionEvaluation[];
+  // Overall combined signal
+  overallSignal: CriteriaSignal;
+  // Attached algo strategy signals (expanded: individual strategies within combos are listed)
+  algoSignals: AttachedAlgoSignal[];
+  // Per-combo combined signal (one entry per attached combo backtest)
+  comboSignals: ComboGroupSignal[];
+  // Latest price
+  latestPrice: number | null;
+  priceUpdatedAt: string | null;
+  // Transactions
+  orders: OrderItem[];
+  // Loading / error state
+  loading: boolean;
+  error: string | null;
 }

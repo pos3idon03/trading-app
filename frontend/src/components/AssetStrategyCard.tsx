@@ -23,10 +23,10 @@ interface Props {
 }
 
 // ---------------------------------------------------------------------------
-// Threshold number input
+// Threshold range slider
 // ---------------------------------------------------------------------------
 
-function ThresholdInput({
+function ThresholdSlider({
   label,
   value,
   min,
@@ -41,19 +41,44 @@ function ThresholdInput({
   step?: number;
   onChange: (v: string) => void;
 }) {
+  const numValue = value === '' ? null : parseFloat(value);
+  const isSet = numValue !== null && !isNaN(numValue);
+  const effectiveStep = step ?? 0.01;
+  const midpoint = parseFloat(((min + max) / 2).toFixed(2));
+
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 min-w-0">
       <label className="text-slate-500 text-xs w-44 shrink-0">{label}</label>
-      <input
-        type="number"
-        min={min}
-        max={max}
-        step={step ?? 0.01}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="—"
-        className="w-24 bg-surface-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-brand-500"
-      />
+      {isSet ? (
+        <>
+          <input
+            type="range"
+            min={min}
+            max={max}
+            step={effectiveStep}
+            value={numValue}
+            onChange={(e) => onChange(e.target.value)}
+            className="threshold-slider flex-1 min-w-0"
+          />
+          <span className="text-slate-200 text-xs font-mono w-10 text-right shrink-0">
+            {numValue.toFixed(2)}
+          </span>
+          <button
+            onClick={() => onChange('')}
+            className="text-slate-500 hover:text-red-400 text-xs shrink-0 leading-none"
+            title="Clear threshold"
+          >
+            ✕
+          </button>
+        </>
+      ) : (
+        <button
+          onClick={() => onChange(String(midpoint))}
+          className="text-xs text-brand-400 hover:text-brand-300 transition-colors"
+        >
+          + Set threshold
+        </button>
+      )}
     </div>
   );
 }
@@ -130,13 +155,13 @@ function MonteCarloSection({
 
       <div className="border-t border-slate-700/60 pt-3 space-y-2">
         <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Auto-Trading Thresholds</p>
-        <ThresholdInput
+        <ThresholdSlider
           label="Min Prob. Positive (BUY)"
           value={thresholds.buyProb}
           min={0} max={1}
           onChange={(v) => onThresholdChange('buyProb', v)}
         />
-        <ThresholdInput
+        <ThresholdSlider
           label="Max Prob. Positive (SELL)"
           value={thresholds.sellProb}
           min={0} max={1}
@@ -200,12 +225,12 @@ function AIAgentsSection({
 
       <div className="border-t border-slate-700/60 pt-3 space-y-2">
         <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Auto-Trading Thresholds</p>
-        <ThresholdInput label="Min Conviction (BUY)" value={thresholds.buyConviction} min={0} max={1} onChange={(v) => onThresholdChange('buyConviction', v)} />
-        <ThresholdInput label="Max Conviction (SELL)" value={thresholds.sellConviction} min={0} max={1} onChange={(v) => onThresholdChange('sellConviction', v)} />
-        <ThresholdInput label="Min Sentiment (BUY)" value={thresholds.buySentiment} min={-1} max={1} onChange={(v) => onThresholdChange('buySentiment', v)} />
-        <ThresholdInput label="Max Sentiment (SELL)" value={thresholds.sellSentiment} min={-1} max={1} onChange={(v) => onThresholdChange('sellSentiment', v)} />
-        <ThresholdInput label="Min Macro (BUY)" value={thresholds.buyMacro} min={-1} max={1} onChange={(v) => onThresholdChange('buyMacro', v)} />
-        <ThresholdInput label="Max Macro (SELL)" value={thresholds.sellMacro} min={-1} max={1} onChange={(v) => onThresholdChange('sellMacro', v)} />
+        <ThresholdSlider label="Min Conviction (BUY)" value={thresholds.buyConviction} min={-1} max={1} onChange={(v) => onThresholdChange('buyConviction', v)} />
+        <ThresholdSlider label="Max Conviction (SELL)" value={thresholds.sellConviction} min={-1} max={1} onChange={(v) => onThresholdChange('sellConviction', v)} />
+        <ThresholdSlider label="Min Sentiment (BUY)" value={thresholds.buySentiment} min={-1} max={1} onChange={(v) => onThresholdChange('buySentiment', v)} />
+        <ThresholdSlider label="Max Sentiment (SELL)" value={thresholds.sellSentiment} min={-1} max={1} onChange={(v) => onThresholdChange('sellSentiment', v)} />
+        <ThresholdSlider label="Min Macro (BUY)" value={thresholds.buyMacro} min={-1} max={1} onChange={(v) => onThresholdChange('buyMacro', v)} />
+        <ThresholdSlider label="Max Macro (SELL)" value={thresholds.sellMacro} min={-1} max={1} onChange={(v) => onThresholdChange('sellMacro', v)} />
       </div>
     </div>
   );
@@ -272,35 +297,127 @@ function FinancialsSection({ data, error }: { data: FinancialsSummary | null; er
 // Algo Strategies Section
 // ---------------------------------------------------------------------------
 
+const COMBO_MODE_LABELS: Record<string, string> = {
+  and: 'AND (Unanimous)',
+  majority: 'Majority Vote',
+  weighted: 'Weighted',
+};
+
+interface ComboSubStrategy {
+  strategy_name: string;
+  strategy_params: Record<string, number>;
+  weight: number;
+}
+
+interface ComboParams {
+  combination_mode: string;
+  threshold: number;
+  strategies: ComboSubStrategy[];
+}
+
+function ParamChips({ params }: { params: Record<string, unknown> }) {
+  const entries = Object.entries(params);
+  if (entries.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {entries.map(([k, v]) => (
+        <span
+          key={k}
+          className="bg-slate-800 border border-slate-600 rounded px-1.5 py-0.5 text-xs text-slate-400 font-mono"
+        >
+          {k}: <span className="text-slate-300">{String(v)}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function AlgoAddedAt({ item }: { item: AlgoStrategySummary }) {
+  const date = new Date(item.added_at).toLocaleDateString();
+  return <span className="text-xs text-slate-500">Added {date}</span>;
+}
+
+function ComboAlgoRow({
+  item,
+  onDetach,
+}: {
+  item: AlgoStrategySummary;
+  onDetach: (algoAttachmentId: number) => void;
+}) {
+  const params = item.params as unknown as ComboParams | null;
+  const mode = params?.combination_mode ?? item.strategy_name.replace('combo:', '');
+  const modeLabel = COMBO_MODE_LABELS[mode] ?? mode;
+  const subStrategies: ComboSubStrategy[] = params?.strategies ?? [];
+  const isWeighted = mode === 'weighted';
+
+  return (
+    <div className="bg-surface-900 rounded-lg p-3 border border-slate-700 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0 space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-slate-200 text-sm font-medium">Combo Strategy</p>
+            <span className="bg-brand-500/20 text-brand-400 text-xs px-2 py-0.5 rounded-full font-medium">
+              {modeLabel}
+            </span>
+            {params?.threshold !== undefined && isWeighted && (
+              <span className="text-xs text-slate-500">threshold: {params.threshold}</span>
+            )}
+          </div>
+          <AlgoAddedAt item={item} />
+        </div>
+        <button
+          onClick={() => onDetach(item.algo_attachment_id)}
+          className="text-slate-500 hover:text-red-400 text-xs shrink-0 transition-colors"
+          title="Remove"
+        >
+          ✕
+        </button>
+      </div>
+
+      {subStrategies.length > 0 && (
+        <div className="border-t border-slate-700/60 pt-2 space-y-2">
+          {subStrategies.map((sub) => {
+            const subLabel =
+              STRATEGIES.find((s) => s.value === sub.strategy_name)?.label ?? sub.strategy_name;
+            return (
+              <div key={sub.strategy_name} className="pl-2 border-l-2 border-slate-600">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-300 text-xs font-medium">{subLabel}</span>
+                  {isWeighted && (
+                    <span className="text-xs text-slate-500">weight: {sub.weight}</span>
+                  )}
+                </div>
+                {sub.strategy_params && Object.keys(sub.strategy_params).length > 0 && (
+                  <ParamChips params={sub.strategy_params} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AlgoRow({
   item,
   onDetach,
 }: {
   item: AlgoStrategySummary;
-  onDetach: (backtestId: number) => void;
+  onDetach: (algoAttachmentId: number) => void;
 }) {
   const label = STRATEGIES.find((s) => s.value === item.strategy_name)?.label ?? item.strategy_name;
+  const params = item.params as Record<string, unknown> | null;
 
   return (
     <div className="bg-surface-900 rounded-lg p-3 border border-slate-700 flex items-start justify-between gap-2">
       <div className="flex-1 min-w-0 space-y-1">
         <p className="text-slate-200 text-sm font-medium truncate">{label}</p>
-        <div className="flex flex-wrap gap-3 text-xs text-slate-400">
-          {item.total_return !== null && (
-            <span className={item.total_return >= 0 ? 'text-green-400' : 'text-red-400'}>
-              Return: {fmtPct(item.total_return)}
-            </span>
-          )}
-          {item.sharpe_ratio !== null && (
-            <span>Sharpe: {fmt(item.sharpe_ratio, 2)}</span>
-          )}
-          {item.win_rate !== null && (
-            <span>Win: {fmtPct(item.win_rate)}</span>
-          )}
-        </div>
+        <AlgoAddedAt item={item} />
+        {params && Object.keys(params).length > 0 && <ParamChips params={params} />}
       </div>
       <button
-        onClick={() => onDetach(item.backtest_id)}
+        onClick={() => onDetach(item.algo_attachment_id)}
         className="text-slate-500 hover:text-red-400 text-xs shrink-0 transition-colors"
         title="Remove"
       >
@@ -323,7 +440,7 @@ function AlgoStrategiesSection({
   strategyId: number;
   timeframe: AlgoTimeframe;
   onTimeframeChange: (v: AlgoTimeframe) => void;
-  onDetached: (backtestId: number) => void;
+  onDetached: (algoAttachmentId: number) => void;
 }) {
   return (
     <div className="space-y-3">
@@ -346,9 +463,13 @@ function AlgoStrategiesSection({
         </p>
       ) : (
         <div className="space-y-2">
-          {items.map((item) => (
-            <AlgoRow key={item.backtest_id} item={item} onDetach={onDetached} />
-          ))}
+          {items.map((item) =>
+            item.strategy_name.startsWith('combo:') ? (
+              <ComboAlgoRow key={item.algo_attachment_id} item={item} onDetach={onDetached} />
+            ) : (
+              <AlgoRow key={item.algo_attachment_id} item={item} onDetach={onDetached} />
+            ),
+          )}
         </div>
       )}
 
@@ -464,16 +585,16 @@ export default function AssetStrategyCard({ strategy, onRemove, onUpdated }: Pro
     }
   };
 
-  const handleDetach = async (backtestId: number) => {
+  const handleDetach = async (algoAttachmentId: number) => {
     if (!data) return;
     try {
-      await strategyBuilderApi.detachBacktest({
+      await strategyBuilderApi.detachAlgo({
         strategy_id: strategy.id,
-        backtest_id: backtestId,
+        algo_attachment_id: algoAttachmentId,
       });
       setData((prev) =>
         prev
-          ? { ...prev, algo_strategies: prev.algo_strategies.filter((a) => a.backtest_id !== backtestId) }
+          ? { ...prev, algo_strategies: prev.algo_strategies.filter((a) => a.algo_attachment_id !== algoAttachmentId) }
           : prev,
       );
     } catch {

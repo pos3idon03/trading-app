@@ -88,13 +88,9 @@ const mockFullResponse: StrategyFullResponse = {
   },
   algo_strategies: [
     {
-      backtest_id: 42,
+      algo_attachment_id: 42,
       strategy_name: 'ma_crossover',
-      total_return: 0.25,
-      sharpe_ratio: 1.2,
-      max_drawdown: -0.1,
-      win_rate: 0.55,
-      num_trades: 12,
+      params: null,
       added_at: '2024-01-01T00:00:00Z',
     },
   ],
@@ -107,8 +103,8 @@ vi.mock('../api/endpoints', () => ({
   strategyBuilderApi: {
     getFull: vi.fn(),
     remove: vi.fn().mockResolvedValue({ deleted: true }),
-    detachBacktest: vi.fn().mockResolvedValue({}),
-    attachBacktest: vi.fn().mockResolvedValue({}),
+    detachAlgo: vi.fn().mockResolvedValue({}),
+    attachAlgo: vi.fn().mockResolvedValue({}),
     updateThresholds: vi.fn(),
     list: vi.fn().mockResolvedValue([]),
     create: vi.fn().mockResolvedValue({}),
@@ -236,7 +232,7 @@ describe('AssetStrategyCard', () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
     await waitFor(() => {
       expect(screen.getByText('MA Crossover')).toBeInTheDocument();
-      expect(screen.getByText(/25.00%/)).toBeInTheDocument();
+      expect(screen.getByText(/Added/)).toBeInTheDocument();
     });
   });
 
@@ -258,5 +254,119 @@ describe('AssetStrategyCard', () => {
     await waitFor(() => {
       expect(screen.queryByText('Prob. Positive Return')).not.toBeInTheDocument();
     });
+  });
+
+  it('renders param chips for a non-combo algo strategy', async () => {
+    const { strategyBuilderApi } = await import('../api/endpoints');
+    const fullWithParams: StrategyFullResponse = {
+      ...mockFullResponse,
+      algo_strategies: [
+        {
+          algo_attachment_id: 42,
+          strategy_name: 'rsi',
+          params: { period: 14, overbought: 70, oversold: 30 },
+          added_at: '2024-01-01T00:00:00Z',
+        },
+      ],
+    };
+    (strategyBuilderApi.getFull as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fullWithParams);
+
+    render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await waitFor(() => {
+      expect(screen.getByText('RSI (Relative Strength Index)')).toBeInTheDocument();
+      // Value "14" is in its own inner <span>
+      expect(screen.getByText('14')).toBeInTheDocument();
+      // Key "period" is a text node inside the chip but sibling to the value span
+      expect(screen.getAllByText(/period/).length).toBeGreaterThan(0);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Combo strategy display
+// ---------------------------------------------------------------------------
+
+describe('AssetStrategyCard – combo algo strategy display', () => {
+  const onRemove = vi.fn();
+  const onUpdated = vi.fn();
+
+  const comboFullResponse: StrategyFullResponse = {
+    ...mockFullResponse,
+    algo_strategies: [
+      {
+        algo_attachment_id: 99,
+        strategy_name: 'combo:majority',
+        params: {
+          combination_mode: 'majority',
+          threshold: 0.5,
+          strategies: [
+            {
+              strategy_name: 'ma_crossover',
+              strategy_params: { fast_window: 10, slow_window: 50 },
+              weight: 1.0,
+            },
+            {
+              strategy_name: 'rsi',
+              strategy_params: { period: 14, overbought: 70, oversold: 30 },
+              weight: 1.0,
+            },
+          ],
+        },
+        added_at: '2024-01-01T00:00:00Z',
+      },
+    ],
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { strategyBuilderApi } = await import('../api/endpoints');
+    (strategyBuilderApi.getFull as ReturnType<typeof vi.fn>).mockResolvedValue(comboFullResponse);
+    (strategyBuilderApi.updateThresholds as ReturnType<typeof vi.fn>).mockResolvedValue(mockStrategy);
+  });
+
+  it('renders "Combo Strategy" header instead of raw strategy_name', async () => {
+    render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await waitFor(() => {
+      expect(screen.getByText('Combo Strategy')).toBeInTheDocument();
+    });
+  });
+
+  it('renders the combination mode badge', async () => {
+    render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await waitFor(() => {
+      // "Majority Vote" may appear in the combo badge and the combination-mode select option
+      expect(screen.getAllByText('Majority Vote').length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it('renders added date for the combo', async () => {
+    render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await waitFor(() => {
+      expect(screen.getByText(/Added/)).toBeInTheDocument();
+    });
+  });
+
+  it('lists each sub-strategy name', async () => {
+    render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await waitFor(() => {
+      expect(screen.getByText('MA Crossover')).toBeInTheDocument();
+      expect(screen.getByText('RSI (Relative Strength Index)')).toBeInTheDocument();
+    });
+  });
+
+  it('renders param chips for each sub-strategy', async () => {
+    render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await waitFor(() => {
+      // ParamChips renders "{key}: {value}" — check key text appears somewhere
+      expect(screen.getAllByText(/fast_window/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/slow_window/).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(/period/).length).toBeGreaterThan(0);
+    });
+  });
+
+  it('does not render raw "combo:majority" text as the card title', async () => {
+    render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await waitFor(() => screen.getByText('Combo Strategy'));
+    expect(screen.queryByText('combo:majority')).not.toBeInTheDocument();
   });
 });

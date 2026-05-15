@@ -3,6 +3,7 @@ import type { BacktestResponse } from '../api/types';
 import { STRATEGIES, DEFAULT_PARAMS_MAP } from '../constants/strategies';
 import { fmt, fmtPct } from '../utils/formatting';
 import MetricCard from './MetricCard';
+import MetricQualityBar from './MetricQualityBar';
 import StatusBadge from './StatusBadge';
 import ErrorAlert from './ErrorAlert';
 import BacktestEquityCurve from './BacktestEquityCurve';
@@ -10,7 +11,8 @@ import IndicatorChart from './IndicatorChart';
 
 interface BacktestResultCardProps {
   result: BacktestResponse;
-  onAddToStrategy?: (backtestId: number, assetId: number) => Promise<void>;
+  onAddToStrategy?: (strategyName: string, params: Record<string, unknown>, assetId: number) => Promise<void>;
+  syncId?: string;
 }
 
 function StrategyLabel({ strategyName }: { strategyName: string }) {
@@ -23,30 +25,32 @@ function MetricsGrid({ metrics }: { metrics: NonNullable<BacktestResponse['metri
   return (
     <div className="grid grid-cols-2 gap-2">
       <MetricCard label="Total Return"  value={fmtPct(m.total_return)}    positive={(m.total_return ?? 0) > 0}  negative={(m.total_return ?? 0) < 0} />
-      <MetricCard label="Sharpe Ratio"  value={fmt(m.sharpe_ratio, 3)}    positive={(m.sharpe_ratio ?? 0) > 1}  negative={(m.sharpe_ratio ?? 0) < 0} />
+      <MetricQualityBar label="Sharpe Ratio" value={m.sharpe_ratio} formattedValue={fmt(m.sharpe_ratio, 3)} kind="sharpe" />
       <MetricCard label="Max Drawdown"  value={fmtPct(m.max_drawdown)}    negative />
       <MetricCard label="Win Rate"      value={fmtPct(m.win_rate)}        positive={(m.win_rate ?? 0) > 0.5} />
-      <MetricCard label="Profit Factor" value={fmt(m.profit_factor, 2)}   positive={(m.profit_factor ?? 0) > 1} />
+      <MetricQualityBar label="Profit Factor" value={m.profit_factor} formattedValue={fmt(m.profit_factor, 2)} kind="profit_factor" />
       <MetricCard label="# Trades"      value={m.num_trades ?? '—'} />
     </div>
   );
 }
 
 function AddToStrategyButton({
-  backtestId,
+  strategyName,
+  params,
   assetId,
   onAdd,
 }: {
-  backtestId: number;
+  strategyName: string;
+  params: Record<string, unknown>;
   assetId: number;
-  onAdd: (backtestId: number, assetId: number) => Promise<void>;
+  onAdd: (strategyName: string, params: Record<string, unknown>, assetId: number) => Promise<void>;
 }) {
   const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
 
   const handleClick = async () => {
     setState('loading');
     try {
-      await onAdd(backtestId, assetId);
+      await onAdd(strategyName, params, assetId);
       setState('done');
     } catch {
       setState('error');
@@ -76,8 +80,8 @@ function AddToStrategyButton({
   );
 }
 
-export default function BacktestResultCard({ result, onAddToStrategy }: BacktestResultCardProps) {
-  const gradientId = `equityGrad-${result.backtest_id}`;
+export default function BacktestResultCard({ result, onAddToStrategy, syncId }: BacktestResultCardProps) {
+  const gradientId = `equityGrad-${result.strategy_name}`;
   const hasEquity = (result.equity_curve ?? []).length > 0;
   const hasIndicators = (result.indicator_series ?? []).length > 0;
   const isDone = result.status === 'done';
@@ -91,12 +95,13 @@ export default function BacktestResultCard({ result, onAddToStrategy }: Backtest
         <span className="text-slate-500 text-xs ml-auto flex items-center gap-2">
           {isDone && onAddToStrategy && (
             <AddToStrategyButton
-              backtestId={result.backtest_id}
+              strategyName={result.strategy_name}
+              params={result.strategy_params ?? {}}
               assetId={result.asset_id}
               onAdd={onAddToStrategy}
             />
           )}
-          #{result.backtest_id} &bull; {result.duration_ms}ms
+          {result.duration_ms != null && `${result.duration_ms}ms`}
         </span>
       </div>
 
@@ -111,6 +116,7 @@ export default function BacktestResultCard({ result, onAddToStrategy }: Backtest
           tradeLog={result.trade_log}
           buyHoldData={result.buy_hold_curve}
           compact
+          syncId={syncId}
         />
       )}
 
@@ -120,6 +126,7 @@ export default function BacktestResultCard({ result, onAddToStrategy }: Backtest
             data={result.indicator_series!}
             strategyName={result.strategy_name}
             strategyParams={defaultParams}
+            syncId={syncId}
           />
         </div>
       )}

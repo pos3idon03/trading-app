@@ -1,14 +1,8 @@
 """Multi-strategy combination backtest runner.
 
-Signal combination works on *position state* (is each strategy currently long?)
-rather than raw entry/exit bars.  This means:
-  - AND mode: combined enters when ALL strategies are simultaneously long.
-  - Majority mode: combined enters when >50% of strategies are long.
-  - Weighted mode: combined enters when the weighted fraction exceeds threshold.
-
-Converting to position state first ensures that if strategy A entered on bar 50
-and strategy B enters on bar 73 (both still in position), the combo triggers a
-buy on bar 73 — which is the expected behaviour.
+Combination uses per-bar **stance** (Buy / Neutral / Sell) per leg:
+  - AND: all Buy → long; all Sell → flat; otherwise hold prior position.
+  - Majority / weighted: Neutral abstains; ties or no votes → hold prior position.
 """
 import time
 from dataclasses import dataclass
@@ -21,8 +15,13 @@ from features.backtesting.runner import (
     _TIMEFRAME_TO_VBT_FREQ,
     _compute_buy_hold_curve,
     _extract_trades,
+    run_backtest,
 )
-from features.backtesting.strategies import build_signal_array
+from features.backtesting.stance import (
+    build_signal_timeline_from_stance,
+    combine_stances,
+    compute_strategy_stance,
+)
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -36,15 +35,11 @@ class ComboStrategyConfig:
 
 
 # ---------------------------------------------------------------------------
-# Position-state helpers
+# Position-state helpers (entries/exits for vectorbt)
 # ---------------------------------------------------------------------------
 
 def _signals_to_position(entries: pd.Series, exits: pd.Series) -> pd.Series:
-    """Convert entry/exit signal bars to a continuous boolean position state.
-
-    On each bar the strategy is considered *in position* if the last transition
-    was an entry rather than an exit.  Simultaneous entry+exit defaults to out.
-    """
+    """Convert entry/exit signal bars to a continuous boolean position state."""
     transitions = entries.astype(int) - exits.astype(int)
     last_signal = transitions.replace(0, float("nan")).ffill().fillna(0)
     return (last_signal > 0).astype(bool)
@@ -59,72 +54,21 @@ def _position_to_signals(position: pd.Series) -> tuple[pd.Series, pd.Series]:
 
 
 # ---------------------------------------------------------------------------
-# Mode-specific position combiners
-# ---------------------------------------------------------------------------
-
-def _combine_positions_and(positions: list[pd.Series]) -> pd.Series:
-    """In position only when ALL strategies are long."""
-    result = positions[0]
-    for p in positions[1:]:
-        result = result & p
-    return result
-
-
-def _combine_positions_majority(positions: list[pd.Series]) -> pd.Series:
-    """In position when more than half of strategies are long."""
-    n = len(positions)
-    votes = sum(p.astype(int) for p in positions)
-    return (votes > (n / 2)).astype(bool)
-
-
-def _combine_positions_weighted(
-    positions: list[pd.Series],
-    weights: list[float],
-    threshold: float,
-) -> pd.Series:
-    """In position when the weighted fraction of long strategies exceeds threshold."""
-    total_weight = sum(weights)
-    if total_weight == 0:
-        raise ValueError("Sum of weights must be > 0")
-    score = sum(p.astype(float) * w for p, w in zip(positions, weights))
-    return ((score / total_weight) > threshold).astype(bool)
-
-
-# ---------------------------------------------------------------------------
 # Public combination API
 # ---------------------------------------------------------------------------
 
 def combine_signals(
-    signal_list: list[tuple[pd.Series, pd.Series]],
+    stance_list: list[pd.Series],
     mode: str,
     weights: list[float],
     threshold: float = 0.5,
 ) -> tuple[pd.Series, pd.Series]:
-    """Combine multiple entry/exit signal pairs into a single pair.
+    """Combine stance series into entry/exit bars for vectorbt.
 
-    Each strategy's raw signals are first converted to a continuous position
-    state, the states are combined, and the result is converted back to
-    entry/exit bars.
-
-    Modes:
-    - "and": combined long when ALL strategies are simultaneously long.
-    - "majority": combined long when >50% of strategies are long.
-    - "weighted": combined long when weighted fraction exceeds threshold.
+    Args:
+        stance_list: Per-strategy Buy/Neutral/Sell series aligned to the same index.
     """
-    if not signal_list:
-        raise ValueError("signal_list must not be empty")
-
-    positions = [_signals_to_position(e, x) for e, x in signal_list]
-
-    if mode == "and":
-        combined = _combine_positions_and(positions)
-    elif mode == "majority":
-        combined = _combine_positions_majority(positions)
-    elif mode == "weighted":
-        combined = _combine_positions_weighted(positions, weights, threshold)
-    else:
-        raise ValueError(f"Unknown combination mode: {mode!r}. Valid: and, majority, weighted")
-
+    combined = combine_stances(stance_list, mode, weights, threshold)
     return _position_to_signals(combined)
 
 
@@ -138,13 +82,12 @@ def _build_combo_signals(
     mode: str,
     threshold: float,
 ) -> tuple[pd.Series, pd.Series]:
-    signal_list: list[tuple[pd.Series, pd.Series]] = []
-    for cfg in strategies:
-        entries, exits = build_signal_array(df, cfg.strategy_name, cfg.strategy_params)
-        signal_list.append((entries, exits))
-
+    stance_list = [
+        compute_strategy_stance(df, cfg.strategy_name, cfg.strategy_params)
+        for cfg in strategies
+    ]
     weights = [cfg.weight for cfg in strategies]
-    return combine_signals(signal_list, mode, weights, threshold)
+    return combine_signals(stance_list, mode, weights, threshold)
 
 
 def run_combo_backtest(
@@ -155,11 +98,7 @@ def run_combo_backtest(
     initial_capital: float = 100_000.0,
     timeframe: str = "1d",
 ) -> BacktestResult:
-    """Execute a combination backtest using vectorbt.
-
-    Builds a position-state signal per strategy, combines them according to
-    combination_mode, then runs a single vectorbt portfolio.
-    """
+    """Execute a combination backtest using vectorbt."""
     import vectorbt as vbt
 
     t0 = time.perf_counter()
@@ -211,3 +150,51 @@ def run_combo_backtest(
         indicator_series=[],
         duration_ms=duration_ms,
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-strategy signal details for combo visualisation
+# ---------------------------------------------------------------------------
+
+@dataclass
+class StrategySignalResult:
+    strategy_name: str
+    trade_log: list[dict]
+    indicator_series: list[dict]
+    equity_curve: list[dict]
+    signal_timeline: list[dict]
+
+
+def run_per_strategy_backtests(
+    df: pd.DataFrame,
+    strategies: list[ComboStrategyConfig],
+    timeframe: str = "1d",
+    initial_capital: float = 100_000.0,
+) -> list[StrategySignalResult]:
+    """Run individual backtests for each combo leg and return per-strategy results."""
+    results: list[StrategySignalResult] = []
+    for cfg in strategies:
+        result = run_backtest(
+            df,
+            strategy=cfg.strategy_name,
+            params=cfg.strategy_params,
+            initial_capital=initial_capital,
+            timeframe=timeframe,
+        )
+        stance = compute_strategy_stance(df, cfg.strategy_name, cfg.strategy_params)
+        timeline = build_signal_timeline_from_stance(df, stance)
+        results.append(
+            StrategySignalResult(
+                strategy_name=cfg.strategy_name,
+                trade_log=result.trade_log if isinstance(result.trade_log, list) else [],
+                indicator_series=result.indicator_series or [],
+                equity_curve=result.equity_curve,
+                signal_timeline=timeline,
+            )
+        )
+        logger.info(
+            "per_strategy_backtest_complete",
+            strategy=cfg.strategy_name,
+            timeframe=timeframe,
+        )
+    return results

@@ -3,6 +3,7 @@ from .alpaca_provider import AlpacaProvider
 from .base_provider import DataProvider
 from .fmp_provider import FMPProvider
 from .polygon_provider import PolygonProvider
+from .tiingo_provider import TiingoProvider
 from .yfinance_provider import YFinanceProvider
 
 _PROVIDER_MAP: dict[str, type[DataProvider]] = {
@@ -10,6 +11,7 @@ _PROVIDER_MAP: dict[str, type[DataProvider]] = {
     "alpaca": AlpacaProvider,
     "yfinance": YFinanceProvider,
     "fmp": FMPProvider,
+    "tiingo": TiingoProvider,
 }
 
 
@@ -26,5 +28,6 @@ __all__ = [
     "AlpacaProvider",
     "YFinanceProvider",
     "FMPProvider",
+    "TiingoProvider",
     "get_provider",
 ]

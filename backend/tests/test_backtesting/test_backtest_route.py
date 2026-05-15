@@ -197,14 +197,13 @@ class TestSimulatedBacktestRoute:
 
         with (
             patch("routes.backtest.get_simulation", new=AsyncMock(return_value=self._make_sim_record())),
-            patch("routes.backtest.create_backtest", new=AsyncMock(return_value=10)),
             patch("routes.backtest.run_backtest", return_value=self._make_backtest_result()),
-            patch("routes.backtest.update_backtest_result", new=AsyncMock()),
         ):
             response = await execute_backtest(req, session)
 
         assert response.status == "done"
         assert response.asset_id == 3
+        assert response.backtest_id is None
 
     @pytest.mark.asyncio
     async def test_simulation_not_found_raises_404(self):

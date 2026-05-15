@@ -73,6 +73,9 @@ class StrategySignalItem(BaseModel):
     label: str
     group: str
     signal: str  # BUY | SELL | NEUTRAL
+    indicator_value: Optional[float] = None
+    indicator_label: Optional[str] = None
+    params: Optional[dict] = None
 
 
 class StrategySignalsResponse(BaseModel):

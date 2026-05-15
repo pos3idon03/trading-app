@@ -16,6 +16,7 @@ import MetricCard from '../components/MetricCard';
 import StatusBadge from '../components/StatusBadge';
 import Spinner from '../components/Spinner';
 import ErrorAlert from '../components/ErrorAlert';
+import { formatAssetOptionLabel } from '../utils/assetDisplay';
 
 const PERCENTILE_COLORS: Record<string, string> = {
   '5': '#ef4444',
@@ -154,7 +155,7 @@ export default function MonteCarloPage() {
               {assets.length === 0 && <option value="">Loading…</option>}
               {assets.map((a: AssetItem) => (
                 <option key={a.id} value={a.symbol}>
-                  {a.symbol}{a.name ? ` — ${a.name}` : ''}
+                  {formatAssetOptionLabel(a)}
                 </option>
               ))}
             </select>

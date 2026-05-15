@@ -1,4 +1,4 @@
-"""DAL for trading strategy cards and their linked backtest results."""
+"""DAL for trading strategy cards and their linked algo strategies."""
 from typing import Any, Optional
 
 from sqlalchemy import select, text
@@ -136,6 +136,7 @@ async def list_auto_trading_assets(session: AsyncSession) -> list[dict]:
             ts.asset_id,
             a.symbol,
             a.name                      AS asset_name,
+            a.asset_type,
             ts.mc_buy_prob_positive,
             ts.mc_sell_prob_positive,
             ts.ai_buy_conviction,
@@ -193,46 +194,50 @@ async def list_auto_trading_assets(session: AsyncSession) -> list[dict]:
     return [dict(r) for r in result.mappings().all()]
 
 
-async def attach_backtest(
-    session: AsyncSession, strategy_id: int, backtest_id: int
+async def attach_algo(
+    session: AsyncSession,
+    strategy_id: int,
+    strategy_name: str,
+    params: Optional[dict],
 ) -> StrategyBacktest:
-    """Link a backtest to a strategy; no-op if already linked."""
+    """Attach an algo strategy definition to a strategy card.
+
+    Replaces an existing entry for the same strategy_name (upsert on conflict).
+    """
     stmt = (
         pg_insert(StrategyBacktest)
-        .values(strategy_id=strategy_id, backtest_id=backtest_id)
-        .on_conflict_do_nothing(constraint="strategy_backtests_strategy_id_backtest_id_key")
+        .values(strategy_id=strategy_id, strategy_name=strategy_name, params=params)
+        .on_conflict_do_nothing(constraint="strategy_backtests_strategy_id_strategy_name_key")
     )
     await session.execute(stmt)
     await session.flush()
 
-    link = await _get_link(session, strategy_id, backtest_id)
+    link = await _get_link_by_name(session, strategy_id, strategy_name)
     return link
 
 
-async def detach_backtest(
-    session: AsyncSession, strategy_id: int, backtest_id: int
+async def detach_algo(
+    session: AsyncSession,
+    strategy_id: int,
+    algo_attachment_id: int,
 ) -> bool:
-    link = await _get_link(session, strategy_id, backtest_id)
-    if link is None:
+    """Remove an algo attachment by its primary key."""
+    link = await session.get(StrategyBacktest, algo_attachment_id)
+    if link is None or link.strategy_id != strategy_id:
         return False
     await session.delete(link)
     return True
 
 
-async def get_linked_backtests(session: AsyncSession, strategy_id: int) -> list[dict]:
-    """Return backtest summaries linked to this strategy."""
+async def get_linked_algos(session: AsyncSession, strategy_id: int) -> list[dict]:
+    """Return algo strategy definitions linked to this strategy card."""
     query = text("""
         SELECT
-            sb.backtest_id,
+            sb.id            AS algo_attachment_id,
             sb.added_at,
-            br.strategy_name,
-            br.total_return,
-            br.sharpe_ratio,
-            br.max_drawdown,
-            br.win_rate,
-            br.num_trades
+            sb.strategy_name,
+            sb.params
         FROM strategy_backtests sb
-        JOIN backtest_results br ON br.id = sb.backtest_id
         WHERE sb.strategy_id = :strategy_id
         ORDER BY sb.added_at DESC
     """)
@@ -240,12 +245,12 @@ async def get_linked_backtests(session: AsyncSession, strategy_id: int) -> list[
     return [dict(r) for r in result.mappings().all()]
 
 
-async def _get_link(
-    session: AsyncSession, strategy_id: int, backtest_id: int
+async def _get_link_by_name(
+    session: AsyncSession, strategy_id: int, strategy_name: str
 ) -> Optional[StrategyBacktest]:
     stmt = select(StrategyBacktest).where(
         StrategyBacktest.strategy_id == strategy_id,
-        StrategyBacktest.backtest_id == backtest_id,
+        StrategyBacktest.strategy_name == strategy_name,
     )
     result = await session.execute(stmt)
     return result.scalars().first()

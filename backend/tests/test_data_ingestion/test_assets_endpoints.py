@@ -1,7 +1,7 @@
 """Tests for assets listing and symbol-based OHLCV endpoints."""
 import math
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, call
 
 import numpy as np
 import pandas as pd
@@ -551,3 +551,317 @@ class TestDeleteAssetRoute:
 
         assert resp.status_code == 200
         assert resp.json()["symbol"] == "MSFT"
+
+
+# ---------------------------------------------------------------------------
+# DAL: list_assets_with_latest_price
+# ---------------------------------------------------------------------------
+
+def _make_assets_with_price_rows() -> list[dict]:
+    return [
+        {
+            "id": 1, "symbol": "AAPL", "name": "Apple Inc.", "asset_type": "stock",
+            "exchange": "NASDAQ", "currency": "USD", "is_active": True,
+            "latest_close": 175.50,
+            "latest_update": datetime(2024, 1, 15, tzinfo=timezone.utc),
+        },
+        {
+            "id": 2, "symbol": "MSFT", "name": "Microsoft Corporation", "asset_type": "stock",
+            "exchange": "NASDAQ", "currency": "USD", "is_active": True,
+            "latest_close": None,
+            "latest_update": None,
+        },
+    ]
+
+
+class TestListAssetsWithLatestPrice:
+    @pytest.mark.asyncio
+    async def test_returns_assets_with_price(self):
+        from dal.market_data_dal import list_assets_with_latest_price
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.mappings.return_value.all.return_value = [
+            {
+                "id": 1, "symbol": "AAPL", "name": "Apple Inc.", "asset_type": "stock",
+                "exchange": "NASDAQ", "currency": "USD", "is_active": True,
+                "latest_close": 175.50,
+                "latest_update": datetime(2024, 1, 15, tzinfo=timezone.utc),
+            }
+        ]
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        rows = await list_assets_with_latest_price(mock_session)
+
+        assert len(rows) == 1
+        assert rows[0]["symbol"] == "AAPL"
+        assert rows[0]["latest_close"] == 175.50
+
+    @pytest.mark.asyncio
+    async def test_returns_none_price_for_asset_without_ohlcv(self):
+        from dal.market_data_dal import list_assets_with_latest_price
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.mappings.return_value.all.return_value = [
+            {
+                "id": 2, "symbol": "NEW", "name": "New Corp", "asset_type": "stock",
+                "exchange": "NYSE", "currency": "USD", "is_active": True,
+                "latest_close": None,
+                "latest_update": None,
+            }
+        ]
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        rows = await list_assets_with_latest_price(mock_session)
+
+        assert rows[0]["latest_close"] is None
+        assert rows[0]["latest_update"] is None
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_when_no_assets(self):
+        from dal.market_data_dal import list_assets_with_latest_price
+
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.mappings.return_value.all.return_value = []
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        rows = await list_assets_with_latest_price(mock_session)
+
+        assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# Route: GET /assets/with-prices
+# ---------------------------------------------------------------------------
+
+class TestGetAssetsWithPricesRoute:
+    @pytest.mark.asyncio
+    async def test_returns_assets_with_price_fields(self):
+        from httpx import AsyncClient, ASGITransport
+        from main import app
+
+        rows = _make_assets_with_price_rows()
+
+        with (
+            patch("routes.data_ingestion.list_assets_with_latest_price", new=AsyncMock(return_value=rows)),
+            patch("db.get_db"),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get("/data/assets/with-prices")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["count"] == 2
+        assert body["assets"][0]["symbol"] == "AAPL"
+        assert body["assets"][0]["latest_close"] == 175.50
+        assert body["assets"][0]["latest_update"] is not None
+
+    @pytest.mark.asyncio
+    async def test_returns_null_price_for_asset_without_ohlcv(self):
+        from httpx import AsyncClient, ASGITransport
+        from main import app
+
+        rows = _make_assets_with_price_rows()
+
+        with (
+            patch("routes.data_ingestion.list_assets_with_latest_price", new=AsyncMock(return_value=rows)),
+            patch("db.get_db"),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get("/data/assets/with-prices")
+
+        body = resp.json()
+        msft = next(a for a in body["assets"] if a["symbol"] == "MSFT")
+        assert msft["latest_close"] is None
+        assert msft["latest_update"] is None
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_list_when_no_assets(self):
+        from httpx import AsyncClient, ASGITransport
+        from main import app
+
+        with (
+            patch("routes.data_ingestion.list_assets_with_latest_price", new=AsyncMock(return_value=[])),
+            patch("db.get_db"),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get("/data/assets/with-prices")
+
+        body = resp.json()
+        assert body["count"] == 0
+        assert body["assets"] == []
+
+
+# ---------------------------------------------------------------------------
+# Route: GET /ohlcv/by-symbol — resampling fallback
+# ---------------------------------------------------------------------------
+
+def _make_intraday_ohlcv_df(n: int = 4) -> pd.DataFrame:
+    """n × 5-minute bars starting at 2026-04-14 13:30 UTC."""
+    from datetime import timedelta
+    base = datetime(2026, 4, 14, 13, 30, tzinfo=timezone.utc)
+    times = [base + timedelta(minutes=5 * i) for i in range(n)]
+    return pd.DataFrame({
+        "time": times,
+        "open": [290.0] * n,
+        "high": [292.0] * n,
+        "low": [289.0] * n,
+        "close": [291.0] * n,
+        "volume": [50_000] * n,
+        "vwap": [290.5] * n,
+        "source": ["tiingo"] * n,
+    })
+
+
+def _make_test_app():
+    from fastapi import FastAPI
+    from routes.data_ingestion import router
+    app = FastAPI()
+    app.include_router(router)
+    return app
+
+
+class TestOHLCVResamplingFallback:
+    """When native timeframe rows are absent, the route must resample from 5m."""
+
+    def test_resamples_1h_from_5m_when_native_empty(self):
+        from fastapi.testclient import TestClient
+        empty_df = pd.DataFrame()
+        resampled_df = _make_intraday_ohlcv_df(n=12)
+        call_count = 0
+
+        def _mock_get_ohlcv(session, asset_id, timeframe, start, end, bucket_interval=None):
+            nonlocal call_count
+            call_count += 1
+            if bucket_interval is None:
+                return empty_df
+            return resampled_df
+
+        with patch("routes.data_ingestion.get_asset_id_by_symbol", new=AsyncMock(return_value=1)), \
+             patch("routes.data_ingestion.get_ohlcv", new=AsyncMock(side_effect=_mock_get_ohlcv)), \
+             patch("routes.data_ingestion.get_db"):
+            client = TestClient(_make_test_app())
+            resp = client.get("/ohlcv/by-symbol/ADBE?timeframe=1h")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["timeframe"] == "1h"
+        assert body["count"] == 12
+        assert call_count == 2
+
+    def test_resamples_30m_from_5m_when_native_empty(self):
+        from fastapi.testclient import TestClient
+        empty_df = pd.DataFrame()
+        resampled_df = _make_intraday_ohlcv_df(n=6)
+
+        def _mock(session, asset_id, timeframe, start, end, bucket_interval=None):
+            return empty_df if bucket_interval is None else resampled_df
+
+        with patch("routes.data_ingestion.get_asset_id_by_symbol", new=AsyncMock(return_value=1)), \
+             patch("routes.data_ingestion.get_ohlcv", new=AsyncMock(side_effect=_mock)), \
+             patch("routes.data_ingestion.get_db"):
+            resp = TestClient(_make_test_app()).get("/ohlcv/by-symbol/ADBE?timeframe=30m")
+
+        assert resp.status_code == 200
+        assert resp.json()["timeframe"] == "30m"
+
+    def test_resamples_15m_from_5m_when_native_empty(self):
+        from fastapi.testclient import TestClient
+        empty_df = pd.DataFrame()
+        resampled_df = _make_intraday_ohlcv_df(n=3)
+
+        def _mock(session, asset_id, timeframe, start, end, bucket_interval=None):
+            return empty_df if bucket_interval is None else resampled_df
+
+        with patch("routes.data_ingestion.get_asset_id_by_symbol", new=AsyncMock(return_value=1)), \
+             patch("routes.data_ingestion.get_ohlcv", new=AsyncMock(side_effect=_mock)), \
+             patch("routes.data_ingestion.get_db"):
+            resp = TestClient(_make_test_app()).get("/ohlcv/by-symbol/ADBE?timeframe=15m")
+
+        assert resp.status_code == 200
+        assert resp.json()["timeframe"] == "15m"
+
+    def test_resamples_4h_from_5m_when_native_empty(self):
+        from fastapi.testclient import TestClient
+        empty_df = pd.DataFrame()
+        resampled_df = _make_intraday_ohlcv_df(n=48)
+
+        def _mock(session, asset_id, timeframe, start, end, bucket_interval=None):
+            return empty_df if bucket_interval is None else resampled_df
+
+        with patch("routes.data_ingestion.get_asset_id_by_symbol", new=AsyncMock(return_value=1)), \
+             patch("routes.data_ingestion.get_ohlcv", new=AsyncMock(side_effect=_mock)), \
+             patch("routes.data_ingestion.get_db"):
+            resp = TestClient(_make_test_app()).get("/ohlcv/by-symbol/ADBE?timeframe=4h")
+
+        assert resp.status_code == 200
+        assert resp.json()["timeframe"] == "4h"
+
+    def test_returns_404_when_5m_also_empty(self):
+        from fastapi.testclient import TestClient
+        empty_df = pd.DataFrame()
+
+        with patch("routes.data_ingestion.get_asset_id_by_symbol", new=AsyncMock(return_value=1)), \
+             patch("routes.data_ingestion.get_ohlcv", new=AsyncMock(return_value=empty_df)), \
+             patch("routes.data_ingestion.get_db"):
+            resp = TestClient(_make_test_app()).get("/ohlcv/by-symbol/ADBE?timeframe=1h")
+
+        assert resp.status_code == 404
+        assert "No OHLCV data found" in resp.json()["detail"]
+
+    def test_no_resample_attempted_when_native_data_exists(self):
+        """If native rows exist, the resample path must not be invoked."""
+        from fastapi.testclient import TestClient
+        native_df = _make_intraday_ohlcv_df(n=5)
+        call_count = 0
+
+        def _mock(session, asset_id, timeframe, start, end, bucket_interval=None):
+            nonlocal call_count
+            call_count += 1
+            return native_df
+
+        with patch("routes.data_ingestion.get_asset_id_by_symbol", new=AsyncMock(return_value=1)), \
+             patch("routes.data_ingestion.get_ohlcv", new=AsyncMock(side_effect=_mock)), \
+             patch("routes.data_ingestion.get_db"):
+            resp = TestClient(_make_test_app()).get("/ohlcv/by-symbol/ADBE?timeframe=5m")
+
+        assert resp.status_code == 200
+        assert call_count == 1
+
+    def test_explicit_bucket_param_skips_resample(self):
+        """When caller passes ?bucket=..., the resample fallback must not activate."""
+        from fastapi.testclient import TestClient
+        empty_df = pd.DataFrame()
+        call_count = 0
+
+        def _mock(session, asset_id, timeframe, start, end, bucket_interval=None):
+            nonlocal call_count
+            call_count += 1
+            return empty_df
+
+        with patch("routes.data_ingestion.get_asset_id_by_symbol", new=AsyncMock(return_value=1)), \
+             patch("routes.data_ingestion.get_ohlcv", new=AsyncMock(side_effect=_mock)), \
+             patch("routes.data_ingestion.get_db"):
+            resp = TestClient(_make_test_app()).get("/ohlcv/by-symbol/ADBE?timeframe=1h&bucket=1+hour")
+
+        assert resp.status_code == 404
+        assert call_count == 1
+
+    def test_resample_by_asset_id_route(self):
+        """The /ohlcv/{asset_id} route must also resample when native TF is empty."""
+        from fastapi.testclient import TestClient
+        empty_df = pd.DataFrame()
+        resampled_df = _make_intraday_ohlcv_df(n=6)
+
+        def _mock(session, asset_id, timeframe, start, end, bucket_interval=None):
+            return empty_df if bucket_interval is None else resampled_df
+
+        with patch("routes.data_ingestion.get_ohlcv", new=AsyncMock(side_effect=_mock)), \
+             patch("routes.data_ingestion._resolve_symbol", new=AsyncMock(return_value="ADBE")), \
+             patch("routes.data_ingestion.get_db"):
+            resp = TestClient(_make_test_app()).get("/ohlcv/5?timeframe=1h")
+
+        assert resp.status_code == 200
+        assert resp.json()["timeframe"] == "1h"

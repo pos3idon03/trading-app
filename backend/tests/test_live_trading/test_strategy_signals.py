@@ -7,8 +7,10 @@ import pytest
 from features.live_trading.strategy_signals import (
     MIN_BARS_REQUIRED,
     _build_dataframe,
+    _compute_key_indicator,
     _determine_signal,
     _run_single_strategy,
+    _run_strategy_full,
     compute_strategy_signals,
 )
 
@@ -24,11 +26,13 @@ def _make_bar(close: float = 100.0, open_: float = 99.0, high: float = 101.0, lo
 
 
 def _make_bars(n: int = 50) -> list:
-    """Create n synthetic OHLCV bars with slight upward drift."""
+    """Create n synthetic OHLCV bars with realistic oscillating prices (not purely monotonic)."""
+    import math
     bars = []
     for i in range(n):
-        close = 100.0 + i * 0.1
-        bars.append(_make_bar(close=close, open_=close - 0.5, high=close + 0.5, low=close - 1.0))
+        # Sine wave so price oscillates up and down, enabling proper indicator calculation
+        close = 100.0 + 5.0 * math.sin(i * 0.3) + i * 0.05
+        bars.append(_make_bar(close=close, open_=close - 0.5, high=close + 1.0, low=close - 1.0))
     return bars
 
 
@@ -90,6 +94,52 @@ class TestRunSingleStrategy:
         assert result == "NEUTRAL"
 
 
+class TestComputeKeyIndicator:
+    def test_rsi_returns_float_value(self):
+        df = _build_dataframe(_make_bars(60))
+        value, label = _compute_key_indicator("rsi", df, {"period": 14})
+        assert label == "RSI"
+        assert value is not None
+        assert 0.0 <= value <= 100.0
+
+    def test_macd_returns_histogram_value(self):
+        df = _build_dataframe(_make_bars(60))
+        value, label = _compute_key_indicator("macd", df, {"fast": 12, "slow": 26, "signal": 9})
+        assert label == "MACD Hist"
+        assert isinstance(value, float)
+
+    def test_unknown_strategy_returns_none(self):
+        df = _build_dataframe(_make_bars(60))
+        value, label = _compute_key_indicator("unknown_xyz", df, {})
+        assert value is None
+        assert label is None
+
+    def test_lrsi_returns_value_between_zero_and_one(self):
+        df = _build_dataframe(_make_bars(60))
+        value, label = _compute_key_indicator("lrsi", df, {"gamma": 0.5})
+        assert label == "LRSI"
+        if value is not None:
+            assert 0.0 <= value <= 1.0
+
+
+class TestRunStrategyFull:
+    def test_returns_four_tuple(self):
+        df = _build_dataframe(_make_bars(60))
+        result = _run_strategy_full("rsi", df)
+        assert len(result) == 4
+        signal, ind_val, ind_label, params = result
+        assert signal in ("BUY", "SELL", "NEUTRAL")
+        assert ind_label == "RSI"
+        assert "period" in params
+
+    def test_unknown_strategy_returns_neutral_with_no_indicator(self):
+        df = _build_dataframe(_make_bars(10))
+        signal, ind_val, ind_label, params = _run_strategy_full("nonexistent", df)
+        assert signal == "NEUTRAL"
+        assert ind_val is None
+        assert ind_label is None
+
+
 class TestComputeStrategySignals:
     def test_returns_empty_list_when_insufficient_bars(self):
         bars = _make_bars(MIN_BARS_REQUIRED - 1)
@@ -124,3 +174,19 @@ class TestComputeStrategySignals:
         bars = _make_bars(MIN_BARS_REQUIRED)
         result = compute_strategy_signals(bars, "MSFT")
         assert isinstance(result, list)
+
+    def test_results_include_indicator_value_and_params(self):
+        bars = _make_bars(60)
+        results = compute_strategy_signals(bars, "AAPL")
+        rsi_result = next((r for r in results if r.strategy == "rsi"), None)
+        assert rsi_result is not None
+        assert rsi_result.indicator_value is not None
+        assert rsi_result.indicator_label == "RSI"
+        assert isinstance(rsi_result.params, dict)
+        assert "period" in rsi_result.params
+
+    def test_params_dict_is_not_none_for_all_strategies(self):
+        bars = _make_bars(60)
+        results = compute_strategy_signals(bars, "AAPL")
+        for r in results:
+            assert isinstance(r.params, dict)

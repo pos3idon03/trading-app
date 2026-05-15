@@ -5,6 +5,7 @@ import Spinner from '../components/Spinner';
 import ErrorAlert from '../components/ErrorAlert';
 import StatusBadge from '../components/StatusBadge';
 import RangeScoreBar from '../components/RangeScoreBar';
+import { formatAssetOptionLabel } from '../utils/assetDisplay';
 
 const LLM_OPTIONS = [
   { group: 'OpenAI', value: 'gpt-4o-mini', label: 'GPT-4o Mini — fast (fallback: Gemini 3 Flash)' },
@@ -156,7 +157,7 @@ export default function AgentAnalysisPage() {
                   {assets.length === 0 && <option value="">Loading…</option>}
                   {assets.map((a) => (
                     <option key={a.id} value={a.symbol}>
-                      {a.symbol}{a.name ? ` — ${a.name}` : ''}
+                      {formatAssetOptionLabel(a)}
                     </option>
                   ))}
                 </select>

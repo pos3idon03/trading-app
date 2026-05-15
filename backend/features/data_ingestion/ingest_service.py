@@ -1,5 +1,5 @@
 """Core ingestion orchestration logic (separated from routes)."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import pandas as pd
@@ -18,6 +18,8 @@ from utils.logging import get_logger
 from utils.time_utils import timeframe_to_timedelta, utcnow
 
 logger = get_logger(__name__)
+
+_TIINGO_5M_LOOKBACK_DAYS = 30
 
 
 async def ingest_ohlcv_for_symbol(
@@ -74,9 +76,46 @@ async def ingest_fundamentals_for_symbol(
     return {"symbol": symbol, "inserted": inserted}
 
 
+async def ingest_tiingo_5m_for_symbol(
+    session: AsyncSession,
+    symbol: str,
+) -> dict:
+    """Fetch and persist the last 30 days of 5m Tiingo bars for one symbol (incremental)."""
+    symbol = symbol.upper()
+    provider = get_provider("tiingo")
+    asset_id = await upsert_asset(session, symbol, asset_type="stock")
+
+    latest = await get_latest_timestamp(session, asset_id, "5m")
+    if latest:
+        start = latest + timeframe_to_timedelta("5m")
+    else:
+        start = utcnow() - timedelta(days=_TIINGO_5M_LOOKBACK_DAYS)
+
+    end = utcnow()
+
+    if start >= end:
+        logger.info("tiingo_5m_already_up_to_date", symbol=symbol)
+        return {"symbol": symbol, "timeframe": "5m", "inserted": 0}
+
+    records = await provider.fetch_ohlcv(symbol, "5m", start, end, asset_id=asset_id)
+
+    if not records:
+        return {"symbol": symbol, "timeframe": "5m", "inserted": 0}
+
+    df = _records_to_df(records)
+    df = run_sanitization_pipeline(df, "5m")
+    clean_records = _df_to_records(df, asset_id, "5m", "tiingo")
+
+    inserted = await bulk_insert_ohlcv(session, clean_records)
+    logger.info("tiingo_5m_ingest_complete", symbol=symbol, inserted=inserted)
+    return {"symbol": symbol, "timeframe": "5m", "inserted": inserted}
+
+
 async def run_ingest_job(session: AsyncSession, request: IngestRequest) -> list[dict]:
     """Orchestrate multi-symbol, multi-timeframe ingestion."""
     results = []
+    needs_5m_backfill = "1d" in request.timeframes and request.provider == "yfinance"
+
     for symbol in request.symbols:
         for timeframe in request.timeframes:
             try:
@@ -90,6 +129,15 @@ async def run_ingest_job(session: AsyncSession, request: IngestRequest) -> list[
             except Exception as exc:
                 logger.error("ingest_failed", symbol=symbol, timeframe=timeframe, error=str(exc))
                 results.append({"symbol": symbol, "timeframe": timeframe, "status": "error", "error": str(exc)})
+
+        if needs_5m_backfill:
+            try:
+                result = await ingest_tiingo_5m_for_symbol(session, symbol)
+                results.append({**result, "provider": "tiingo", "status": "ok"})
+            except Exception as exc:
+                logger.error("tiingo_5m_backfill_failed", symbol=symbol, error=str(exc))
+                results.append({"symbol": symbol, "timeframe": "5m", "provider": "tiingo", "status": "error", "error": str(exc)})
+
     return results
 
 

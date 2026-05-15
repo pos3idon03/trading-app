@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     alpaca_base_paper_url: str = "https://paper-api.alpaca.markets/v2"
     alpaca_data_ws_url: str = "wss://stream.data.alpaca.markets/v2/iex"
     fmp_api_key: str = ""
+    tiingo_api_key: str = ""
 
     # AI Agents (Phase 4)
     openai_api_key: str = ""

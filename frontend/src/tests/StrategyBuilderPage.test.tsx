@@ -40,8 +40,8 @@ vi.mock('../api/endpoints', () => ({
       financials_error: null,
     }),
     remove: vi.fn().mockResolvedValue({ deleted: true }),
-    attachBacktest: vi.fn().mockResolvedValue({}),
-    detachBacktest: vi.fn().mockResolvedValue({}),
+    attachAlgo: vi.fn().mockResolvedValue({}),
+    detachAlgo: vi.fn().mockResolvedValue({}),
   },
 }));
 

@@ -1,11 +1,24 @@
 """Compute live strategy signals by running all backtest strategies on resampled OHLCV bars."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
 
 import pandas as pd
 
 from features.backtesting.strategies import _STRATEGY_MAP
+from features.backtesting.strategies.helpers import (
+    _calc_adx,
+    _calc_aroon,
+    _calc_atr,
+    _calc_ema,
+    _calc_laguerre_rsi,
+    _calc_macd,
+    _calc_rsi,
+    _calc_stoch_rsi,
+    _calc_vwap,
+    _extract_ohlcv,
+)
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -80,6 +93,9 @@ class StrategySignalResult:
     label: str
     group: str
     signal: str  # BUY | SELL | NEUTRAL
+    indicator_value: Optional[float] = None
+    indicator_label: Optional[str] = None
+    params: dict = field(default_factory=dict)
 
 
 def _build_dataframe(bars: list) -> pd.DataFrame:
@@ -110,6 +126,141 @@ def _determine_signal(entries: pd.Series, exits: pd.Series) -> str:
     return "NEUTRAL"
 
 
+def _safe_last(series: pd.Series) -> Optional[float]:
+    """Return the last finite value of a series, or None."""
+    try:
+        val = float(series.iloc[-1])
+        import math
+        return val if math.isfinite(val) else None
+    except Exception:
+        return None
+
+
+def _compute_key_indicator(
+    name: str, df: pd.DataFrame, params: dict
+) -> tuple[Optional[float], Optional[str]]:
+    """Return (indicator_value, indicator_label) for the most informative indicator
+    of the given strategy.  Returns (None, None) when no single numeric value applies."""
+    try:
+        _, high, low, close, volume = _extract_ohlcv(df)
+
+        if name == "rsi":
+            period = int(params.get("period", 14))
+            val = _safe_last(_calc_rsi(close, period))
+            return val, "RSI"
+
+        if name == "lrsi":
+            gamma = float(params.get("gamma", 0.5))
+            val = _safe_last(_calc_laguerre_rsi(close, gamma))
+            return val, "LRSI"
+
+        if name in ("macd",):
+            fast = int(params.get("fast", 12))
+            slow = int(params.get("slow", 26))
+            sig = int(params.get("signal", 9))
+            _, _, histogram = _calc_macd(close, fast, slow, sig)
+            val = _safe_last(histogram)
+            return val, "MACD Hist"
+
+        if name in ("ma_crossover", "sma_cross"):
+            fast_w = int(params.get("fast_window", 10 if name == "ma_crossover" else 50))
+            slow_w = int(params.get("slow_window", 50 if name == "ma_crossover" else 200))
+            fast_ma = _safe_last(close.rolling(fast_w).mean())
+            slow_ma = _safe_last(close.rolling(slow_w).mean())
+            if fast_ma is not None and slow_ma is not None and slow_ma != 0:
+                return round(fast_ma - slow_ma, 4), "Fast − Slow MA"
+            return None, "Fast − Slow MA"
+
+        if name == "ema_cross":
+            fast_span = int(params.get("fast_span", 12))
+            slow_span = int(params.get("slow_span", 26))
+            fast_ema = _safe_last(_calc_ema(close, fast_span))
+            slow_ema = _safe_last(_calc_ema(close, slow_span))
+            if fast_ema is not None and slow_ema is not None:
+                return round(fast_ema - slow_ema, 4), "Fast − Slow EMA"
+            return None, "Fast − Slow EMA"
+
+        if name == "sma_break":
+            sma_window = int(params.get("sma_window", 200))
+            sma = _safe_last(close.rolling(sma_window).mean())
+            price = _safe_last(close)
+            if sma is not None and price is not None and sma != 0:
+                return round((price - sma) / sma * 100, 2), "Price vs SMA %"
+            return None, "Price vs SMA %"
+
+        if name == "stoch_rsi":
+            rsi_period = int(params.get("rsi_period", 14))
+            stoch_period = int(params.get("stoch_period", 14))
+            smooth_k = int(params.get("smooth_k", 3))
+            smooth_d = int(params.get("smooth_d", 3))
+            k, _ = _calc_stoch_rsi(close, rsi_period, stoch_period, smooth_k, smooth_d)
+            return _safe_last(k), "StochRSI %K"
+
+        if name == "aroon":
+            period = int(params.get("period", 52))
+            aroon_up, aroon_down = _calc_aroon(high, low, period)
+            up_val = _safe_last(aroon_up)
+            down_val = _safe_last(aroon_down)
+            if up_val is not None and down_val is not None:
+                return round(up_val - down_val, 2), "Aroon Up − Down"
+            return None, "Aroon Up − Down"
+
+        if name == "vwap_cross":
+            vwap = _safe_last(_calc_vwap(high, low, close, volume))
+            price = _safe_last(close)
+            if vwap is not None and price is not None and vwap != 0:
+                return round((price - vwap) / vwap * 100, 2), "Price vs VWAP %"
+            return None, "Price vs VWAP %"
+
+        if name in ("mean_reversion", "mean_reversion_range", "mean_reversion_trend"):
+            lookback = int(params.get("lookback", params.get("bb_window", params.get("ma_window", 20))))
+            rolling_mean = close.rolling(lookback).mean()
+            rolling_std = close.rolling(lookback).std()
+            last_price = _safe_last(close)
+            last_mean = _safe_last(rolling_mean)
+            last_std = _safe_last(rolling_std)
+            if last_std and last_std > 0:
+                return round((last_price - last_mean) / last_std, 3), "Z-Score"
+            return None, "Z-Score"
+
+        if name == "reverting_market":
+            rsi_period = int(params.get("rsi_period", 14))
+            val = _safe_last(_calc_rsi(close, rsi_period))
+            return val, "RSI"
+
+        if name == "atr_trailing_stop":
+            atr_period = int(params.get("atr_period", 14))
+            atr = _calc_atr(high, low, close, atr_period)
+            return _safe_last(atr), "ATR"
+
+        if name == "trend_pullback":
+            adx_period = int(params.get("adx_period", 14))
+            adx = _calc_adx(high, low, close, adx_period)
+            return _safe_last(adx), "ADX"
+
+        if name == "momentum_rotation":
+            short_w = int(params.get("short_window", 20))
+            long_w = int(params.get("long_window", 60))
+            short_ret = _safe_last(close.pct_change(short_w))
+            long_ret = _safe_last(close.pct_change(long_w))
+            if short_ret is not None and long_ret is not None:
+                return round(short_ret - long_ret, 5), "Short − Long Return"
+            return None, "Short − Long Return"
+
+        if name == "new_high_low":
+            lookback = int(params.get("lookback", 252))
+            price = _safe_last(close)
+            high_val = _safe_last(close.rolling(lookback).max())
+            if price is not None and high_val is not None and high_val > 0:
+                return round((price / high_val - 1) * 100, 2), "% From High"
+            return None, "% From High"
+
+    except Exception as exc:
+        logger.warning("indicator_compute_error", strategy=name, error=str(exc))
+
+    return None, None
+
+
 def _run_single_strategy(name: str, df: pd.DataFrame) -> str:
     """Run one strategy and return its signal string; returns NEUTRAL on any error."""
     handler = _STRATEGY_MAP.get(name)
@@ -122,6 +273,25 @@ def _run_single_strategy(name: str, df: pd.DataFrame) -> str:
     except Exception as exc:
         logger.warning("strategy_signal_error", strategy=name, error=str(exc))
         return "NEUTRAL"
+
+
+def _run_strategy_full(
+    name: str, df: pd.DataFrame
+) -> tuple[str, Optional[float], Optional[str], dict]:
+    """Run one strategy; returns (signal, indicator_value, indicator_label, params)."""
+    handler = _STRATEGY_MAP.get(name)
+    params = _DEFAULT_PARAMS.get(name, {})
+    if handler is None:
+        return "NEUTRAL", None, None, params
+    try:
+        entries, exits = handler(df, params)
+        signal = _determine_signal(entries, exits)
+    except Exception as exc:
+        logger.warning("strategy_signal_error", strategy=name, error=str(exc))
+        return "NEUTRAL", None, None, params
+
+    indicator_value, indicator_label = _compute_key_indicator(name, df, params)
+    return signal, indicator_value, indicator_label, params
 
 
 def compute_strategy_signals(bars: list, symbol: str) -> list[StrategySignalResult]:
@@ -143,13 +313,16 @@ def compute_strategy_signals(bars: list, symbol: str) -> list[StrategySignalResu
 
     for name in _STRATEGY_MAP:
         meta = _STRATEGY_META.get(name, {"label": name, "group": "Other"})
-        signal = _run_single_strategy(name, df)
+        signal, indicator_value, indicator_label, params = _run_strategy_full(name, df)
         results.append(
             StrategySignalResult(
                 strategy=name,
                 label=meta["label"],
                 group=meta["group"],
                 signal=signal,
+                indicator_value=indicator_value,
+                indicator_label=indicator_label,
+                params=params,
             )
         )
 

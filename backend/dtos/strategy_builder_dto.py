@@ -13,14 +13,15 @@ class CreateStrategyRequest(BaseModel):
     asset_id: int = Field(..., description="ID of the asset to create a strategy card for")
 
 
-class AttachBacktestRequest(BaseModel):
+class AttachAlgoRequest(BaseModel):
     asset_id: int = Field(..., description="Asset ID — strategy card is auto-created if absent")
-    backtest_id: int = Field(..., description="Backtest result ID to attach")
+    strategy_name: str = Field(..., description="Strategy name (e.g. 'ma_crossover' or 'combo:majority')")
+    params: Optional[dict] = Field(default=None, description="Strategy parameters used in the backtest run")
 
 
-class DetachBacktestRequest(BaseModel):
+class DetachAlgoRequest(BaseModel):
     strategy_id: int
-    backtest_id: int
+    algo_attachment_id: int = Field(..., description="Primary key of the strategy_backtests row")
 
 
 class StrategyRecord(BaseModel):
@@ -118,6 +119,7 @@ class AutoTradingAssetRow(BaseModel):
     asset_id: int
     symbol: str
     asset_name: Optional[str] = None
+    asset_type: str = "stock"
     # Latest Monte Carlo value
     mc_prob_positive: Optional[float] = None
     # Configured MC thresholds
@@ -190,13 +192,9 @@ class FinancialsSummary(BaseModel):
 
 
 class AlgoStrategySummary(BaseModel):
-    backtest_id: int
+    algo_attachment_id: int
     strategy_name: str
-    total_return: Optional[float] = None
-    sharpe_ratio: Optional[float] = None
-    max_drawdown: Optional[float] = None
-    win_rate: Optional[float] = None
-    num_trades: Optional[int] = None
+    params: Optional[dict] = None
     added_at: datetime
 
 

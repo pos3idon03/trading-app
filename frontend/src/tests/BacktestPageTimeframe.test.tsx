@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import BacktestPage from '../pages/BacktestPage';
 
@@ -11,9 +11,9 @@ vi.mock('../api/endpoints', () => ({
   },
   backtestApi: {
     run: vi.fn().mockResolvedValue({
-      backtest_id: 1,
       asset_id: 1,
       strategy_name: 'ma_crossover',
+      strategy_params: {},
       status: 'done',
       duration_ms: 50,
     }),
@@ -40,6 +40,10 @@ describe('BacktestPage — Price Frequency selector', () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('renders the Price Frequency label', async () => {
     render(<BacktestPage />);
     await waitFor(() => expect(screen.getByLabelText(/price frequency/i)).toBeInTheDocument());
@@ -49,6 +53,16 @@ describe('BacktestPage — Price Frequency selector', () => {
     render(<BacktestPage />);
     const select = await screen.findByLabelText<HTMLSelectElement>(/price frequency/i);
     expect(select.value).toBe('1d');
+  });
+
+  it('defaults start/end dates to today minus 3 years and today', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-15T12:00:00'));
+    render(<BacktestPage />);
+    const startInput = await screen.findByLabelText<HTMLInputElement>(/start date/i);
+    const endInput = screen.getByLabelText<HTMLInputElement>(/end date/i);
+    expect(startInput.value).toBe('2023-05-15');
+    expect(endInput.value).toBe('2026-05-15');
   });
 
   it('renders Daily and Weekly options', async () => {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import ComboTab from '../components/ComboTab';
-import type { AssetItem, BacktestResponse } from '../api/types';
+import type { AssetItem, BacktestResponse, ComboSignalsResponse } from '../api/types';
 import * as endpoints from '../api/endpoints';
 
 const ASSETS: AssetItem[] = [
@@ -10,7 +10,6 @@ const ASSETS: AssetItem[] = [
 ];
 
 const MOCK_RESULT: BacktestResponse = {
-  backtest_id: 99,
   asset_id: 1,
   strategy_name: 'combo:majority',
   status: 'done',
@@ -26,6 +25,32 @@ const MOCK_RESULT: BacktestResponse = {
   },
   equity_curve: [{ time: '2022-01-01', value: 100000 }],
   buy_hold_curve: [{ time: '2022-01-01', value: 100000 }],
+};
+
+const MOCK_SIGNALS: ComboSignalsResponse = {
+  strategies: [
+    {
+      strategy_name: 'ma_crossover',
+      trade_log: [],
+      indicator_series: [],
+      equity_curve: [{ time: '2022-01-01', value: 100000 }],
+      signal_timeline: [
+        { time: '2022-01-01', signal: 'Buy' },
+        { time: '2022-02-01', signal: 'Sell' },
+      ],
+    },
+    {
+      strategy_name: 'rsi',
+      trade_log: [],
+      indicator_series: [],
+      equity_curve: [{ time: '2022-01-01', value: 100000 }],
+      // RSI is neutral-aware: flat bars are Neutral, not Sell
+      signal_timeline: [
+        { time: '2022-01-01', signal: 'Buy' },
+        { time: '2022-02-01', signal: 'Neutral' },
+      ],
+    },
+  ],
 };
 
 describe('ComboTab', () => {
@@ -109,12 +134,13 @@ describe('ComboTab', () => {
     expect(runBtn).toBeDisabled();
   });
 
-  it('calls backtestApi.runCombo with correct payload on Run click', async () => {
-    const spy = vi.spyOn(endpoints.backtestApi, 'runCombo').mockResolvedValue(MOCK_RESULT);
+  it('calls backtestApi.runCombo and backtestApi.getComboSignals with same payload on Run click', async () => {
+    const comboSpy = vi.spyOn(endpoints.backtestApi, 'runCombo').mockResolvedValue(MOCK_RESULT);
+    vi.spyOn(endpoints.backtestApi, 'getComboSignals').mockResolvedValue(MOCK_SIGNALS);
     render(<ComboTab assets={ASSETS} />);
     fireEvent.click(screen.getByRole('button', { name: /run combo/i }));
-    await waitFor(() => expect(spy).toHaveBeenCalledOnce());
-    const req = spy.mock.calls[0][0];
+    await waitFor(() => expect(comboSpy).toHaveBeenCalledOnce());
+    const req = comboSpy.mock.calls[0][0];
     expect(req.symbol).toBe('AAPL');
     expect(req.strategies.length).toBeGreaterThanOrEqual(2);
     expect(req.combination_mode).toBe('majority');
@@ -122,6 +148,7 @@ describe('ComboTab', () => {
 
   it('displays BacktestResultCard after a successful run', async () => {
     vi.spyOn(endpoints.backtestApi, 'runCombo').mockResolvedValue(MOCK_RESULT);
+    vi.spyOn(endpoints.backtestApi, 'getComboSignals').mockResolvedValue(MOCK_SIGNALS);
     render(<ComboTab assets={ASSETS} />);
     fireEvent.click(screen.getByRole('button', { name: /run combo/i }));
     await waitFor(() =>
@@ -129,8 +156,80 @@ describe('ComboTab', () => {
     );
   });
 
+  it('renders Individual Strategy Results section after successful run', async () => {
+    vi.spyOn(endpoints.backtestApi, 'runCombo').mockResolvedValue(MOCK_RESULT);
+    vi.spyOn(endpoints.backtestApi, 'getComboSignals').mockResolvedValue(MOCK_SIGNALS);
+    render(<ComboTab assets={ASSETS} />);
+    fireEvent.click(screen.getByRole('button', { name: /run combo/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/Individual Strategy Results/i)).toBeInTheDocument()
+    );
+  });
+
+  it('renders per-strategy name labels for each combo leg', async () => {
+    vi.spyOn(endpoints.backtestApi, 'runCombo').mockResolvedValue(MOCK_RESULT);
+    vi.spyOn(endpoints.backtestApi, 'getComboSignals').mockResolvedValue(MOCK_SIGNALS);
+    render(<ComboTab assets={ASSETS} />);
+    fireEvent.click(screen.getByRole('button', { name: /run combo/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/Individual Strategy Results/i)).toBeInTheDocument()
+    );
+    // Results section labels use replace(/_/g, ' ') for display
+    const allMaLabels = screen.getAllByText(/ma crossover/i);
+    expect(allMaLabels.length).toBeGreaterThanOrEqual(1);
+    const allRsiLabels = screen.getAllByText(/rsi/i);
+    expect(allRsiLabels.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('renders Signal Agreement Timeline section', async () => {
+    vi.spyOn(endpoints.backtestApi, 'runCombo').mockResolvedValue(MOCK_RESULT);
+    vi.spyOn(endpoints.backtestApi, 'getComboSignals').mockResolvedValue(MOCK_SIGNALS);
+    render(<ComboTab assets={ASSETS} />);
+    fireEvent.click(screen.getByRole('button', { name: /run combo/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/Signal Agreement Timeline/i)).toBeInTheDocument()
+    );
+  });
+
+  it('does not render ComboMonthlyTable', async () => {
+    vi.spyOn(endpoints.backtestApi, 'runCombo').mockResolvedValue(MOCK_RESULT);
+    vi.spyOn(endpoints.backtestApi, 'getComboSignals').mockResolvedValue(MOCK_SIGNALS);
+    render(<ComboTab assets={ASSETS} />);
+    fireEvent.click(screen.getByRole('button', { name: /run combo/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/combo:majority/i)).toBeInTheDocument()
+    );
+    expect(screen.queryByText(/Monthly Strategy Breakdown/i)).not.toBeInTheDocument();
+  });
+
+  it('renders Signal Agreement Timeline before Individual Strategy Results in DOM', async () => {
+    vi.spyOn(endpoints.backtestApi, 'runCombo').mockResolvedValue(MOCK_RESULT);
+    vi.spyOn(endpoints.backtestApi, 'getComboSignals').mockResolvedValue(MOCK_SIGNALS);
+    render(<ComboTab assets={ASSETS} />);
+    fireEvent.click(screen.getByRole('button', { name: /run combo/i }));
+    await waitFor(() => expect(screen.getByText(/Signal Agreement Timeline/i)).toBeInTheDocument());
+
+    const timelineEl = screen.getByText(/Signal Agreement Timeline/i);
+    const strategyResultsEl = screen.getByText(/Individual Strategy Results/i);
+    // Timeline heading should appear earlier in the DOM than strategy results heading
+    const pos = timelineEl.compareDocumentPosition(strategyResultsEl);
+    expect(pos & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('renders individual strategy cards in a grid container', async () => {
+    vi.spyOn(endpoints.backtestApi, 'runCombo').mockResolvedValue(MOCK_RESULT);
+    vi.spyOn(endpoints.backtestApi, 'getComboSignals').mockResolvedValue(MOCK_SIGNALS);
+    const { container } = render(<ComboTab assets={ASSETS} />);
+    fireEvent.click(screen.getByRole('button', { name: /run combo/i }));
+    await waitFor(() => expect(screen.getByText(/Individual Strategy Results/i)).toBeInTheDocument());
+    // The xl:grid-cols-2 grid container should be present
+    const grid = container.querySelector('.grid');
+    expect(grid).toBeTruthy();
+  });
+
   it('shows an error alert when the API call fails', async () => {
     vi.spyOn(endpoints.backtestApi, 'runCombo').mockRejectedValue(new Error('Server error'));
+    vi.spyOn(endpoints.backtestApi, 'getComboSignals').mockRejectedValue(new Error('Server error'));
     render(<ComboTab assets={ASSETS} />);
     fireEvent.click(screen.getByRole('button', { name: /run combo/i }));
     await waitFor(() => expect(screen.getByText(/server error/i)).toBeInTheDocument());

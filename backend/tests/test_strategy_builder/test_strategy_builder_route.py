@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from dtos.strategy_builder_dto import CreateStrategyRequest, AttachBacktestRequest
+from dtos.strategy_builder_dto import AttachAlgoRequest, CreateStrategyRequest
 from models.strategy_builder import TradingStrategy
 
 
@@ -127,19 +127,19 @@ class TestGetFullStrategy:
         assert result is mock_response
 
 
-class TestAttachBacktest:
+class TestAttachAlgo:
     @pytest.mark.asyncio
     async def test_auto_creates_strategy_and_links(self):
-        from routes.strategy_builder import attach_backtest_to_strategy
+        from routes.strategy_builder import attach_algo_to_strategy
 
         strategy = _make_strategy()
         session = AsyncMock()
 
         with patch("routes.strategy_builder.get_or_create_strategy", new=AsyncMock(return_value=strategy)), \
-             patch("routes.strategy_builder.attach_backtest", new=AsyncMock()), \
+             patch("routes.strategy_builder.attach_algo", new=AsyncMock()), \
              patch("routes.strategy_builder._get_asset_info", new=AsyncMock(return_value=_make_asset_info())):
-            result = await attach_backtest_to_strategy(
-                AttachBacktestRequest(asset_id=10, backtest_id=5), session
+            result = await attach_algo_to_strategy(
+                AttachAlgoRequest(asset_id=10, strategy_name="ma_crossover", params={}), session
             )
 
         assert result.id == 1

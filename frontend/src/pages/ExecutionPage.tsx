@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
 import { executionApi } from '../api/endpoints';
 import type {
-  ExecutionStatusResponse,
-  OrderItem,
   PortfolioResponse,
   RiskConfigResponse,
-  RiskEventItem,
 } from '../api/types';
 import ErrorAlert from '../components/ErrorAlert';
+import ExecutionAssetCard from '../components/ExecutionAssetCard';
 import MetricCard from '../components/MetricCard';
-import StatusBadge from '../components/StatusBadge';
+import Spinner from '../components/Spinner';
+import { useExecutionMonitor } from '../hooks/useExecutionMonitor';
+
+// ---------------------------------------------------------------------------
+// Kill switch
+// ---------------------------------------------------------------------------
 
 function KillSwitch({ active, onToggle }: { active: boolean; onToggle: () => void }) {
   return (
@@ -28,6 +31,10 @@ function KillSwitch({ active, onToggle }: { active: boolean; onToggle: () => voi
     </button>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Portfolio overview
+// ---------------------------------------------------------------------------
 
 function PortfolioOverview({ portfolio }: { portfolio: PortfolioResponse }) {
   const pnlColor = (portfolio.daily_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400';
@@ -87,148 +94,49 @@ function PortfolioOverview({ portfolio }: { portfolio: PortfolioResponse }) {
   );
 }
 
-function RiskConfigPanel({ config, onUpdate }: {
-  config: RiskConfigResponse;
-  onUpdate: (field: string, value: number) => void;
-}) {
+// ---------------------------------------------------------------------------
+// Empty state for monitoring
+// ---------------------------------------------------------------------------
+
+function EmptyMonitor() {
   return (
-    <div className="card">
-      <h2 className="text-slate-200 font-semibold mb-4">Risk Configuration</h2>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {[
-          { key: 'max_position_pct', label: 'Max Position %', value: config.max_position_pct },
-          { key: 'max_exposure_pct', label: 'Max Exposure %', value: config.max_exposure_pct },
-          { key: 'daily_loss_limit_pct', label: 'Daily Loss Limit %', value: config.daily_loss_limit_pct },
-          { key: 'max_orders_per_minute', label: 'Max Orders/min', value: config.max_orders_per_minute },
-        ].map((item) => (
-          <div key={item.key}>
-            <label className="metric-label block mb-1">{item.label}</label>
-            <input
-              type="number"
-              className="bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500 w-full font-mono"
-              value={item.value}
-              step={item.key === 'max_orders_per_minute' ? 1 : 0.5}
-              onChange={(e) => onUpdate(item.key, parseFloat(e.target.value))}
-            />
-          </div>
-        ))}
-      </div>
-      <div className="mt-3 flex items-center gap-4 text-xs text-slate-500">
-        <span>Mode: <span className="text-slate-300 font-semibold uppercase">{config.trading_mode}</span></span>
-        <span>Kill switch: <span className={config.kill_switch_active ? 'text-red-400' : 'text-green-400'}>{config.kill_switch_active ? 'ACTIVE' : 'OFF'}</span></span>
-      </div>
+    <div className="card text-center py-12">
+      <p className="text-slate-400 text-sm">No auto-trading assets are currently running.</p>
+      <p className="text-slate-600 text-xs mt-1">
+        Start an asset from the Auto-Trading page to see live monitoring here.
+      </p>
     </div>
   );
 }
 
-function OrderHistory({ orders }: { orders: OrderItem[] }) {
-  if (orders.length === 0) {
-    return (
-      <div className="card text-center py-8">
-        <p className="text-slate-500 text-sm">No orders yet.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="card">
-      <h2 className="text-slate-200 font-semibold mb-4">Order History</h2>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-slate-500 border-b border-slate-700">
-              <th className="text-left py-2 pr-3">ID</th>
-              <th className="text-left py-2 pr-3">Symbol</th>
-              <th className="text-left py-2 pr-3">Side</th>
-              <th className="text-right py-2 pr-3">Qty</th>
-              <th className="text-left py-2 pr-3">Type</th>
-              <th className="text-left py-2 pr-3">Status</th>
-              <th className="text-right py-2 pr-3">Fill Price</th>
-              <th className="text-left py-2">Time</th>
-            </tr>
-          </thead>
-          <tbody>
-            {orders.map((o) => (
-              <tr key={o.id} className="border-b border-slate-800 text-slate-300">
-                <td className="py-2 pr-3 font-mono">{o.id}</td>
-                <td className="py-2 pr-3 font-semibold">{o.symbol}</td>
-                <td className={`py-2 pr-3 font-semibold uppercase ${o.side === 'buy' ? 'text-green-400' : 'text-red-400'}`}>
-                  {o.side}
-                </td>
-                <td className="text-right py-2 pr-3 font-mono">{o.qty}</td>
-                <td className="py-2 pr-3">{o.order_type}</td>
-                <td className="py-2 pr-3"><StatusBadge status={o.status} /></td>
-                <td className="text-right py-2 pr-3 font-mono">
-                  {o.filled_price ? `$${o.filled_price.toFixed(2)}` : '—'}
-                </td>
-                <td className="py-2 text-slate-500">{new Date(o.created_at).toLocaleString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-function RiskEventLog({ events }: { events: RiskEventItem[] }) {
-  if (events.length === 0) return null;
-
-  const severityColor: Record<string, string> = {
-    critical: 'text-red-400 bg-red-500/10 border-red-500/20',
-    warning: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20',
-    info: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
-  };
-
-  return (
-    <div className="card">
-      <h2 className="text-slate-200 font-semibold mb-4">Risk Events</h2>
-      <div className="space-y-2">
-        {events.map((e) => (
-          <div key={e.id} className={`p-3 rounded-lg border text-xs ${severityColor[e.severity] ?? severityColor.info}`}>
-            <div className="flex items-center justify-between mb-1">
-              <span className="font-semibold uppercase tracking-wide">{e.event_type}</span>
-              <span className="text-slate-500">{new Date(e.created_at).toLocaleString()}</span>
-            </div>
-            <p>{e.description}</p>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
 
 export default function ExecutionPage() {
-  const [status, setStatus] = useState<ExecutionStatusResponse | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
   const [riskConfig, setRiskConfig] = useState<RiskConfigResponse | null>(null);
-  const [orders, setOrders] = useState<OrderItem[]>([]);
-  const [riskEvents, setRiskEvents] = useState<RiskEventItem[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [riskLoading, setRiskLoading] = useState(true);
 
-  const fetchAll = async () => {
+  const { monitors, assetsLoading, assetsError, refresh } = useExecutionMonitor();
+
+  const fetchRiskData = async () => {
     try {
-      const [st, pf, rc, oh, re] = await Promise.all([
-        executionApi.getStatus(),
+      const [pf, rc] = await Promise.all([
         executionApi.getPortfolio(),
         executionApi.getRiskConfig(),
-        executionApi.getOrders(),
-        executionApi.getRiskEvents(),
       ]);
-      setStatus(st);
       setPortfolio(pf);
       setRiskConfig(rc);
-      setOrders(oh.orders);
-      setRiskEvents(re.events);
     } catch (err) {
-      setError((err as Error).message);
+      setStatusError((err as Error).message);
     } finally {
-      setLoading(false);
+      setRiskLoading(false);
     }
   };
 
-  useEffect(() => { fetchAll(); }, []);
+  useEffect(() => { fetchRiskData(); }, []);
 
   const toggleKillSwitch = async () => {
     try {
@@ -237,85 +145,75 @@ export default function ExecutionPage() {
       } else {
         await executionApi.disable();
       }
-      await fetchAll();
+      await fetchRiskData();
     } catch (err) {
-      setError((err as Error).message);
+      setStatusError((err as Error).message);
     }
   };
-
-  const updateRiskField = async (field: string, value: number) => {
-    try {
-      const updated = await executionApi.updateRiskConfig({ [field]: value });
-      setRiskConfig(updated);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="text-slate-400 text-sm">Loading execution dashboard…</div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-100">Execution & Risk Management</h1>
+          <h1 className="text-2xl font-bold text-slate-100">Execution</h1>
           <p className="text-slate-400 text-sm mt-1">
-            Paper trading execution, portfolio tracking, and hardcoded risk controls.
+            Live monitoring of auto-trading criteria, signals, and transactions.
           </p>
         </div>
-        <button onClick={fetchAll} className="px-3 py-2 rounded-lg text-sm bg-surface-800 text-slate-300 hover:bg-surface-700">
+        <button
+          onClick={() => { fetchRiskData(); refresh(); }}
+          className="px-3 py-2 rounded-lg text-sm bg-surface-800 text-slate-300 hover:bg-surface-700"
+        >
           Refresh
         </button>
       </div>
 
-      {error && <ErrorAlert message={error} />}
+      {(statusError || assetsError) && (
+        <ErrorAlert message={statusError ?? assetsError ?? ''} />
+      )}
 
       {/* Kill switch */}
-      <div className="card flex items-center justify-between">
-        <div>
-          <h2 className="text-slate-200 font-semibold">Master Kill Switch</h2>
-          <p className="text-slate-500 text-xs mt-1">
-            Immediately halts ALL trading activity. Overrides all signals and strategies.
-          </p>
-        </div>
-        <KillSwitch
-          active={riskConfig?.kill_switch_active ?? false}
-          onToggle={toggleKillSwitch}
-        />
-      </div>
-
-      {/* Status summary */}
-      {status && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <MetricCard
-            label="Trading Mode"
-            value={status.trading_mode.toUpperCase()}
-          />
-          <MetricCard
-            label="Stream"
-            value={status.stream_connected ? 'Connected' : 'Disconnected'}
-          />
-          <MetricCard
-            label="Symbols"
-            value={status.subscribed_symbols.join(', ') || 'None'}
-          />
-          <MetricCard
-            label="Kill Switch"
-            value={status.kill_switch_active ? 'ACTIVE' : 'OFF'}
-          />
+      {!riskLoading && riskConfig && (
+        <div className="card flex items-center justify-between">
+          <div>
+            <h2 className="text-slate-200 font-semibold">Master Kill Switch</h2>
+            <p className="text-slate-500 text-xs mt-1">
+              Immediately halts ALL trading activity. Overrides all signals and strategies.
+            </p>
+          </div>
+          <KillSwitch active={riskConfig.kill_switch_active} onToggle={toggleKillSwitch} />
         </div>
       )}
 
+      {/* Portfolio */}
       {portfolio && <PortfolioOverview portfolio={portfolio} />}
-      {riskConfig && <RiskConfigPanel config={riskConfig} onUpdate={updateRiskField} />}
-      <OrderHistory orders={orders} />
-      <RiskEventLog events={riskEvents} />
+
+      {/* Auto-trading monitor section */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-slate-200 font-semibold text-lg">Live Auto-Trading Monitor</h2>
+          {monitors.length > 0 && (
+            <span className="text-xs text-slate-500">
+              {monitors.length} asset{monitors.length !== 1 ? 's' : ''} running · polling per timeframe
+            </span>
+          )}
+        </div>
+
+        {assetsLoading ? (
+          <div className="flex justify-center py-12">
+            <Spinner />
+          </div>
+        ) : monitors.length === 0 ? (
+          <EmptyMonitor />
+        ) : (
+          <div className="space-y-6">
+            {monitors.map((m) => (
+              <ExecutionAssetCard key={m.strategyId} monitor={m} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

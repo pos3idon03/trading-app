@@ -184,13 +184,14 @@ class TestComputeMonthlyBreakdown:
         months = [r["month"] for r in rows]
         assert months == sorted(months)
 
-    def test_position_values_are_buy_or_sell(self, short_ohlcv_df, two_strategy_configs):
+    def test_position_values_are_valid_stances(self, short_ohlcv_df, two_strategy_configs):
         rows = compute_monthly_breakdown(short_ohlcv_df, two_strategy_configs, "majority")
-        valid = {"Buy", "Sell"}
+        leg_valid = {"Buy", "Neutral", "Sell"}
+        combo_valid = {"Buy", "Sell"}
         for row in rows:
-            assert row["combined_position"] in valid
+            assert row["combined_position"] in combo_valid
             for s in row["strategies"]:
-                assert s["position"] in valid
+                assert s["position"] in leg_valid
 
     def test_position_values_never_hold(self, short_ohlcv_df, two_strategy_configs):
         rows = compute_monthly_breakdown(short_ohlcv_df, two_strategy_configs, "majority")

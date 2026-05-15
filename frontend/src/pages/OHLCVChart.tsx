@@ -1,15 +1,33 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, type IChartApi, type ISeriesApi } from 'lightweight-charts';
-import { dataApi } from '../api/endpoints';
-import type { AssetItem, IngestRequest, OHLCVRecord } from '../api/types';
+import {
+  createChart,
+  ColorType,
+  type IChartApi,
+  type ISeriesApi,
+  type UTCTimestamp,
+} from 'lightweight-charts';
+import { backtestApi, dataApi } from '../api/endpoints';
+import type { AssetItem, ChartOverlayResponse, IngestRequest, OHLCVRecord } from '../api/types';
 import Spinner from '../components/Spinner';
 import ErrorAlert from '../components/ErrorAlert';
 import MetricCard from '../components/MetricCard';
+import OverlayTradeTable from '../components/OverlayTradeTable';
+import { formatAssetOptionLabel } from '../utils/assetDisplay';
+import { buildLineSeriesData, buildTradeMarkers } from '../utils/chartOverlay';
+import { STRATEGIES } from '../constants/strategies';
 
-const TIMEFRAMES = ['1d', '1h', '4h', '30m'];
+const TIMEFRAMES = ['1d', '4h', '1h', '30m', '15m', '5m'];
+const INTRADAY_TIMEFRAMES = new Set(['5m', '15m', '30m', '1h', '4h']);
+const SELECT_CLS =
+  'bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500';
 
 function formatPrice(v: number) {
-  return v.toFixed(2);
+  return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatPct(v: number) {
+  const sign = v > 0 ? '+' : '';
+  return `${sign}${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 }
 
 function computeStats(records: OHLCVRecord[]) {
@@ -23,10 +41,28 @@ function computeStats(records: OHLCVRecord[]) {
   return { latest, changePct, high, low };
 }
 
+type ChartBar = { time: string | UTCTimestamp; open: number; high: number; low: number; close: number };
+
+function buildCandleData(records: OHLCVRecord[], timeframe: string): ChartBar[] {
+  const isIntraday = INTRADAY_TIMEFRAMES.has(timeframe);
+  return records
+    .map((r): ChartBar => ({
+      time: isIntraday
+        ? (Math.floor(new Date(r.time).getTime() / 1000) as UTCTimestamp)
+        : r.time.split('T')[0],
+      open: r.open,
+      high: r.high,
+      low: r.low,
+      close: r.close,
+    }))
+    .sort((a: ChartBar, b: ChartBar) => (a.time > b.time ? 1 : -1));
+}
+
 export default function OHLCVChart() {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartApi = useRef<IChartApi | null>(null);
   const candleSeries = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const overlaySeriesRef = useRef<ISeriesApi<'Line'>[]>([]);
 
   const [symbol, setSymbol] = useState('');
   const [timeframe, setTimeframe] = useState('1d');
@@ -42,7 +78,14 @@ export default function OHLCVChart() {
   const [ingestLoading, setIngestLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
+  // Strategy overlay state
+  const [selectedStrategy, setSelectedStrategy] = useState('');
+  const [overlayLoading, setOverlayLoading] = useState(false);
+  const [overlayError, setOverlayError] = useState<string | null>(null);
+  const [activeOverlay, setActiveOverlay] = useState<ChartOverlayResponse | null>(null);
+
   const stats = computeStats(records);
+  const chartLoaded = records.length > 0 && !!resolvedSymbol;
 
   useEffect(() => {
     dataApi.getAssets()
@@ -60,6 +103,7 @@ export default function OHLCVChart() {
       layout: { background: { type: ColorType.Solid, color: '#1e293b' }, textColor: '#94a3b8' },
       grid: { vertLines: { color: '#334155' }, horzLines: { color: '#334155' } },
       crosshair: { mode: 1 },
+      timeScale: { timeVisible: true, secondsVisible: false },
       width: chartRef.current.clientWidth,
       height: 400,
     });
@@ -84,17 +128,44 @@ export default function OHLCVChart() {
 
   useEffect(() => {
     if (!candleSeries.current || !records.length) return;
-    type ChartBar = { time: string; open: number; high: number; low: number; close: number };
-    const data: ChartBar[] = records.map((r: OHLCVRecord) => ({
-      time: r.time.split('T')[0],
-      open: r.open,
-      high: r.high,
-      low: r.low,
-      close: r.close,
-    })).sort((a: ChartBar, b: ChartBar) => (a.time > b.time ? 1 : -1));
+    const data = buildCandleData(records, timeframe);
     candleSeries.current.setData(data as never[]);
     chartApi.current?.timeScale().fitContent();
-  }, [records]);
+  }, [records, timeframe]);
+
+  // Apply or clear overlay when activeOverlay changes
+  useEffect(() => {
+    clearOverlaySeries();
+    if (!activeOverlay || !chartApi.current || !candleSeries.current) return;
+
+    const isIntraday = INTRADAY_TIMEFRAMES.has(timeframe);
+    const lineSeries = buildLineSeriesData(activeOverlay, isIntraday);
+    for (const ls of lineSeries) {
+      const series = chartApi.current.addLineSeries({
+        color: ls.color,
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: ls.key,
+      });
+      series.setData(ls.data as never[]);
+      overlaySeriesRef.current.push(series);
+    }
+
+    const markers = buildTradeMarkers(activeOverlay, isIntraday);
+    if (markers.length) {
+      candleSeries.current.setMarkers(markers as never[]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeOverlay]);
+
+  function clearOverlaySeries() {
+    for (const s of overlaySeriesRef.current) {
+      try { chartApi.current?.removeSeries(s); } catch { /* already removed */ }
+    }
+    overlaySeriesRef.current = [];
+    candleSeries.current?.setMarkers([]);
+  }
 
   const reloadAssets = async (preferSymbol?: string) => {
     try {
@@ -123,6 +194,7 @@ export default function OHLCVChart() {
       setRecords([]);
       setResolvedSymbol(null);
       setConfirmDelete(false);
+      setActiveOverlay(null);
       setActionMessage(resp.message);
       await reloadAssets();
     } catch (err) {
@@ -137,7 +209,7 @@ export default function OHLCVChart() {
     setIngestLoading(true);
     setError(null);
     setActionMessage(null);
-    const req: IngestRequest = { symbols: [symbol], timeframes: [timeframe] };
+    const req: IngestRequest = { symbols: [symbol], timeframes: ['1d'] };
     try {
       const resp = await dataApi.triggerIngestion(req);
       setActionMessage(`Re-ingestion ${resp.status} for ${symbol}. Reload the chart to see fresh data.`);
@@ -156,6 +228,8 @@ export default function OHLCVChart() {
     setError(null);
     setRecords([]);
     setResolvedSymbol(null);
+    setActiveOverlay(null);
+    setSelectedStrategy('');
     try {
       const resp = await dataApi.getOHLCVBySymbol(
         ticker,
@@ -169,6 +243,38 @@ export default function OHLCVChart() {
       setError((err as Error).message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const applyOverlay = async (strategyName: string) => {
+    if (!strategyName || !resolvedSymbol) return;
+    setOverlayLoading(true);
+    setOverlayError(null);
+    try {
+      const resp = await backtestApi.getChartOverlay({
+        symbol: resolvedSymbol,
+        strategy_name: strategyName,
+        timeframe,
+        start_date: startDate ? `${startDate}T00:00:00Z` : records[0]?.time ?? `${new Date().getFullYear() - 3}-01-01T00:00:00Z`,
+        end_date: endDate ? `${endDate}T23:59:59Z` : records[records.length - 1]?.time ?? new Date().toISOString(),
+      });
+      setActiveOverlay(resp);
+    } catch (err) {
+      setOverlayError((err as Error).message);
+    } finally {
+      setOverlayLoading(false);
+    }
+  };
+
+  const handleStrategyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    setSelectedStrategy(val);
+    if (!val) {
+      setActiveOverlay(null);
+      setOverlayError(null);
+      clearOverlaySeries();
+    } else {
+      applyOverlay(val);
     }
   };
 
@@ -191,7 +297,7 @@ export default function OHLCVChart() {
           <div>
             <label className="metric-label block mb-1">Ticker</label>
             <select
-              className="bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500"
+              className={SELECT_CLS}
               value={symbol}
               onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSymbol(e.target.value)}
               disabled={assets.length === 0}
@@ -199,7 +305,7 @@ export default function OHLCVChart() {
               {assets.length === 0 && <option value="">Loading…</option>}
               {assets.map((a: AssetItem) => (
                 <option key={a.id} value={a.symbol}>
-                  {a.symbol}{a.name ? ` — ${a.name}` : ''}
+                  {formatAssetOptionLabel(a)}
                 </option>
               ))}
             </select>
@@ -207,7 +313,7 @@ export default function OHLCVChart() {
           <div>
             <label className="metric-label block mb-1">Timeframe</label>
             <select
-              className="bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500"
+              className={SELECT_CLS}
               value={timeframe}
               onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setTimeframe(e.target.value)}
             >
@@ -220,7 +326,7 @@ export default function OHLCVChart() {
             <label className="metric-label block mb-1">From</label>
             <input
               type="date"
-              className="bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500"
+              className={SELECT_CLS}
               value={startDate}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setStartDate(e.target.value)}
             />
@@ -229,7 +335,7 @@ export default function OHLCVChart() {
             <label className="metric-label block mb-1">To</label>
             <input
               type="date"
-              className="bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500"
+              className={SELECT_CLS}
               value={endDate}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEndDate(e.target.value)}
             />
@@ -274,12 +380,41 @@ export default function OHLCVChart() {
           </div>
         </div>
 
+        {/* Strategy overlay row */}
+        <div className="flex flex-wrap items-end gap-3 mb-4 border-t border-slate-700 pt-4">
+          <div>
+            <label className="metric-label block mb-1">Strategy Overlay</label>
+            <select
+              className={SELECT_CLS}
+              value={selectedStrategy}
+              onChange={handleStrategyChange}
+              disabled={!chartLoaded || overlayLoading}
+            >
+              <option value="">— none —</option>
+              {STRATEGIES.map((s) => (
+                <option key={s.value} value={s.value}>{s.label}</option>
+              ))}
+            </select>
+          </div>
+          {overlayLoading && (
+            <span className="text-xs text-slate-400 pb-2">Computing overlay…</span>
+          )}
+          {activeOverlay && !overlayLoading && (
+            <span className="text-xs text-slate-400 pb-2">
+              {activeOverlay.strategy_name} · {activeOverlay.trade_log.length} trades · {activeOverlay.duration_ms}ms
+            </span>
+          )}
+          {overlayError && (
+            <span className="text-xs text-red-400 pb-2">{overlayError}</span>
+          )}
+        </div>
+
         {stats && resolvedSymbol && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
             <MetricCard label="Last Close" value={formatPrice(stats.latest)} />
             <MetricCard
               label="Period Change"
-              value={`${stats.changePct > 0 ? '+' : ''}${stats.changePct.toFixed(2)}%`}
+              value={formatPct(stats.changePct)}
               positive={stats.changePct > 0}
               negative={stats.changePct < 0}
             />
@@ -295,6 +430,10 @@ export default function OHLCVChart() {
           <p className="text-slate-500 text-xs mt-2">
             {resolvedSymbol} · {records.length} bars · source: {records[0]?.source}
           </p>
+        )}
+
+        {activeOverlay && activeOverlay.trade_log.length > 0 && (
+          <OverlayTradeTable trades={activeOverlay.trade_log} />
         )}
       </div>
     </div>

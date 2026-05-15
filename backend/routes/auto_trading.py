@@ -9,6 +9,7 @@ from dal.strategy_builder_dal import (
 )
 from db import get_db
 from dtos.strategy_builder_dto import AutoTradingAssetRow, UpdatePositionSizingRequest
+from features.execution.auto_trading_loop import run_auto_trading_cycle
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -80,12 +81,22 @@ async def stop_auto_trading(
     return _row_to_dto(row)
 
 
+@router.post("/evaluate", summary="Manually trigger auto-trading evaluation cycle")
+async def trigger_evaluation(
+    session: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Run a single auto-trading evaluation cycle on demand (useful for testing)."""
+    results = await run_auto_trading_cycle(session)
+    return results
+
+
 def _row_to_dto(r: dict) -> AutoTradingAssetRow:
     return AutoTradingAssetRow(
         strategy_id=r["strategy_id"],
         asset_id=r["asset_id"],
         symbol=r["symbol"],
         asset_name=r.get("asset_name"),
+        asset_type=r.get("asset_type", "stock"),
         mc_prob_positive=r.get("mc_prob_positive"),
         mc_buy_prob_positive=r.get("mc_buy_prob_positive"),
         mc_sell_prob_positive=r.get("mc_sell_prob_positive"),

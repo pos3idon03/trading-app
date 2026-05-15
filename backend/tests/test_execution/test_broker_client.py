@@ -10,6 +10,7 @@ from features.execution.broker_client import (
     cancel_order,
     get_account,
     get_positions,
+    has_position,
     submit_limit_order,
     submit_market_order,
     submit_stop_loss,
@@ -140,3 +141,46 @@ class TestGetAccount:
     def test_error_returns_none(self, mock_client):
         mock_client.return_value.get_account.side_effect = Exception("API error")
         assert get_account() is None
+
+
+class TestHasPosition:
+    def _make_position(self, symbol: str, qty: float) -> Position:
+        return Position(
+            symbol=symbol,
+            qty=qty,
+            market_value=qty * 100.0,
+            avg_entry_price=100.0,
+            current_price=100.0,
+            unrealized_pnl=0.0,
+            unrealized_pnl_pct=0.0,
+        )
+
+    @patch("features.execution.broker_client.get_positions")
+    def test_returns_true_when_holding(self, mock_get):
+        mock_get.return_value = [self._make_position("BTC/USD", 0.05)]
+        assert has_position("BTC/USD") is True
+
+    @patch("features.execution.broker_client.get_positions")
+    def test_returns_false_when_not_holding(self, mock_get):
+        mock_get.return_value = [self._make_position("AAPL", 10.0)]
+        assert has_position("BTC/USD") is False
+
+    @patch("features.execution.broker_client.get_positions")
+    def test_returns_false_when_no_positions(self, mock_get):
+        mock_get.return_value = []
+        assert has_position("BTC/USD") is False
+
+    @patch("features.execution.broker_client.get_positions")
+    def test_returns_false_when_qty_is_zero(self, mock_get):
+        mock_get.return_value = [self._make_position("BTC/USD", 0.0)]
+        assert has_position("BTC/USD") is False
+
+    @patch("features.execution.broker_client.get_positions")
+    def test_matches_exact_symbol(self, mock_get):
+        mock_get.return_value = [
+            self._make_position("AAPL", 10.0),
+            self._make_position("MSFT", 5.0),
+        ]
+        assert has_position("AAPL") is True
+        assert has_position("MSFT") is True
+        assert has_position("GOOG") is False

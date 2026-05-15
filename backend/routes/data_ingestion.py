@@ -6,11 +6,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dal.market_data_dal import delete_asset, get_asset_id_by_symbol, get_ohlcv, list_assets
+from dal.market_data_dal import delete_asset, get_asset_id_by_symbol, get_ohlcv, list_assets, list_assets_with_latest_price, resample_ohlcv
 from db import get_db
 from dtos.market_data_dto import (
     AssetDTO,
     AssetListResponse,
+    AssetWithPriceDTO,
+    AssetWithPriceListResponse,
     DeleteAssetResponse,
     IngestRequest,
     IngestResponse,
@@ -26,6 +28,7 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter()
+
 
 
 @router.post("/ingest", response_model=IngestResponse, status_code=202)
@@ -62,6 +65,16 @@ async def get_assets(
     rows = await list_assets(session)
     assets = [AssetDTO(**row) for row in rows]
     return AssetListResponse(assets=assets, count=len(assets))
+
+
+@router.get("/assets/with-prices", response_model=AssetWithPriceListResponse)
+async def get_assets_with_prices(
+    session: AsyncSession = Depends(get_db),
+) -> AssetWithPriceListResponse:
+    """Return all ingested assets with their latest daily close price and timestamp."""
+    rows = await list_assets_with_latest_price(session)
+    assets = [AssetWithPriceDTO(**row) for row in rows]
+    return AssetWithPriceListResponse(assets=assets, count=len(assets))
 
 
 @router.delete("/assets/{symbol}", response_model=DeleteAssetResponse)
@@ -106,6 +119,9 @@ async def get_ohlcv_by_symbol(
 
     df = await get_ohlcv(session, asset_id, timeframe, start, end, bucket_interval=bucket)
 
+    if df.empty and bucket is None:
+        df = await _resample_ohlcv(session, asset_id, timeframe, start, end)
+
     if df.empty:
         raise HTTPException(status_code=404, detail=f"No OHLCV data found for {symbol} ({timeframe})")
 
@@ -137,6 +153,9 @@ async def get_ohlcv_data(
 
     df = await get_ohlcv(session, asset_id, timeframe, start, end, bucket_interval=bucket)
 
+    if df.empty and bucket is None:
+        df = await _resample_ohlcv(session, asset_id, timeframe, start, end)
+
     if df.empty:
         raise HTTPException(status_code=404, detail=f"No OHLCV data found for asset_id={asset_id}")
 
@@ -149,6 +168,11 @@ async def get_ohlcv_data(
         records=records,
         count=len(records),
     )
+
+
+async def _resample_ohlcv(session, asset_id: int, timeframe: str, start: datetime, end: datetime):
+    """Delegate to DAL resample helper."""
+    return await resample_ohlcv(session, asset_id, timeframe, start, end)
 
 
 def _nan_to_none(value: object) -> object:

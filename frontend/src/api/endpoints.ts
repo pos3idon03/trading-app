@@ -3,15 +3,19 @@ import type {
   AgentAnalysisRequest,
   AgentAnalysisResponse,
   AssetListResponse,
-  AttachBacktestRequest,
+  AssetWithPriceListResponse,
+  AttachAlgoRequest,
   AutoTradingAssetRow,
   BacktestRequest,
   BacktestResponse,
+  ChartOverlayRequest,
+  ChartOverlayResponse,
   ComboBacktestRequest,
+  ComboSignalsResponse,
   CompanyProfile,
   CreateStrategyRequest,
   DeleteAssetResponse,
-  DetachBacktestRequest,
+  DetachAlgoRequest,
   ExecutionStatusResponse,
   FinancialStatement,
   FinancialsIngestResponse,
@@ -48,6 +52,9 @@ export const dataApi = {
 
   getAssets: () =>
     api.get<AssetListResponse>('/data/assets').then((r) => r.data),
+
+  getAssetsWithPrices: () =>
+    api.get<AssetWithPriceListResponse>('/data/assets/with-prices').then((r) => r.data),
 
   getOHLCVBySymbol: (
     symbol: string,
@@ -102,17 +109,17 @@ export const backtestApi = {
   run: (req: BacktestRequest) =>
     api.post<BacktestResponse>('/backtest/run', req).then((r) => r.data),
 
-  getResults: (btId: number) =>
-    api.get<BacktestResponse>(`/backtest/${btId}/results`).then((r) => r.data),
-
   optimize: (req: OptimizationRequest) =>
     api.post<OptimizationResponse>('/backtest/optimize', req).then((r) => r.data),
 
-  getOptimization: (optId: number) =>
-    api.get<OptimizationResponse>(`/backtest/${optId}/optimization`).then((r) => r.data),
-
   runCombo: (req: ComboBacktestRequest) =>
     api.post<BacktestResponse>('/backtest/combo', req).then((r) => r.data),
+
+  getComboSignals: (req: ComboBacktestRequest) =>
+    api.post<ComboSignalsResponse>('/backtest/combo-signals', req).then((r) => r.data),
+
+  getChartOverlay: (req: ChartOverlayRequest) =>
+    api.post<ChartOverlayResponse>('/backtest/chart-overlay', req).then((r) => r.data),
 };
 
 export const agentApi = {
@@ -191,11 +198,11 @@ export const strategyBuilderApi = {
   updateThresholds: (strategyId: number, req: UpdateThresholdsRequest) =>
     api.patch<StrategyRecord>(`/strategy-builder/${strategyId}/thresholds`, req).then((r) => r.data),
 
-  attachBacktest: (req: AttachBacktestRequest) =>
-    api.post<StrategyRecord>('/strategy-builder/attach-backtest', req).then((r) => r.data),
+  attachAlgo: (req: AttachAlgoRequest) =>
+    api.post<StrategyRecord>('/strategy-builder/attach-algo', req).then((r) => r.data),
 
-  detachBacktest: (req: DetachBacktestRequest) =>
-    api.delete('/strategy-builder/detach-backtest', { data: req }).then((r) => r.data),
+  detachAlgo: (req: DetachAlgoRequest) =>
+    api.delete('/strategy-builder/detach-algo', { data: req }).then((r) => r.data),
 
   remove: (strategyId: number) =>
     api.delete(`/strategy-builder/${strategyId}`).then((r) => r.data),

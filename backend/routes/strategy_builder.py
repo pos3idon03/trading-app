@@ -4,10 +4,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal.market_data_dal import list_assets
 from dal.strategy_builder_dal import (
-    attach_backtest,
+    attach_algo,
     create_strategy,
     delete_strategy,
-    detach_backtest,
+    detach_algo,
     get_or_create_strategy,
     get_strategy,
     get_strategy_by_asset,
@@ -16,9 +16,9 @@ from dal.strategy_builder_dal import (
 )
 from db import get_db
 from dtos.strategy_builder_dto import (
-    AttachBacktestRequest,
+    AttachAlgoRequest,
     CreateStrategyRequest,
-    DetachBacktestRequest,
+    DetachAlgoRequest,
     StrategyFullResponse,
     StrategyRecord,
     UpdateThresholdsRequest,
@@ -93,28 +93,28 @@ async def update_strategy_thresholds(
     return _to_strategy_record(strategy, asset_info)
 
 
-@router.post("/attach-backtest", response_model=StrategyRecord, status_code=201)
-async def attach_backtest_to_strategy(
-    request: AttachBacktestRequest,
+@router.post("/attach-algo", response_model=StrategyRecord, status_code=201)
+async def attach_algo_to_strategy(
+    request: AttachAlgoRequest,
     session: AsyncSession = Depends(get_db),
 ) -> StrategyRecord:
-    """Attach a backtest result to a strategy card. Auto-creates the card if absent."""
+    """Attach an algo strategy definition to a strategy card. Auto-creates the card if absent."""
     strategy = await get_or_create_strategy(session, request.asset_id)
-    await attach_backtest(session, strategy.id, request.backtest_id)
+    await attach_algo(session, strategy.id, request.strategy_name, request.params)
 
     asset_info = await _get_asset_info(session, request.asset_id)
     return _to_strategy_record(strategy, asset_info)
 
 
-@router.delete("/detach-backtest")
-async def detach_backtest_from_strategy(
-    request: DetachBacktestRequest,
+@router.delete("/detach-algo")
+async def detach_algo_from_strategy(
+    request: DetachAlgoRequest,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Remove a backtest link from a strategy card."""
-    removed = await detach_backtest(session, request.strategy_id, request.backtest_id)
+    """Remove an algo strategy link from a strategy card."""
+    removed = await detach_algo(session, request.strategy_id, request.algo_attachment_id)
     if not removed:
-        raise HTTPException(status_code=404, detail="Link not found")
+        raise HTTPException(status_code=404, detail="Algo attachment not found")
     return {"removed": True}
 
 
@@ -123,7 +123,7 @@ async def delete_strategy_card(
     strategy_id: int,
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Delete a strategy card and all its linked backtests."""
+    """Delete a strategy card and all its linked algo strategies."""
     deleted = await delete_strategy(session, strategy_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found")

@@ -31,10 +31,12 @@ def _build_portfolio_state(
         return PortfolioState(equity=0.0, cash=0.0, buying_power=0.0)
 
     position_values: dict[str, float] = {}
+    position_quantities: dict[str, float] = {}
     total_exposure = 0.0
 
     for pos in positions:
         position_values[pos.symbol] = abs(pos.market_value)
+        position_quantities[pos.symbol] = abs(pos.qty)
         total_exposure += abs(pos.market_value)
 
     daily_pnl = _calculate_daily_pnl(positions)
@@ -47,6 +49,7 @@ def _build_portfolio_state(
         daily_pnl=daily_pnl,
         daily_pnl_pct=daily_pnl_pct,
         position_values=position_values,
+        position_quantities=position_quantities,
         total_exposure=total_exposure,
     )
 

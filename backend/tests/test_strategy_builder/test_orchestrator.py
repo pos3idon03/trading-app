@@ -26,6 +26,20 @@ def _make_strategy(id_=1, asset_id=10):
     s.asset_id = asset_id
     s.is_active = True
     s.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    s.combination_mode = "all"
+    s.algo_timeframe = "1d"
+    s.auto_trading_enabled = False
+    s.auto_trading_started = False
+    s.mc_buy_prob_positive = None
+    s.mc_sell_prob_positive = None
+    s.ai_buy_conviction = None
+    s.ai_sell_conviction = None
+    s.ai_buy_sentiment = None
+    s.ai_sell_sentiment = None
+    s.ai_buy_macro = None
+    s.ai_sell_macro = None
+    s.max_amount_per_position = None
+    s.max_pct_of_capital = None
     return s
 
 
@@ -120,7 +134,7 @@ class TestFetchAlgoStrategies:
     async def test_returns_empty_when_no_links(self):
         session = AsyncMock()
         with patch(
-            "features.strategy_builder.orchestrator.get_linked_backtests",
+            "features.strategy_builder.orchestrator.get_linked_algos",
             new=AsyncMock(return_value=[]),
         ):
             result = await _fetch_algo_strategies(session, strategy_id=1)
@@ -129,19 +143,44 @@ class TestFetchAlgoStrategies:
     @pytest.mark.asyncio
     async def test_maps_rows_to_algo_summaries(self):
         row = {
-            "backtest_id": 5, "added_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
-            "strategy_name": "ma_crossover", "total_return": 0.15,
-            "sharpe_ratio": 1.2, "max_drawdown": -0.1, "win_rate": 0.55, "num_trades": 12,
+            "algo_attachment_id": 5, "added_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
+            "strategy_name": "ma_crossover", "params": None,
         }
         session = AsyncMock()
         with patch(
-            "features.strategy_builder.orchestrator.get_linked_backtests",
+            "features.strategy_builder.orchestrator.get_linked_algos",
             new=AsyncMock(return_value=[row]),
         ):
             result = await _fetch_algo_strategies(session, strategy_id=1)
         assert len(result) == 1
-        assert result[0].backtest_id == 5
+        assert result[0].algo_attachment_id == 5
         assert result[0].strategy_name == "ma_crossover"
+        assert result[0].params is None
+
+    @pytest.mark.asyncio
+    async def test_passes_combo_params_through(self):
+        combo_params = {
+            "combination_mode": "majority",
+            "strategies": [
+                {"strategy_name": "rsi", "strategy_params": {}, "weight": 1.0},
+                {"strategy_name": "macd", "strategy_params": {}, "weight": 1.0},
+            ],
+        }
+        row = {
+            "algo_attachment_id": 9, "added_at": datetime(2024, 1, 1, tzinfo=timezone.utc),
+            "strategy_name": "combo:majority", "params": combo_params,
+        }
+        session = AsyncMock()
+        with patch(
+            "features.strategy_builder.orchestrator.get_linked_algos",
+            new=AsyncMock(return_value=[row]),
+        ):
+            result = await _fetch_algo_strategies(session, strategy_id=1)
+        assert len(result) == 1
+        assert result[0].strategy_name == "combo:majority"
+        assert result[0].params == combo_params
+        assert result[0].params["combination_mode"] == "majority"
+        assert len(result[0].params["strategies"]) == 2
 
 
 class TestBuildFullStrategyResponse:
@@ -155,7 +194,7 @@ class TestBuildFullStrategyResponse:
         with patch("features.strategy_builder.orchestrator.get_or_run_merton_for_asset", new=AsyncMock(return_value=mc)), \
              patch("features.strategy_builder.orchestrator.get_latest_agent_analysis", new=AsyncMock(return_value=None)), \
              patch("features.strategy_builder.orchestrator.get_financials_for_asset", new=AsyncMock(return_value=fin)), \
-             patch("features.strategy_builder.orchestrator.get_linked_backtests", new=AsyncMock(return_value=[])):
+             patch("features.strategy_builder.orchestrator.get_linked_algos", new=AsyncMock(return_value=[])):
             result = await build_full_strategy_response(session, strategy, "AAPL", "Apple")
 
         assert result.strategy_id == 1

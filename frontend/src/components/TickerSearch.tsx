@@ -80,36 +80,58 @@ export default function TickerSearch({ selected, onChange }: TickerSearchProps) 
     inputRef.current?.focus();
   }
 
+  function addTickerFromInput() {
+    const symbol = query.trim().toUpperCase();
+    if (!symbol || selected.includes(symbol)) return;
+    onChange([...selected, symbol]);
+    setQuery('');
+    setResults([]);
+    setOpen(false);
+    setActiveIndex(-1);
+  }
+
   function removeTicker(symbol: string) {
     onChange(selected.filter((s) => s !== symbol));
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (!open || results.length === 0) return;
+    if (open && results.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActiveIndex((prev) => Math.min(prev + 1, results.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActiveIndex((prev) => Math.max(prev - 1, 0));
+        return;
+      }
+      if (e.key === 'Enter' && activeIndex >= 0) {
+        e.preventDefault();
+        selectTicker(results[activeIndex]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        setOpen(false);
+        return;
+      }
+    }
 
-    if (e.key === 'ArrowDown') {
+    if (e.key === 'Enter') {
       e.preventDefault();
-      setActiveIndex((prev) => Math.min(prev + 1, results.length - 1));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setActiveIndex((prev) => Math.max(prev - 1, 0));
-    } else if (e.key === 'Enter' && activeIndex >= 0) {
-      e.preventDefault();
-      selectTicker(results[activeIndex]);
-    } else if (e.key === 'Escape') {
-      setOpen(false);
+      addTickerFromInput();
     }
   }
 
   return (
     <div className="flex flex-col gap-2">
-      <div ref={containerRef} className="relative">
-        <div className="relative">
+      <div className="flex gap-2">
+        <div ref={containerRef} className="relative flex-1 min-w-0">
           <input
             ref={inputRef}
             type="text"
             className="w-full bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500 pr-8"
-            placeholder="Search by name or symbol (e.g. Microsoft)"
+            placeholder="Search by name or symbol, or type a ticker and press Enter"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -126,40 +148,49 @@ export default function TickerSearch({ selected, onChange }: TickerSearchProps) 
               <span className="block w-3.5 h-3.5 border border-brand-500 border-t-transparent rounded-full animate-spin" />
             </span>
           )}
+
+          {open && results.length > 0 && (
+            <ul
+              role="listbox"
+              className="absolute z-50 mt-1 w-full bg-surface-800 border border-slate-700 rounded-lg shadow-lg overflow-hidden max-h-64 overflow-y-auto"
+            >
+              {results.map((result, idx) => (
+                <li
+                  key={result.symbol}
+                  role="option"
+                  aria-selected={idx === activeIndex}
+                  onMouseDown={(ev) => {
+                    ev.preventDefault();
+                    selectTicker(result);
+                  }}
+                  onMouseEnter={() => setActiveIndex(idx)}
+                  className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer text-sm transition-colors ${
+                    idx === activeIndex
+                      ? 'bg-brand-500/20 text-slate-100'
+                      : 'text-slate-300 hover:bg-slate-700/50'
+                  }`}
+                >
+                  <span className="font-mono font-semibold text-brand-400 w-16 shrink-0">
+                    {result.symbol}
+                  </span>
+                  <span className="truncate">{result.name}</span>
+                  {result.exchange && (
+                    <span className="ml-auto text-xs text-slate-500 shrink-0">{result.exchange}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
 
-        {open && results.length > 0 && (
-          <ul
-            role="listbox"
-            className="absolute z-50 mt-1 w-full bg-surface-800 border border-slate-700 rounded-lg shadow-lg overflow-hidden max-h-64 overflow-y-auto"
-          >
-            {results.map((result, idx) => (
-              <li
-                key={result.symbol}
-                role="option"
-                aria-selected={idx === activeIndex}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  selectTicker(result);
-                }}
-                onMouseEnter={() => setActiveIndex(idx)}
-                className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer text-sm transition-colors ${
-                  idx === activeIndex
-                    ? 'bg-brand-500/20 text-slate-100'
-                    : 'text-slate-300 hover:bg-slate-700/50'
-                }`}
-              >
-                <span className="font-mono font-semibold text-brand-400 w-16 shrink-0">
-                  {result.symbol}
-                </span>
-                <span className="truncate">{result.name}</span>
-                {result.exchange && (
-                  <span className="ml-auto text-xs text-slate-500 shrink-0">{result.exchange}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+        <button
+          type="button"
+          onClick={addTickerFromInput}
+          disabled={!query.trim()}
+          className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed px-4 text-sm shrink-0"
+        >
+          Add
+        </button>
       </div>
 
       {selected.length > 0 && (

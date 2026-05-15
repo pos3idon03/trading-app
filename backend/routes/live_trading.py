@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal import live_trading_dal
-from dal.market_data_dal import ensure_asset_for_live_stream, get_asset_id_by_symbol
+from dal.market_data_dal import ensure_asset_for_live_stream, get_asset_id_by_symbol, get_ohlcv
 from db import get_db
+from features.live_trading.strategy_signals import MIN_BARS_REQUIRED
 from dtos.live_trading_dto import (
     IndicatorSnapshotResponse,
     LiveDataUpdate,
@@ -234,13 +236,64 @@ async def _indicators_from_db(
     )
 
 
+_WEEKLY_LOOKBACK = timedelta(weeks=104)
+_DEFAULT_LOOKBACK = timedelta(days=365)
+
+
+def _ohlcv_query_args(timeframe: str) -> dict:
+    """Return get_ohlcv kwargs; weekly resamples stored daily bars via time_bucket."""
+    if timeframe == "1w":
+        return {"timeframe": "1d", "bucket_interval": timedelta(weeks=1)}
+    return {"timeframe": timeframe}
+
+
+def _df_rows_to_bars(df) -> list:
+    """Convert a DataFrame of OHLCV rows into lightweight bar objects."""
+    bars = []
+    for _, row in df.iterrows():
+        bars.append(SimpleNamespace(
+            open=float(row["open"]),
+            high=float(row["high"]),
+            low=float(row["low"]),
+            close=float(row["close"]),
+            volume=int(row.get("volume", 0)),
+        ))
+    return bars
+
+
+async def _fetch_bars_from_db(
+    session: AsyncSession, symbol: str, timeframe: str,
+) -> list:
+    """Load historical OHLCV bars from the database for strategy evaluation."""
+    asset_id = await get_asset_id_by_symbol(session, symbol)
+    if asset_id is None:
+        return []
+
+    now = datetime.now(timezone.utc)
+    lookback = _WEEKLY_LOOKBACK if timeframe == "1w" else _DEFAULT_LOOKBACK
+    start = now - lookback
+
+    query_args = _ohlcv_query_args(timeframe)
+    df = await get_ohlcv(session, asset_id, start=start, end=now, **query_args)
+    if df.empty:
+        return []
+    return _df_rows_to_bars(df)
+
+
 @router.get("/strategy-signals/{symbol}", response_model=StrategySignalsResponse)
 async def get_strategy_signals(
     symbol: str,
     timeframe: str = Query("1h", description="Timeframe for strategy evaluation"),
+    session: AsyncSession = Depends(get_db),
 ):
     symbol = symbol.upper()
     bars = _get_resampler().get_bars(symbol, timeframe)
+
+    if len(bars) < MIN_BARS_REQUIRED:
+        db_bars = await _fetch_bars_from_db(session, symbol, timeframe)
+        if len(db_bars) >= MIN_BARS_REQUIRED:
+            bars = db_bars
+
     strategies = compute_strategy_signals(bars, symbol)
     return StrategySignalsResponse(
         symbol=symbol,
@@ -252,6 +305,9 @@ async def get_strategy_signals(
                 label=s.label,
                 group=s.group,
                 signal=s.signal,
+                indicator_value=s.indicator_value,
+                indicator_label=s.indicator_label,
+                params=s.params,
             )
             for s in strategies
         ],

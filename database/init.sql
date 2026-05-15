@@ -18,3 +18,9 @@ CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 \i /docker-entrypoint-initdb.d/migrations/010_add_provider_used_to_agent_analyses.sql
 \i /docker-entrypoint-initdb.d/migrations/011_add_asset_id_fk.sql
 \i /docker-entrypoint-initdb.d/migrations/012_create_company_profiles.sql
+\i /docker-entrypoint-initdb.d/migrations/013_add_buy_hold_curve_to_backtest.sql
+\i /docker-entrypoint-initdb.d/migrations/014_create_trading_strategies.sql
+\i /docker-entrypoint-initdb.d/migrations/015_add_macro_score_to_agent_analyses.sql
+\i /docker-entrypoint-initdb.d/migrations/016_add_auto_trading_columns.sql
+\i /docker-entrypoint-initdb.d/migrations/017_refine_auto_trading_thresholds.sql
+\i /docker-entrypoint-initdb.d/migrations/018_stateless_backtests.sql

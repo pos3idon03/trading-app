@@ -7,7 +7,7 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dal.strategy_builder_dal import get_linked_backtests
+from dal.strategy_builder_dal import get_linked_algos
 from dtos.strategy_builder_dto import (
     AIAgentSummary,
     AlgoStrategySummary,
@@ -107,16 +107,12 @@ async def _fetch_algo_strategies(
     session: AsyncSession,
     strategy_id: int,
 ) -> list[AlgoStrategySummary]:
-    rows = await get_linked_backtests(session, strategy_id)
+    rows = await get_linked_algos(session, strategy_id)
     return [
         AlgoStrategySummary(
-            backtest_id=r["backtest_id"],
+            algo_attachment_id=r["algo_attachment_id"],
             strategy_name=r["strategy_name"],
-            total_return=r.get("total_return"),
-            sharpe_ratio=r.get("sharpe_ratio"),
-            max_drawdown=r.get("max_drawdown"),
-            win_rate=r.get("win_rate"),
-            num_trades=r.get("num_trades"),
+            params=r.get("params"),
             added_at=r["added_at"],
         )
         for r in rows

@@ -87,8 +87,7 @@ def _calculate_position_size(
 
 
 def _get_position_qty(portfolio: PortfolioState, symbol: str) -> float:
-    value = portfolio.position_values.get(symbol, 0.0)
-    return value
+    return portfolio.position_quantities.get(symbol, 0.0)
 
 
 def execute_order_plan(plan: OrderPlan) -> tuple[RiskCheckResult, OrderResult | None]:

@@ -18,6 +18,7 @@ interface BacktestEquityCurveProps {
   tradeLog?: TradeRecord[];
   buyHoldData?: { time: string; value: number }[];
   compact?: boolean;
+  syncId?: string;
 }
 
 interface ChartPoint {
@@ -105,6 +106,7 @@ export default function BacktestEquityCurve({
   tradeLog,
   buyHoldData,
   compact = false,
+  syncId,
 }: BacktestEquityCurveProps) {
   const height = compact ? 200 : 320;
   const chartData = buildChartData(data, buyHoldData);
@@ -117,7 +119,7 @@ export default function BacktestEquityCurve({
       {!compact && <h2 className="text-slate-200 font-semibold mb-2">Equity Curve</h2>}
       {renderLegend()}
       <ResponsiveContainer width="100%" height={height}>
-        <ComposedChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+        <ComposedChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }} syncId={syncId}>
           <defs>
             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%"  stopColor="#22c55e" stopOpacity={0.3} />

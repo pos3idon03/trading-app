@@ -1,10 +1,9 @@
-"""Tests for Daily/Weekly timeframe support in backtest DTO, runner, and route helpers."""
+"""Tests for timeframe support in backtest DTO, runner, and route helpers."""
 import numpy as np
 import pandas as pd
 import pytest
 from datetime import datetime, timedelta, timezone
 from pydantic import ValidationError
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from dtos.backtest_dto import BacktestRequest, OptimizationRequest
 from features.backtesting.runner import _TIMEFRAME_TO_VBT_FREQ, run_backtest
@@ -55,9 +54,14 @@ class TestBacktestRequestTimeframeValidation:
         req = BacktestRequest(timeframe="1w", **self._base())
         assert req.timeframe == "1w"
 
+    @pytest.mark.parametrize("tf", ["5m", "15m", "30m", "1h", "4h"])
+    def test_accepts_intraday_timeframes(self, tf: str):
+        req = BacktestRequest(timeframe=tf, **self._base())
+        assert req.timeframe == tf
+
     def test_rejects_invalid_timeframe(self):
         with pytest.raises(ValidationError):
-            BacktestRequest(timeframe="4h", **self._base())
+            BacktestRequest(timeframe="2h", **self._base())
 
     def test_rejects_raw_string_timeframe(self):
         with pytest.raises(ValidationError):
@@ -78,9 +82,14 @@ class TestOptimizationRequestTimeframeValidation:
         req = OptimizationRequest(timeframe="1w", **self._base())
         assert req.timeframe == "1w"
 
+    @pytest.mark.parametrize("tf", ["5m", "15m", "30m", "1h", "4h"])
+    def test_accepts_intraday_timeframes(self, tf: str):
+        req = OptimizationRequest(timeframe=tf, **self._base())
+        assert req.timeframe == tf
+
     def test_rejects_invalid_timeframe(self):
         with pytest.raises(ValidationError):
-            OptimizationRequest(timeframe="1h", **self._base())
+            OptimizationRequest(timeframe="2h", **self._base())
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +102,16 @@ class TestTimeframeToVbtFreq:
 
     def test_weekly_maps_to_W(self):
         assert _TIMEFRAME_TO_VBT_FREQ["1w"] == "W"
+
+    @pytest.mark.parametrize("tf,expected", [
+        ("5m", "5min"),
+        ("15m", "15min"),
+        ("30m", "30min"),
+        ("1h", "h"),
+        ("4h", "4h"),
+    ])
+    def test_intraday_mappings(self, tf: str, expected: str):
+        assert _TIMEFRAME_TO_VBT_FREQ[tf] == expected
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +128,18 @@ class TestRunBacktestTimeframe:
     def test_weekly_backtest_completes(self):
         df = _make_ohlcv_df(n=104, freq="W")
         result = run_backtest(df, strategy="ma_crossover", params={}, timeframe="1w")
+        assert result.metrics is not None
+        assert result.equity_curve is not None
+
+    def test_intraday_5m_backtest_completes(self):
+        df = _make_ohlcv_df(n=500, freq="5min")
+        result = run_backtest(df, strategy="ma_crossover", params={}, timeframe="5m")
+        assert result.metrics is not None
+        assert result.equity_curve is not None
+
+    def test_intraday_1h_backtest_completes(self):
+        df = _make_ohlcv_df(n=200, freq="h")
+        result = run_backtest(df, strategy="ma_crossover", params={}, timeframe="1h")
         assert result.metrics is not None
         assert result.equity_curve is not None
 
@@ -131,16 +162,43 @@ class TestRunBacktestTimeframe:
 # ---------------------------------------------------------------------------
 
 class TestOhlcvQueryArgs:
+    def test_5m_returns_direct_timeframe(self):
+        args = _ohlcv_query_args("5m")
+        assert args == {"timeframe": "5m"}
+        assert "bucket_interval" not in args
+
     def test_daily_returns_direct_timeframe(self):
         args = _ohlcv_query_args("1d")
         assert args == {"timeframe": "1d"}
         assert "bucket_interval" not in args
 
-    def test_weekly_returns_daily_source_with_bucket(self):
+    def test_weekly_returns_daily_source_with_timedelta_bucket(self):
         args = _ohlcv_query_args("1w")
         assert args["timeframe"] == "1d"
         assert args["bucket_interval"] == timedelta(weeks=1)
+        assert isinstance(args["bucket_interval"], timedelta)
 
-    def test_daily_does_not_include_bucket_interval(self):
-        args = _ohlcv_query_args("1d")
-        assert "bucket_interval" not in args
+    def test_15m_resamples_from_5m(self):
+        args = _ohlcv_query_args("15m")
+        assert args["timeframe"] == "5m"
+        assert args["bucket_interval"] == timedelta(minutes=15)
+
+    def test_30m_resamples_from_5m(self):
+        args = _ohlcv_query_args("30m")
+        assert args["timeframe"] == "5m"
+        assert args["bucket_interval"] == timedelta(minutes=30)
+
+    def test_1h_resamples_from_5m(self):
+        args = _ohlcv_query_args("1h")
+        assert args["timeframe"] == "5m"
+        assert args["bucket_interval"] == timedelta(hours=1)
+
+    def test_4h_resamples_from_5m(self):
+        args = _ohlcv_query_args("4h")
+        assert args["timeframe"] == "5m"
+        assert args["bucket_interval"] == timedelta(hours=4)
+
+    def test_native_timeframes_have_no_bucket(self):
+        for tf in ("5m", "1d"):
+            args = _ohlcv_query_args(tf)
+            assert "bucket_interval" not in args

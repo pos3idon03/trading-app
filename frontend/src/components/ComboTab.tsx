@@ -1,16 +1,33 @@
 import { useEffect, useState } from 'react';
 import { backtestApi, strategyBuilderApi } from '../api/endpoints';
-import type { AssetItem, BacktestResponse, CombinationMode } from '../api/types';
+import type { AssetItem, BacktestResponse, CombinationMode, ComboStrategySignal } from '../api/types';
 import { STRATEGIES, DEFAULT_PARAMS_MAP } from '../constants/strategies';
 import BacktestResultCard from './BacktestResultCard';
-import { ComboMonthlyTable } from './ComboMonthlyTable';
+import { ComboSignalTimeline } from './ComboSignalTimeline';
 import ErrorAlert from './ErrorAlert';
 import Spinner from './Spinner';
 import StrategyParamsEditor from './StrategyParamsEditor';
+import { formatAssetOptionLabel } from '../utils/assetDisplay';
+import { defaultDatesForTimeframe } from '../utils/backtestDates';
+import type { BacktestTimeframe } from '../utils/backtestDates';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+type ComboTimeframe = BacktestTimeframe;
+
+const INTRADAY_TIMEFRAMES: Set<ComboTimeframe> = new Set(['5m', '15m', '30m', '1h', '4h']);
+
+const TIMEFRAME_OPTIONS: { value: ComboTimeframe; label: string }[] = [
+  { value: '5m',  label: '5 Min' },
+  { value: '15m', label: '15 Min' },
+  { value: '30m', label: '30 Min' },
+  { value: '1h',  label: '1 Hour' },
+  { value: '4h',  label: '4 Hours' },
+  { value: '1d',  label: 'Daily' },
+  { value: '1w',  label: 'Weekly' },
+];
 
 interface ComboEntry {
   id: string;
@@ -22,17 +39,20 @@ const COMBINATION_MODES: { value: CombinationMode; label: string; description: s
   {
     value: 'and',
     label: 'AND (Unanimous)',
-    description: 'All strategies must agree to enter; any exit triggers an exit.',
+    description:
+      'Enter when every leg is Buy; exit when every leg is Sell. Mixed or Neutral legs hold the current position.',
   },
   {
     value: 'majority',
     label: 'Majority Vote',
-    description: 'More than 50% of strategies must agree to enter or exit.',
+    description:
+      'More Buy than Sell votes wins (Neutral abstains). Ties keep the current combined position.',
   },
   {
     value: 'weighted',
     label: 'Weighted',
-    description: 'Weighted sum of signals must exceed the threshold to enter or exit.',
+    description:
+      'Weighted Buy vs Sell votes (Neutral abstains). In the hold band between thresholds, position is unchanged.',
   },
 ];
 
@@ -226,9 +246,10 @@ const inputCls =
 
 export default function ComboTab({ assets }: ComboTabProps) {
   const [symbol, setSymbol] = useState('');
-  const [startDate, setStartDate] = useState('2022-01-01');
-  const [endDate, setEndDate] = useState('2024-12-31');
-  const [timeframe, setTimeframe] = useState<'1d' | '1w'>('1d');
+  const comboDailyDefaults = defaultDatesForTimeframe('1d');
+  const [startDate, setStartDate] = useState(comboDailyDefaults.start);
+  const [endDate, setEndDate] = useState(comboDailyDefaults.end);
+  const [timeframe, setTimeframe] = useState<ComboTimeframe>('1d');
   const [entries, setEntries] = useState<ComboEntry[]>([
     { id: makeId(), strategy_name: 'ma_crossover', weight: 1.0 },
     { id: makeId(), strategy_name: 'rsi', weight: 1.0 },
@@ -245,12 +266,20 @@ export default function ComboTab({ assets }: ComboTabProps) {
   const [mode, setMode] = useState<CombinationMode>('majority');
   const [threshold, setThreshold] = useState(0.5);
   const [result, setResult] = useState<BacktestResponse | null>(null);
+  const [comboSignals, setComboSignals] = useState<ComboStrategySignal[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (assets.length > 0 && !symbol) setSymbol(assets[0].symbol);
   }, [assets, symbol]);
+
+  const handleTimeframeChange = (tf: ComboTimeframe) => {
+    setTimeframe(tf);
+    const dates = defaultDatesForTimeframe(tf);
+    setStartDate(dates.start);
+    setEndDate(dates.end);
+  };
 
   const handleAddStrategy = (strategyValue: string) => {
     const newEntry: ComboEntry = { id: makeId(), strategy_name: strategyValue, weight: 1.0 };
@@ -275,22 +304,30 @@ export default function ComboTab({ assets }: ComboTabProps) {
     setLoading(true);
     setError(null);
     setResult(null);
+    setComboSignals(null);
+
+    const comboRequest = {
+      symbol,
+      strategies: entries.map((e) => ({
+        strategy_name: e.strategy_name,
+        strategy_params: paramsMap[e.strategy_name] ?? DEFAULT_PARAMS_MAP[e.strategy_name] ?? {},
+        weight: e.weight,
+      })),
+      combination_mode: mode,
+      threshold,
+      timeframe,
+      start_date: new Date(startDate).toISOString(),
+      end_date: new Date(endDate).toISOString(),
+      initial_capital: 100_000,
+    };
+
     try {
-      const resp = await backtestApi.runCombo({
-        symbol,
-        strategies: entries.map((e) => ({
-          strategy_name: e.strategy_name,
-          strategy_params: paramsMap[e.strategy_name] ?? DEFAULT_PARAMS_MAP[e.strategy_name] ?? {},
-          weight: e.weight,
-        })),
-        combination_mode: mode,
-        threshold,
-        timeframe,
-        start_date: new Date(startDate).toISOString(),
-        end_date: new Date(endDate).toISOString(),
-        initial_capital: 100_000,
-      });
+      const [resp, signalsResp] = await Promise.all([
+        backtestApi.runCombo(comboRequest),
+        backtestApi.getComboSignals(comboRequest),
+      ]);
       setResult(resp);
+      setComboSignals(signalsResp.strategies);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -323,7 +360,7 @@ export default function ComboTab({ assets }: ComboTabProps) {
               {assets.length === 0 && <option value="">Loading…</option>}
               {assets.map((a) => (
                 <option key={a.id} value={a.symbol}>
-                  {a.symbol}{a.name ? ` — ${a.name}` : ''}
+                  {formatAssetOptionLabel(a)}
                 </option>
               ))}
             </select>
@@ -351,11 +388,19 @@ export default function ComboTab({ assets }: ComboTabProps) {
             <select
               className={inputCls}
               value={timeframe}
-              onChange={(e) => setTimeframe(e.target.value as '1d' | '1w')}
+              onChange={(e) => handleTimeframeChange(e.target.value as ComboTimeframe)}
             >
-              <option value="1d">Daily</option>
-              <option value="1w">Weekly</option>
+              {TIMEFRAME_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
+            {INTRADAY_TIMEFRAMES.has(timeframe) && (
+              <p className="text-slate-500 text-xs mt-1">
+                Aggregated from 5m bars. Date range auto-adjusted.
+              </p>
+            )}
           </div>
         </div>
 
@@ -412,19 +457,42 @@ export default function ComboTab({ assets }: ComboTabProps) {
       {loading && <Spinner label="Running combination backtest…" />}
 
       {result && !loading && (
-        <div>
-          <h3 className="text-slate-300 text-sm font-medium mb-3">Combo Result</h3>
-          <BacktestResultCard
-            result={result}
-            onAddToStrategy={async (backtestId, assetId) => {
-              await strategyBuilderApi.attachBacktest({ asset_id: assetId, backtest_id: backtestId });
-            }}
-          />
-          {result.monthly_breakdown && result.monthly_breakdown.length > 0 && (
-            <ComboMonthlyTable
-              breakdown={result.monthly_breakdown}
-              strategies={entries.map((e) => e.strategy_name)}
+        <div className="space-y-6">
+          <div>
+            <h3 className="text-slate-300 text-sm font-medium mb-3">Combo Result</h3>
+            <BacktestResultCard
+              result={result}
+              syncId="combo-sync"
+              onAddToStrategy={async (strategyName, params, assetId) => {
+                await strategyBuilderApi.attachAlgo({ asset_id: assetId, strategy_name: strategyName, params });
+              }}
             />
+          </div>
+
+          {comboSignals && comboSignals.length > 0 && (
+            <div className="space-y-6">
+              <ComboSignalTimeline strategies={comboSignals} syncId="combo-sync" />
+
+              <div>
+                <h3 className="text-slate-300 text-sm font-semibold mb-3">Individual Strategy Results</h3>
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                  {comboSignals.map((s) => (
+                    <BacktestResultCard
+                      key={s.strategy_name}
+                      syncId="combo-sync"
+                      result={{
+                        asset_id: result.asset_id,
+                        strategy_name: s.strategy_name,
+                        status: 'done',
+                        equity_curve: s.equity_curve,
+                        trade_log: s.trade_log,
+                        indicator_series: s.indicator_series,
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}

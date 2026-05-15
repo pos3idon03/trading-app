@@ -115,6 +115,23 @@ class AssetListResponse(BaseModel):
     count: int
 
 
+class AssetWithPriceDTO(BaseModel):
+    id: int
+    symbol: str
+    name: Optional[str] = None
+    asset_type: str = "stock"
+    exchange: Optional[str] = None
+    currency: str = "USD"
+    is_active: bool = True
+    latest_close: Optional[float] = None
+    latest_update: Optional[datetime] = None
+
+
+class AssetWithPriceListResponse(BaseModel):
+    assets: list[AssetWithPriceDTO]
+    count: int
+
+
 class IngestionStatusResponse(BaseModel):
     status: str
     last_run: Optional[datetime] = None

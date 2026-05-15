@@ -4,6 +4,7 @@ import type { AssetItem, StrategyRecord } from '../api/types';
 import AssetStrategyCard from '../components/AssetStrategyCard';
 import Spinner from '../components/Spinner';
 import ErrorAlert from '../components/ErrorAlert';
+import { formatAssetOptionLabel } from '../utils/assetDisplay';
 
 function useAssets() {
   const [assets, setAssets] = useState<AssetItem[]>([]);
@@ -56,7 +57,7 @@ function CreateStrategyForm({
           <option value="">{available.length === 0 ? 'All assets have strategies' : 'Choose asset…'}</option>
           {available.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.symbol}{a.name ? ` — ${a.name}` : ''}
+              {formatAssetOptionLabel(a)}
             </option>
           ))}
         </select>

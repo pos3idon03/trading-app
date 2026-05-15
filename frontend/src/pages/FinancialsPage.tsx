@@ -10,6 +10,7 @@ import type {
 import ErrorAlert from '../components/ErrorAlert';
 import MetricCard from '../components/MetricCard';
 import Spinner from '../components/Spinner';
+import { formatAssetOptionLabel } from '../utils/assetDisplay';
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
 
@@ -226,7 +227,7 @@ export default function FinancialsPage() {
             className="bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500"
           >
             {assets.map((a) => (
-              <option key={a.id} value={a.symbol}>{a.symbol} {a.name ? `— ${a.name}` : ''}</option>
+              <option key={a.id} value={a.symbol}>{formatAssetOptionLabel(a)}</option>
             ))}
           </select>
           <button

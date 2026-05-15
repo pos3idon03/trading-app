@@ -12,6 +12,9 @@ import ParamGridEditor from '../components/ParamGridEditor';
 import OptimizationResultsTable from '../components/OptimizationResultsTable';
 import ComboTab from '../components/ComboTab';
 import StrategyGuideTab from '../components/StrategyGuideTab';
+import { formatAssetOptionLabel } from '../utils/assetDisplay';
+import { defaultDatesForTimeframe } from '../utils/backtestDates';
+import type { BacktestTimeframe } from '../utils/backtestDates';
 
 type TabId = 'backtest' | 'optimize' | 'combo' | 'guide';
 
@@ -46,7 +49,7 @@ function TickerSelect({
         {assets.length === 0 && <option value="">Loading…</option>}
         {assets.map((a) => (
           <option key={a.id} value={a.symbol}>
-            {a.symbol}{a.name ? ` — ${a.name}` : ''}
+            {formatAssetOptionLabel(a)}
           </option>
         ))}
       </select>
@@ -80,9 +83,16 @@ function DateRangeInputs({
   );
 }
 
-type Timeframe = '1d' | '1w';
+type Timeframe = BacktestTimeframe;
+
+const INTRADAY_TIMEFRAMES: Set<Timeframe> = new Set(['5m', '15m', '30m', '1h', '4h']);
 
 const TIMEFRAME_OPTIONS: { value: Timeframe; label: string }[] = [
+  { value: '5m', label: '5 Min' },
+  { value: '15m', label: '15 Min' },
+  { value: '30m', label: '30 Min' },
+  { value: '1h', label: '1 Hour' },
+  { value: '4h', label: '4 Hours' },
   { value: '1d', label: 'Daily' },
   { value: '1w', label: 'Weekly' },
 ];
@@ -94,6 +104,7 @@ function PriceFrequencySelect({
   value: Timeframe;
   onChange: (v: Timeframe) => void;
 }) {
+  const isIntraday = INTRADAY_TIMEFRAMES.has(value);
   return (
     <div>
       <label htmlFor="price-frequency" className="metric-label block mb-1">Price Frequency</label>
@@ -109,6 +120,11 @@ function PriceFrequencySelect({
           </option>
         ))}
       </select>
+      {isIntraday && (
+        <p className="text-slate-500 text-xs mt-1">
+          Aggregated from 5m bars. Date range auto-adjusted.
+        </p>
+      )}
     </div>
   );
 }
@@ -140,8 +156,12 @@ function PendingStrategyCard({ strategyValue }: { strategyValue: string }) {
   );
 }
 
-async function handleAddToStrategy(backtestId: number, assetId: number): Promise<void> {
-  await strategyBuilderApi.attachBacktest({ asset_id: assetId, backtest_id: backtestId });
+async function handleAddToStrategy(
+  strategyName: string,
+  params: Record<string, unknown>,
+  assetId: number,
+): Promise<void> {
+  await strategyBuilderApi.attachAlgo({ asset_id: assetId, strategy_name: strategyName, params });
 }
 
 function BacktestResultsGrid({
@@ -157,7 +177,7 @@ function BacktestResultsGrid({
     <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
       {results.map((r) => (
         <BacktestResultCard
-          key={r.backtest_id}
+          key={r.strategy_name}
           result={r}
           onAddToStrategy={handleAddToStrategy}
         />
@@ -219,8 +239,9 @@ function BacktestTab({ assets }: { assets: AssetItem[] }) {
   const [paramsMap, setParamsMap] = useState<Record<string, Record<string, number>>>(
     buildInitialParamsMap(['ma_crossover'])
   );
-  const [startDate, setStartDate] = useState('2022-01-01');
-  const [endDate, setEndDate] = useState('2024-12-31');
+  const dailyDefaults = defaultDatesForTimeframe('1d');
+  const [startDate, setStartDate] = useState(dailyDefaults.start);
+  const [endDate, setEndDate] = useState(dailyDefaults.end);
   const [timeframe, setTimeframe] = useState<Timeframe>('1d');
   const [btResults, setBtResults] = useState<BacktestResponse[]>([]);
   const [pendingStrategies, setPendingStrategies] = useState<string[]>([]);
@@ -229,6 +250,13 @@ function BacktestTab({ assets }: { assets: AssetItem[] }) {
   useEffect(() => {
     if (assets.length > 0 && !symbol) setSymbol(assets[0].symbol);
   }, [assets, symbol]);
+
+  const handleTimeframeChange = (tf: Timeframe) => {
+    setTimeframe(tf);
+    const dates = defaultDatesForTimeframe(tf);
+    setStartDate(dates.start);
+    setEndDate(dates.end);
+  };
 
   const handleStrategiesChange = (strategies: string[]) => {
     setSelectedStrategies(strategies);
@@ -271,7 +299,7 @@ function BacktestTab({ assets }: { assets: AssetItem[] }) {
             onStartChange={setStartDate}
             onEndChange={setEndDate}
           />
-          <PriceFrequencySelect value={timeframe} onChange={setTimeframe} />
+          <PriceFrequencySelect value={timeframe} onChange={handleTimeframeChange} />
         </div>
         <div className="mb-4">
           <StrategyMultiSelect selected={selectedStrategies} onChange={handleStrategiesChange} />
@@ -356,8 +384,9 @@ function OptimizeSingleResult({ optResult }: { optResult: OptimizationResponse }
 function OptimizeTab({ assets }: { assets: AssetItem[] }) {
   const [optSymbol, setOptSymbol] = useState('');
   const [optStrategy, setOptStrategy] = useState('ma_crossover');
-  const [optStartDate, setOptStartDate] = useState('2020-01-01');
-  const [optEndDate, setOptEndDate] = useState('2024-12-31');
+  const optDailyDefaults = defaultDatesForTimeframe('1d');
+  const [optStartDate, setOptStartDate] = useState(optDailyDefaults.start);
+  const [optEndDate, setOptEndDate] = useState(optDailyDefaults.end);
   const [paramGrid, setParamGrid] = useState<Record<string, number[]>>(DEFAULT_GRID_MAP['ma_crossover']);
   const [nSplits, setNSplits] = useState(5);
   const [optimizeMetric, setOptimizeMetric] = useState('sharpe_ratio');

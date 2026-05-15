@@ -2,7 +2,8 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Double, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Double, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db import Base
@@ -56,7 +57,6 @@ class StrategyBacktest(Base):
     strategy_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("trading_strategies.id", ondelete="CASCADE"), nullable=False
     )
-    backtest_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("backtest_results.id", ondelete="CASCADE"), nullable=False
-    )
+    strategy_name: Mapped[str] = mapped_column(Text, nullable=False)
+    params: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

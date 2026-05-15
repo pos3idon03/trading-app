@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from dal.strategy_builder_dal import (
-    attach_backtest,
+    attach_algo,
     create_strategy,
-    detach_backtest,
+    detach_algo,
     get_or_create_strategy,
     get_strategy,
     get_strategy_by_asset,
@@ -123,44 +123,47 @@ class TestListStrategies:
         assert rows[0]["symbol"] == "AAPL"
 
 
-class TestAttachDetachBacktest:
+class TestAttachDetachAlgo:
     @pytest.mark.asyncio
     async def test_attach_executes_upsert(self):
         session = AsyncMock()
         link = MagicMock(spec=StrategyBacktest)
         link.strategy_id = 1
-        link.backtest_id = 5
+        link.strategy_name = "ma_crossover"
         scalars_mock = MagicMock()
         scalars_mock.first.return_value = link
         execute_result = MagicMock()
         execute_result.scalars.return_value = scalars_mock
         session.execute = AsyncMock(return_value=execute_result)
 
-        result = await attach_backtest(session, strategy_id=1, backtest_id=5)
+        result = await attach_algo(session, strategy_id=1, strategy_name="ma_crossover", params={})
         assert session.execute.called
 
     @pytest.mark.asyncio
     async def test_detach_returns_false_when_not_found(self):
         session = AsyncMock()
-        scalars_mock = MagicMock()
-        scalars_mock.first.return_value = None
-        execute_result = MagicMock()
-        execute_result.scalars.return_value = scalars_mock
-        session.execute = AsyncMock(return_value=execute_result)
+        session.get = AsyncMock(return_value=None)
 
-        result = await detach_backtest(session, strategy_id=1, backtest_id=99)
+        result = await detach_algo(session, strategy_id=1, algo_attachment_id=99)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_detach_returns_false_when_wrong_strategy(self):
+        link = MagicMock(spec=StrategyBacktest)
+        link.strategy_id = 2  # different strategy_id
+        session = AsyncMock()
+        session.get = AsyncMock(return_value=link)
+
+        result = await detach_algo(session, strategy_id=1, algo_attachment_id=5)
         assert result is False
 
     @pytest.mark.asyncio
     async def test_detach_returns_true_when_found(self):
         link = MagicMock(spec=StrategyBacktest)
+        link.strategy_id = 1
         session = AsyncMock()
-        scalars_mock = MagicMock()
-        scalars_mock.first.return_value = link
-        execute_result = MagicMock()
-        execute_result.scalars.return_value = scalars_mock
-        session.execute = AsyncMock(return_value=execute_result)
+        session.get = AsyncMock(return_value=link)
 
-        result = await detach_backtest(session, strategy_id=1, backtest_id=5)
+        result = await detach_algo(session, strategy_id=1, algo_attachment_id=5)
         assert result is True
         session.delete.assert_awaited_once_with(link)

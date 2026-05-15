@@ -322,12 +322,14 @@ interface IndicatorChartProps {
   data: IndicatorRow[];
   strategyName: string;
   strategyParams?: Record<string, number>;
+  syncId?: string;
 }
 
 export default function IndicatorChart({
   data,
   strategyName,
   strategyParams = {},
+  syncId,
 }: IndicatorChartProps) {
   if (!data || data.length === 0) return null;
 
@@ -347,7 +349,7 @@ export default function IndicatorChart({
       <p className="text-slate-400 text-xs font-medium mb-1">{meta.title}</p>
       {renderLegend(meta.series)}
       <ResponsiveContainer width="100%" height={160}>
-        <ComposedChart data={data} margin={{ top: 4, right: hasRight ? 40 : 10, bottom: 4, left: 0 }}>
+        <ComposedChart data={data} margin={{ top: 4, right: hasRight ? 40 : 10, bottom: 4, left: 0 }} syncId={syncId}>
           <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
           <XAxis
             dataKey="time"

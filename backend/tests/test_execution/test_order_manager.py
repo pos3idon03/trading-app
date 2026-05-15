@@ -26,12 +26,13 @@ def _make_signal(action="BUY", confidence=0.7, symbol="AAPL"):
     )
 
 
-def _make_portfolio(equity=100_000.0, position_values=None):
+def _make_portfolio(equity=100_000.0, position_values=None, position_quantities=None):
     return PortfolioState(
         equity=equity,
         cash=equity / 2,
         buying_power=equity,
         position_values=position_values or {},
+        position_quantities=position_quantities or {},
         total_exposure=sum((position_values or {}).values()),
     )
 
@@ -72,10 +73,14 @@ class TestPlanOrderFromSignal:
 
     def test_sell_with_position(self):
         signal = _make_signal(action="SELL")
-        portfolio = _make_portfolio(position_values={"AAPL": 3000.0})
+        portfolio = _make_portfolio(
+            position_values={"AAPL": 3000.0},
+            position_quantities={"AAPL": 20.0},
+        )
         plan = plan_order_from_signal(signal, portfolio, 150.0)
         assert plan is not None
         assert plan.side == "sell"
+        assert plan.qty == 20.0
 
     def test_sell_without_position(self):
         signal = _make_signal(action="SELL")

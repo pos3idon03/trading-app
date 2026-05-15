@@ -3,6 +3,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+BacktestTimeframe = Literal["5m", "15m", "30m", "1h", "4h", "1d", "1w"]
+
 
 VALID_STRATEGIES = {
     # Original
@@ -231,7 +233,7 @@ class BacktestRequest(BaseModel):
     asset_id: Optional[int] = None
     symbol: Optional[str] = Field(default=None, description="Ticker symbol (alternative to asset_id)")
     strategy_name: str = Field(..., description=_STRATEGY_DESCRIPTIONS)
-    timeframe: Literal["1d", "1w"] = "1d"
+    timeframe: BacktestTimeframe = "1d"
     start_date: datetime
     end_date: datetime
     strategy_params: dict = Field(default_factory=dict)
@@ -251,7 +253,7 @@ class OptimizationRequest(BaseModel):
     asset_id: Optional[int] = None
     symbol: Optional[str] = Field(default=None, description="Ticker symbol (alternative to asset_id)")
     strategy_name: str = Field(..., description=_STRATEGY_DESCRIPTIONS)
-    timeframe: Literal["1d", "1w"] = "1d"
+    timeframe: BacktestTimeframe = "1d"
     start_date: datetime
     end_date: datetime
     param_grid: dict = Field(
@@ -274,7 +276,7 @@ class OptimizationSummary(BaseModel):
 
 
 class OptimizationResponse(BaseModel):
-    optimization_id: int
+    optimization_id: Optional[int] = None
     asset_id: int
     strategy_name: str
     status: str
@@ -309,9 +311,10 @@ class BacktestMetrics(BaseModel):
 
 
 class BacktestResponse(BaseModel):
-    backtest_id: int
+    backtest_id: Optional[int] = None
     asset_id: int
     strategy_name: str
+    strategy_params: Optional[dict] = None
     status: str
     metrics: Optional[BacktestMetrics] = None
     equity_curve: Optional[list[dict]] = None
@@ -329,7 +332,7 @@ class BacktestResponse(BaseModel):
 
 class StrategyMonthlyState(BaseModel):
     strategy_name: str
-    position: Literal["Buy", "Sell"]
+    position: Literal["Buy", "Neutral", "Sell"]
     indicators: dict[str, Optional[float]]
 
 
@@ -340,6 +343,61 @@ class ComboMonthlyRow(BaseModel):
 
 
 BacktestResponse.model_rebuild()
+
+
+# ---------------------------------------------------------------------------
+# Per-strategy combo signal DTOs
+# ---------------------------------------------------------------------------
+
+class SignalPoint(BaseModel):
+    time: str
+    signal: Literal["Buy", "Neutral", "Sell"]
+
+
+class ComboStrategySignal(BaseModel):
+    strategy_name: str
+    trade_log: list[dict]
+    indicator_series: list[dict]
+    equity_curve: list[dict]
+    signal_timeline: list[SignalPoint]
+
+
+class ComboSignalsResponse(BaseModel):
+    strategies: list[ComboStrategySignal]
+
+
+# ---------------------------------------------------------------------------
+# Chart overlay DTOs
+# ---------------------------------------------------------------------------
+
+class ChartOverlayRequest(BaseModel):
+    asset_id: Optional[int] = None
+    symbol: Optional[str] = Field(default=None, description="Ticker symbol (alternative to asset_id)")
+    strategy_name: str = Field(..., description=_STRATEGY_DESCRIPTIONS)
+    timeframe: BacktestTimeframe = "1d"
+    start_date: datetime
+    end_date: datetime
+    strategy_params: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def require_asset_or_symbol(self) -> "ChartOverlayRequest":
+        if self.asset_id is None and self.symbol is None:
+            raise ValueError("Provide either asset_id or symbol")
+        return self
+
+    @field_validator("strategy_name")
+    @classmethod
+    def validate_strategy(cls, v: str) -> str:
+        if v not in VALID_STRATEGIES:
+            raise ValueError(f"Unknown strategy: {v!r}. Valid: {sorted(VALID_STRATEGIES)}")
+        return v
+
+
+class ChartOverlayResponse(BaseModel):
+    strategy_name: str
+    trade_log: list[dict]
+    indicator_series: list[dict]
+    duration_ms: int
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +432,7 @@ class ComboBacktestRequest(BaseModel):
         le=1.0,
         description="Signal fires when weighted sum exceeds this (weighted mode only)",
     )
-    timeframe: Literal["1d", "1w"] = "1d"
+    timeframe: BacktestTimeframe = "1d"
     start_date: datetime
     end_date: datetime
     initial_capital: float = Field(default=100_000.0, ge=1000.0)

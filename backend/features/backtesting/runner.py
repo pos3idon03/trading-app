@@ -25,6 +25,11 @@ class BacktestResult:
 
 
 _TIMEFRAME_TO_VBT_FREQ: dict[str, str] = {
+    "5m": "5min",
+    "15m": "15min",
+    "30m": "30min",
+    "1h": "h",
+    "4h": "4h",
     "1d": "D",
     "1w": "W",
 }

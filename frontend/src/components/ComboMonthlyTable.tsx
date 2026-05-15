@@ -46,14 +46,16 @@ function formatMonth(month: string): string {
 }
 
 interface PositionBadgeProps {
-  position: 'Buy' | 'Sell';
+  position: 'Buy' | 'Neutral' | 'Sell';
 }
 
 function PositionBadge({ position }: PositionBadgeProps) {
   const cls =
     position === 'Buy'
       ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-      : 'bg-red-500/20 text-red-400 border border-red-500/30';
+      : position === 'Sell'
+      ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+      : 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
 
   return (
     <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${cls}`}>

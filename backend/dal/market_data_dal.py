@@ -1,6 +1,6 @@
 """DAL for OHLCV and fundamental market data."""
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Union
 
 import pandas as pd
 from sqlalchemy import select, text
@@ -75,16 +75,40 @@ async def _orm_upsert_ohlcv(session: AsyncSession, records: list[OHLCVRecord]) -
     return result.rowcount
 
 
+def _interval_to_timedelta(interval: str) -> timedelta:
+    """Convert an interval string like '15 minutes' or '4 hours' to timedelta.
+
+    asyncpg requires timedelta objects for PostgreSQL INTERVAL bind parameters.
+    """
+    value, unit = interval.strip().split(None, 1)
+    unit = unit.rstrip("s")
+    n = int(value)
+    if unit == "minute":
+        return timedelta(minutes=n)
+    if unit == "hour":
+        return timedelta(hours=n)
+    if unit == "day":
+        return timedelta(days=n)
+    raise ValueError(f"Unsupported interval string: '{interval}'")
+
+
 async def get_ohlcv(
     session: AsyncSession,
     asset_id: int,
     timeframe: str,
     start: datetime,
     end: datetime,
-    bucket_interval: Optional[str] = None,
+    bucket_interval: Optional[Union[str, timedelta]] = None,
 ) -> pd.DataFrame:
     """Query OHLCV data, optionally resampled via TimescaleDB time_bucket."""
     if bucket_interval:
+        # asyncpg requires timedelta objects for INTERVAL bind parameters.
+        # Accept either a timedelta directly or a human-readable string such
+        # as "15 minutes" / "1 hour" (parsed by _interval_to_timedelta).
+        if isinstance(bucket_interval, timedelta):
+            bucket_td = bucket_interval
+        else:
+            bucket_td = _interval_to_timedelta(bucket_interval)
         query = text("""
             SELECT
                 time_bucket(:bucket, time) AS time,
@@ -95,7 +119,8 @@ async def get_ohlcv(
                 min(low)           AS low,
                 last(close, time)  AS close,
                 sum(volume)        AS volume,
-                avg(vwap)          AS vwap
+                avg(vwap)          AS vwap,
+                min(source)        AS source
             FROM ohlcv
             WHERE asset_id = :asset_id
               AND timeframe = :timeframe
@@ -105,7 +130,7 @@ async def get_ohlcv(
             ORDER BY 1 ASC
         """)
         result = await session.execute(query, {
-            "bucket": bucket_interval, "asset_id": asset_id,
+            "bucket": bucket_td, "asset_id": asset_id,
             "timeframe": timeframe, "start": start, "end": end,
         })
     else:
@@ -144,6 +169,34 @@ def _sanitize_nan(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     return df.astype(object).where(df.notna(), other=None)
+
+
+# Maps a requested timeframe to (TimescaleDB bucket interval, source timeframe stored in DB).
+# Used when the exact timeframe has no rows but can be derived from finer-grained stored data.
+_RESAMPLE_MAP: dict[str, tuple[str, str]] = {
+    "15m": ("15 minutes", "5m"),
+    "30m": ("30 minutes", "5m"),
+    "1h":  ("1 hour",     "5m"),
+    "4h":  ("4 hours",    "5m"),
+}
+
+
+async def resample_ohlcv(
+    session: AsyncSession,
+    asset_id: int,
+    timeframe: str,
+    start: datetime,
+    end: datetime,
+) -> "pd.DataFrame":
+    """Attempt to build bars for `timeframe` by resampling from a finer stored granularity.
+
+    Returns an empty DataFrame when no resample path exists or the source data is absent.
+    """
+    entry = _RESAMPLE_MAP.get(timeframe)
+    if entry is None:
+        return pd.DataFrame()
+    bucket_interval, source_tf = entry
+    return await get_ohlcv(session, asset_id, source_tf, start, end, bucket_interval=bucket_interval)
 
 
 async def get_latest_timestamp(
@@ -279,6 +332,35 @@ async def list_assets(session: AsyncSession) -> list[dict]:
         }
         for r in rows
     ]
+
+
+async def list_assets_with_latest_price(session: AsyncSession) -> list[dict]:
+    """Return all assets with their latest daily close price and timestamp."""
+    query = text("""
+        SELECT
+            a.id,
+            a.symbol,
+            a.name,
+            a.asset_type,
+            a.exchange,
+            a.currency,
+            a.is_active,
+            latest.close  AS latest_close,
+            latest.time   AS latest_update
+        FROM assets a
+        LEFT JOIN LATERAL (
+            SELECT close, time
+            FROM ohlcv
+            WHERE asset_id = a.id
+              AND timeframe = '1d'
+            ORDER BY time DESC
+            LIMIT 1
+        ) latest ON true
+        ORDER BY a.symbol ASC
+    """)
+    result = await session.execute(query)
+    rows = result.mappings().all()
+    return [dict(row) for row in rows]
 
 
 async def get_asset_id_by_symbol(session: AsyncSession, symbol: str) -> Optional[int]:

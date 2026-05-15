@@ -1,6 +1,6 @@
-"""Tests for the POST /api/v1/backtest/optimize and GET /{opt_id}/optimization routes."""
+"""Tests for the POST /api/v1/backtest/optimize route."""
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -90,7 +90,7 @@ class TestOptimizationRouteResolveAsset:
 
 
 # ---------------------------------------------------------------------------
-# Route: run_optimization (end-to-end mock)
+# Route: run_optimization — stateless, no DB writes
 # ---------------------------------------------------------------------------
 
 
@@ -132,20 +132,18 @@ class TestRunOptimizationRoute:
         with (
             patch("routes.backtest.get_asset_id_by_symbol", new=AsyncMock(return_value=1)),
             patch("routes.backtest.get_ohlcv", new=AsyncMock(return_value=self._make_df())),
-            patch("routes.backtest.create_optimization", new=AsyncMock(return_value=42)),
             patch("routes.backtest.walk_forward_optimize", return_value=mock_result),
-            patch("routes.backtest.update_optimization_result", new=AsyncMock()),
         ):
             response = await run_optimization(req, session)
 
-        assert response.optimization_id == 42
+        assert response.optimization_id is None
         assert response.status == "done"
         assert response.best_params == {"fast_window": 10, "slow_window": 50}
         assert response.best_metric == pytest.approx(0.9)
         assert len(response.all_results) == 2
 
     @pytest.mark.asyncio
-    async def test_insufficient_data_raises_422(self):
+    async def test_no_data_raises_404(self):
         import pandas as pd
         from routes.backtest import run_optimization
 
@@ -165,45 +163,31 @@ class TestRunOptimizationRoute:
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await run_optimization(req, session)
-        assert exc_info.value.status_code == 422
-
-
-# ---------------------------------------------------------------------------
-# Route: get_optimization_results
-# ---------------------------------------------------------------------------
-
-
-class TestGetOptimizationResultsRoute:
-    @pytest.mark.asyncio
-    async def test_returns_stored_result(self):
-        from routes.backtest import get_optimization_results
-
-        mock_opt = MagicMock()
-        mock_opt.id = 42
-        mock_opt.asset_id = 1
-        mock_opt.strategy_name = "ma_crossover"
-        mock_opt.status = "done"
-        mock_opt.optimize_metric = "sharpe_ratio"
-        mock_opt.n_splits = 5
-        mock_opt.best_params = {"fast_window": 10, "slow_window": 50}
-        mock_opt.best_metric = 0.9
-        mock_opt.all_results = [{"params": {"fast_window": 10, "slow_window": 50}, "avg_oos_metric": 0.9}]
-        mock_opt.duration_ms = 1200
-        mock_opt.error_message = None
-
-        session = AsyncMock()
-        with patch("routes.backtest.get_optimization", new=AsyncMock(return_value=mock_opt)):
-            response = await get_optimization_results(42, session)
-
-        assert response.optimization_id == 42
-        assert response.best_params == {"fast_window": 10, "slow_window": 50}
-
-    @pytest.mark.asyncio
-    async def test_404_when_not_found(self):
-        from routes.backtest import get_optimization_results
-
-        session = AsyncMock()
-        with patch("routes.backtest.get_optimization", new=AsyncMock(return_value=None)):
-            with pytest.raises(HTTPException) as exc_info:
-                await get_optimization_results(999, session)
         assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_insufficient_rows_raises_422(self):
+        import numpy as np
+        import pandas as pd
+        from routes.backtest import run_optimization
+
+        req = OptimizationRequest(
+            symbol="AAPL",
+            strategy_name="ma_crossover",
+            start_date=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            param_grid={"fast_window": [5, 10]},
+            n_splits=5,
+        )
+        session = AsyncMock()
+
+        # n_splits=5 requires (5+1)*30=180 rows; provide only 10
+        small_df = pd.DataFrame({"time": pd.date_range("2022-01-01", periods=10), "close": np.ones(10)})
+
+        with (
+            patch("routes.backtest.get_asset_id_by_symbol", new=AsyncMock(return_value=1)),
+            patch("routes.backtest.get_ohlcv", new=AsyncMock(return_value=small_df)),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await run_optimization(req, session)
+        assert exc_info.value.status_code == 422

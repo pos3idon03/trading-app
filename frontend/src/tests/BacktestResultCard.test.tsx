@@ -18,7 +18,6 @@ vi.mock('recharts', () => ({
 }));
 
 const baseResult: BacktestResponse = {
-  backtest_id: 42,
   asset_id: 1,
   strategy_name: 'ma_crossover',
   status: 'completed',
@@ -31,10 +30,10 @@ describe('BacktestResultCard', () => {
     expect(screen.getByText(/MA Crossover/i)).toBeInTheDocument();
   });
 
-  it('renders the backtest id and duration', () => {
+  it('renders duration but no backtest id', () => {
     render(<BacktestResultCard result={baseResult} />);
-    expect(screen.getByText(/#42/)).toBeInTheDocument();
     expect(screen.getByText(/123ms/)).toBeInTheDocument();
+    expect(screen.queryByText(/#\d+/)).not.toBeInTheDocument();
   });
 
   it('renders metrics when provided', () => {
@@ -53,6 +52,10 @@ describe('BacktestResultCard', () => {
     expect(screen.getByText('Total Return')).toBeInTheDocument();
     expect(screen.getByText('25.00%')).toBeInTheDocument();
     expect(screen.getByText('Sharpe Ratio')).toBeInTheDocument();
+    expect(screen.getByText('1.500')).toBeInTheDocument();
+    expect(screen.getByText('1.80')).toBeInTheDocument();
+    expect(screen.getByRole('meter', { name: /Sharpe Ratio/i })).toBeInTheDocument();
+    expect(screen.getByRole('meter', { name: /Profit Factor/i })).toBeInTheDocument();
   });
 
   it('renders error message when present', () => {
@@ -90,12 +93,18 @@ describe('BacktestResultCard', () => {
     expect(screen.getByText(/\+ Strategy/)).toBeInTheDocument();
   });
 
-  it('calls onAddToStrategy when Add to Strategy is clicked', async () => {
-    const doneResult: BacktestResponse = { ...baseResult, status: 'done' };
+  it('calls onAddToStrategy with strategy_name, params, and asset_id when clicked', async () => {
+    const doneResult: BacktestResponse = {
+      ...baseResult,
+      status: 'done',
+      strategy_params: { fast_window: 10, slow_window: 50 },
+    };
     const onAdd = vi.fn().mockResolvedValue(undefined);
     render(<BacktestResultCard result={doneResult} onAddToStrategy={onAdd} />);
     fireEvent.click(screen.getByText(/\+ Strategy/));
-    await waitFor(() => expect(onAdd).toHaveBeenCalledWith(42, 1));
+    await waitFor(() =>
+      expect(onAdd).toHaveBeenCalledWith('ma_crossover', { fast_window: 10, slow_window: 50 }, 1),
+    );
   });
 
   it('renders indicator chart when indicator_series is provided', () => {
@@ -112,7 +121,6 @@ describe('BacktestResultCard', () => {
       ],
     };
     render(<BacktestResultCard result={result} />);
-    // Two area-charts: one for equity curve, one for indicator chart
     const charts = screen.getAllByTestId('area-chart');
     expect(charts.length).toBeGreaterThanOrEqual(2);
   });

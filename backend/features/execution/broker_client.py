@@ -56,6 +56,11 @@ def _get_trading_client():
     )
 
 
+def _tif_for_symbol(symbol: str, TimeInForce):
+    """Alpaca crypto requires GTC; equities use DAY."""
+    return TimeInForce.GTC if "/" in symbol else TimeInForce.DAY
+
+
 def submit_market_order(symbol: str, qty: float, side: str) -> OrderResult:
     """Submit a market order via Alpaca paper trading."""
     from alpaca.trading.requests import MarketOrderRequest
@@ -69,7 +74,7 @@ def submit_market_order(symbol: str, qty: float, side: str) -> OrderResult:
             symbol=symbol,
             qty=qty,
             side=order_side,
-            time_in_force=TimeInForce.DAY,
+            time_in_force=_tif_for_symbol(symbol, TimeInForce),
         )
         order = client.submit_order(req)
         logger.info("market_order_submitted", symbol=symbol, side=side, qty=qty, order_id=str(order.id))
@@ -95,7 +100,7 @@ def submit_limit_order(symbol: str, qty: float, side: str, limit_price: float) -
             symbol=symbol,
             qty=qty,
             side=order_side,
-            time_in_force=TimeInForce.DAY,
+            time_in_force=_tif_for_symbol(symbol, TimeInForce),
             limit_price=limit_price,
         )
         order = client.submit_order(req)
@@ -153,6 +158,11 @@ def get_positions() -> list[Position]:
     except Exception as exc:
         logger.error("get_positions_failed", error=str(exc))
         return []
+
+
+def has_position(symbol: str) -> bool:
+    """Return True if we currently hold a non-zero position in symbol."""
+    return any(p.symbol == symbol and p.qty != 0 for p in get_positions())
 
 
 def get_account() -> AccountInfo | None:
