@@ -190,6 +190,7 @@ class YFinanceProvider(DataProvider):
         start: datetime,
         end: datetime,
         asset_id: Optional[int] = None,
+        asset_type: Optional[str] = None,
     ) -> list[OHLCVRecord]:
         interval = YFINANCE_INTERVAL_MAP.get(timeframe, "1d")
         use_max = _is_daily_max_request(timeframe, start)

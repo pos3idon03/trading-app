@@ -1,7 +1,24 @@
 """Tests for features.execution.symbol_resolver.to_alpaca_symbol."""
 import pytest
 
-from features.execution.symbol_resolver import to_alpaca_symbol
+from features.execution.symbol_resolver import canonical_alpaca_symbol, to_alpaca_symbol
+
+
+class TestCanonicalAlpacaSymbol:
+    def test_btcusd_compact(self):
+        assert canonical_alpaca_symbol("BTCUSD") == "BTC/USD"
+
+    def test_ethusdt_compact(self):
+        assert canonical_alpaca_symbol("ETHUSDT") == "ETH/USDT"
+
+    def test_slash_form_passthrough(self):
+        assert canonical_alpaca_symbol("BTC/USD") == "BTC/USD"
+
+    def test_dash_crypto_normalized(self):
+        assert canonical_alpaca_symbol("btc-usd") == "BTC/USD"
+
+    def test_equity_unchanged(self):
+        assert canonical_alpaca_symbol("AAPL") == "AAPL"
 
 
 class TestCryptoSymbols:

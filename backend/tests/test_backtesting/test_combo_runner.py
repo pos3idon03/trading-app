@@ -218,6 +218,16 @@ class TestRunPerStrategyBacktests:
         results = run_per_strategy_backtests(ohlcv_df, configs)
         assert STANCE_NEUTRAL not in {p["signal"] for p in results[0].signal_timeline}
 
+    def test_each_result_has_buy_hold_curve(self, ohlcv_df):
+        configs = [
+            ComboStrategyConfig("ma_crossover", {}),
+            ComboStrategyConfig("rsi", {}),
+        ]
+        for r in run_per_strategy_backtests(ohlcv_df, configs):
+            assert isinstance(r.buy_hold_curve, list)
+            assert len(r.buy_hold_curve) > 0
+            assert len(r.buy_hold_curve) == len(r.equity_curve)
+
 
 # ---------------------------------------------------------------------------
 # Route-level tests: /combo-signals endpoint
@@ -246,7 +256,10 @@ class TestComboSignalsRoute:
 
         with (
             patch("routes.backtest.get_asset_id_by_symbol", new=AsyncMock(return_value=1)),
-            patch("routes.backtest.get_ohlcv", new=AsyncMock(return_value=ohlcv_df)),
+            patch(
+                "routes.backtest._load_backtest_ohlcv",
+                new=AsyncMock(return_value=(ohlcv_df, request.start_date)),
+            ),
         ):
             result = await execute_combo_signals(request, session)
 

@@ -1,6 +1,7 @@
 """vectorbt-backed backtesting runner."""
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import numpy as np
@@ -9,6 +10,11 @@ import pandas as pd
 from features.backtesting.indicator_functions import INDICATOR_MAP, _empty_indicators
 from features.backtesting.metrics import compile_all_metrics
 from features.backtesting.strategies import build_signal_array
+from features.backtesting.warmup import (
+    evaluation_mask,
+    slice_time_series_rows,
+    slice_trade_log,
+)
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -41,20 +47,32 @@ def run_backtest(
     params: dict,
     initial_capital: float = 100_000.0,
     timeframe: str = "1d",
+    evaluation_start: datetime | None = None,
 ) -> BacktestResult:
     """Execute a single backtest using vectorbt.
 
     df must have columns: time, open, high, low, close, volume (DatetimeIndex).
-    timeframe controls the vectorbt portfolio frequency used for metric annualisation.
+    When evaluation_start is set, indicators/signals use the full df but the
+    portfolio and returned series are limited to time >= evaluation_start.
     """
     import vectorbt as vbt
 
     t0 = time.perf_counter()
 
-    close = df.set_index("time")["close"] if "time" in df.columns else df["close"]
-    close = close.astype(float)
-
     entries, exits = build_signal_array(df, strategy, params)
+    indicator_series = _compute_indicator_series(df, strategy, params)
+
+    if evaluation_start is not None:
+        mask = evaluation_mask(df, evaluation_start)
+        df_eval = df.loc[mask].reset_index(drop=True)
+        entries = entries.loc[mask].reset_index(drop=True)
+        exits = exits.loc[mask].reset_index(drop=True)
+        indicator_series = slice_time_series_rows(indicator_series, evaluation_start)
+    else:
+        df_eval = df
+
+    close = df_eval.set_index("time")["close"] if "time" in df_eval.columns else df_eval["close"]
+    close = close.astype(float)
 
     vbt_freq = _TIMEFRAME_TO_VBT_FREQ.get(timeframe, "D")
     portfolio = vbt.Portfolio.from_signals(
@@ -69,7 +87,7 @@ def run_backtest(
 
     equity = portfolio.value()
     returns = portfolio.returns()
-    trades_df = _extract_trades(portfolio)
+    trades_df = slice_trade_log(_extract_trades(portfolio), evaluation_start) if evaluation_start else _extract_trades(portfolio)
 
     metrics = compile_all_metrics(returns, equity, trades_df)
 
@@ -79,7 +97,6 @@ def run_backtest(
     ]
 
     buy_hold_curve = _compute_buy_hold_curve(close, initial_capital)
-    indicator_series = _compute_indicator_series(df, strategy, params)
 
     duration_ms = (time.perf_counter() - t0) * 1000
     logger.info(

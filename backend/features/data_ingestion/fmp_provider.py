@@ -29,6 +29,7 @@ class FMPProvider(DataProvider):
         start: datetime,
         end: datetime,
         asset_id: Optional[int] = None,
+        asset_type: Optional[str] = None,
     ) -> list[OHLCVRecord]:
         """FMP OHLCV is available but Polygon is preferred. Provided for completeness."""
         tf_map = {"1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min", "1h": "1hour", "4h": "4hour", "1d": "daily"}

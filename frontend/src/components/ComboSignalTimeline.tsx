@@ -8,22 +8,49 @@ import {
   CartesianGrid,
   Legend,
 } from 'recharts';
-import type { ComboStrategySignal } from '../api/types';
+import type { AttachedAlgoSignal, ComboStrategySignal, SignalPoint } from '../api/types';
 
 interface ComboSignalTimelineProps {
   strategies: ComboStrategySignal[];
   syncId?: string;
+  /** Shorter chart for execution monitor cards */
+  compact?: boolean;
+  /** Use time-of-day x-axis labels for intraday timeframes */
+  intraday?: boolean;
+  /** Hide section title and description (nested per-strategy charts) */
+  hideHeader?: boolean;
+}
+
+const INTRADAY_TIMEFRAMES = new Set(['5m', '15m', '30m', '1h', '3h', '4h']);
+
+export function isIntradayTimeframe(tf: string): boolean {
+  return INTRADAY_TIMEFRAMES.has(tf);
+}
+
+/** Convert live monitor signals into combo chart input shape. */
+export function attachedSignalsToTimelineStrategies(
+  signals: AttachedAlgoSignal[],
+): ComboStrategySignal[] {
+  return signals
+    .filter((s) => s.signalTimeline && s.signalTimeline.length > 0)
+    .map((s) => ({
+      strategy_name: s.strategy,
+      trade_log: [],
+      indicator_series: [],
+      equity_curve: [],
+      signal_timeline: s.signalTimeline as SignalPoint[],
+    }));
 }
 
 const STRATEGY_COLORS = [
-  '#60a5fa', // blue-400
-  '#34d399', // emerald-400
-  '#f59e0b', // amber-400
-  '#f87171', // red-400
-  '#a78bfa', // violet-400
-  '#fb923c', // orange-400
-  '#38bdf8', // sky-400
-  '#e879f9', // fuchsia-400
+  '#60a5fa',
+  '#34d399',
+  '#f59e0b',
+  '#f87171',
+  '#a78bfa',
+  '#fb923c',
+  '#38bdf8',
+  '#e879f9',
 ];
 
 const SIGNAL_LABELS: Record<string, string> = {
@@ -59,10 +86,17 @@ function strategyLabel(name: string): string {
   return SIGNAL_LABELS[name] ?? name;
 }
 
-// 3-state numeric mapping: Buy=1, Neutral=0.5, Sell=0
+function normalizeSignal(signal: string): 'Buy' | 'Neutral' | 'Sell' {
+  const s = signal.toUpperCase();
+  if (s === 'BUY') return 'Buy';
+  if (s === 'NEUTRAL' || s === 'HOLD') return 'Neutral';
+  return 'Sell';
+}
+
 function signalToValue(signal: string): number {
-  if (signal === 'Buy') return 1;
-  if (signal === 'Neutral') return 0.5;
+  const norm = normalizeSignal(signal);
+  if (norm === 'Buy') return 1;
+  if (norm === 'Neutral') return 0.5;
   return 0;
 }
 
@@ -100,10 +134,18 @@ function buildTimelineData(strategies: ComboStrategySignal[]): TimelinePoint[] {
   return Array.from(timeMap.values()).sort((a, b) => a.time.localeCompare(b.time));
 }
 
-function formatXTick(value: string): string {
+function formatXTick(value: string, intraday: boolean): string {
   if (!value) return '';
   const d = new Date(value);
   if (isNaN(d.getTime())) return value;
+  if (intraday) {
+    return d.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
   return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
 }
 
@@ -175,25 +217,36 @@ function SignalAgreementBanner({
   );
 }
 
-export function ComboSignalTimeline({ strategies, syncId }: ComboSignalTimelineProps) {
+export function ComboSignalTimeline({
+  strategies,
+  syncId,
+  compact = false,
+  intraday = false,
+  hideHeader = false,
+}: ComboSignalTimelineProps) {
   if (strategies.length === 0) return null;
 
   const data = buildTimelineData(strategies);
+  const chartHeight = compact ? 120 : 180;
 
   return (
-    <div className="mt-6">
-      <h3 className="text-sm font-semibold text-slate-300 mb-1">Signal Agreement Timeline</h3>
-      <p className="text-xs text-slate-500 mb-3">
-        Per-bar stance from each indicator (Buy / Neutral / Sell). Unanimous combo mode requires every leg to match, not a mix with Neutral.
-      </p>
+    <div className={hideHeader ? '' : compact ? 'mt-2' : 'mt-6'}>
+      {!hideHeader && (
+        <>
+          <h3 className="text-sm font-semibold text-slate-300 mb-1">Signal Agreement Timeline</h3>
+          <p className="text-xs text-slate-500 mb-3">
+            Per-bar stance from each indicator (Buy / Neutral / Sell). Unanimous combo mode requires every leg to match, not a mix with Neutral.
+          </p>
+        </>
+      )}
       <SignalAgreementBanner data={data} strategies={strategies} />
-      <div className="bg-slate-800/50 rounded-lg border border-slate-700 p-4">
-        <ResponsiveContainer width="100%" height={180}>
+      <div className={`bg-slate-800/50 rounded-lg border border-slate-700 ${compact ? 'p-2' : 'p-4'}`}>
+        <ResponsiveContainer width="100%" height={chartHeight}>
           <ComposedChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 4 }} syncId={syncId}>
             <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
             <XAxis
               dataKey="time"
-              tickFormatter={formatXTick}
+              tickFormatter={(v) => formatXTick(v, intraday)}
               tick={{ fill: '#94a3b8', fontSize: 10 }}
               axisLine={{ stroke: '#475569' }}
               tickLine={false}

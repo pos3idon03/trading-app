@@ -9,12 +9,15 @@ import pandas as pd
 
 from features.backtesting.combo_runner import ComboStrategyConfig
 from features.backtesting.indicator_functions import INDICATOR_MAP, _empty_indicators
+from datetime import datetime
+
 from features.backtesting.stance import (
     STANCE_BUY,
     STANCE_SELL,
     combine_stances,
     compute_strategy_stance,
 )
+from features.backtesting.warmup import filter_monthly_rows
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +102,7 @@ def compute_monthly_breakdown(
     strategies: list[ComboStrategyConfig],
     mode: str,
     threshold: float = 0.5,
+    evaluation_start: datetime | None = None,
 ) -> list[dict]:
     """Return one dict per calendar month with per-strategy indicator values and positions.
 
@@ -119,4 +123,7 @@ def compute_monthly_breakdown(
     combo_pos.index = time_idx
     combo_monthly = combo_pos.resample("ME").last()
 
-    return _build_monthly_rows(strategies, strategy_dfs, combo_monthly)
+    rows = _build_monthly_rows(strategies, strategy_dfs, combo_monthly)
+    if evaluation_start is not None:
+        return filter_monthly_rows(rows, evaluation_start)
+    return rows

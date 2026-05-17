@@ -485,6 +485,7 @@ export default function ComboTab({ assets }: ComboTabProps) {
                         strategy_name: s.strategy_name,
                         status: 'done',
                         equity_curve: s.equity_curve,
+                        buy_hold_curve: s.buy_hold_curve,
                         trade_log: s.trade_log,
                         indicator_series: s.indicator_series,
                       }}

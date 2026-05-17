@@ -4,7 +4,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from features.data_ingestion.ingest_service import ingest_ohlcv_for_symbol
+from features.data_ingestion.ingest_service import (
+    ingest_ohlcv_for_symbol,
+    ingest_tiingo_5m_for_symbol,
+    run_ingest_job,
+)
+from dtos.market_data_dto import IngestRequest
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +54,10 @@ class TestIncrementalStartDate:
             patch(
                 "features.data_ingestion.ingest_service.get_provider",
                 return_value=mock_provider,
+            ),
+            patch(
+                "features.data_ingestion.ingest_service.resolve_asset_type",
+                new=AsyncMock(return_value="stock"),
             ),
             patch(
                 "features.data_ingestion.ingest_service.upsert_asset",
@@ -127,6 +136,10 @@ class TestIncrementalStartDate:
                 return_value=mock_provider,
             ),
             patch(
+                "features.data_ingestion.ingest_service.resolve_asset_type",
+                new=AsyncMock(return_value="stock"),
+            ),
+            patch(
                 "features.data_ingestion.ingest_service.upsert_asset",
                 new=AsyncMock(return_value=1),
             ),
@@ -149,3 +162,118 @@ class TestIncrementalStartDate:
             )
 
         assert captured["start"] == explicit_start
+
+
+# ---------------------------------------------------------------------------
+# ingest_tiingo_5m_for_symbol
+# ---------------------------------------------------------------------------
+
+class TestIngestTiingo5mForSymbol:
+    @pytest.mark.asyncio
+    async def test_passes_asset_type_to_provider(self):
+        captured = {}
+
+        mock_provider = MagicMock()
+
+        async def _capture_fetch(symbol, tf, start, end, asset_id=None, asset_type=None):
+            captured["asset_type"] = asset_type
+            return []
+
+        mock_provider.fetch_ohlcv = _capture_fetch
+
+        with (
+            patch(
+                "features.data_ingestion.ingest_service.get_provider",
+                return_value=mock_provider,
+            ),
+            patch(
+                "features.data_ingestion.ingest_service.upsert_asset",
+                new=AsyncMock(return_value=1),
+            ) as mock_upsert,
+            patch(
+                "features.data_ingestion.ingest_service.get_latest_timestamp",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "features.data_ingestion.ingest_service.bulk_insert_ohlcv",
+                new=AsyncMock(return_value=0),
+            ),
+        ):
+            await ingest_tiingo_5m_for_symbol(
+                session=_make_session(),
+                symbol="BTC-USD",
+                asset_type="crypto",
+            )
+
+        mock_upsert.assert_called_once()
+        assert mock_upsert.call_args[1]["asset_type"] == "crypto"
+        assert captured["asset_type"] == "crypto"
+
+
+class TestIngestOhlcvResolvesCryptoType:
+    @pytest.mark.asyncio
+    async def test_btc_usd_upserts_as_crypto(self):
+        mock_provider = MagicMock()
+        mock_provider.fetch_ohlcv = AsyncMock(return_value=[])
+
+        with (
+            patch(
+                "features.data_ingestion.ingest_service.get_provider",
+                return_value=mock_provider,
+            ),
+            patch(
+                "features.data_ingestion.ingest_service.upsert_asset",
+                new=AsyncMock(return_value=1),
+            ) as mock_upsert,
+            patch(
+                "features.data_ingestion.ingest_service.get_latest_timestamp",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "features.data_ingestion.ingest_service.bulk_insert_ohlcv",
+                new=AsyncMock(return_value=0),
+            ),
+            patch(
+                "features.data_ingestion.ingest_service.resolve_asset_type",
+                new=AsyncMock(return_value="crypto"),
+            ),
+        ):
+            await ingest_ohlcv_for_symbol(
+                session=_make_session(),
+                symbol="BTC-USD",
+                timeframe="1d",
+                provider_name="yfinance",
+                start=None,
+                end=None,
+            )
+
+        mock_upsert.assert_called_once()
+        assert mock_upsert.call_args[1]["asset_type"] == "crypto"
+
+
+class TestRunIngestJobCrypto5mBackfill:
+    @pytest.mark.asyncio
+    async def test_tiingo_5m_uses_crypto_for_btc_usd(self):
+        mock_tiingo = AsyncMock(return_value={"symbol": "BTC-USD", "timeframe": "5m", "inserted": 10})
+
+        with (
+            patch(
+                "features.data_ingestion.ingest_service.ingest_ohlcv_for_symbol",
+                new=AsyncMock(return_value={"symbol": "BTC-USD", "timeframe": "1d", "inserted": 1}),
+            ),
+            patch(
+                "features.data_ingestion.ingest_service.resolve_asset_type",
+                new=AsyncMock(return_value="crypto"),
+            ),
+            patch(
+                "features.data_ingestion.ingest_service.ingest_tiingo_5m_for_symbol",
+                mock_tiingo,
+            ),
+        ):
+            await run_ingest_job(
+                _make_session(),
+                IngestRequest(symbols=["BTC-USD"], timeframes=["1d"], provider="yfinance"),
+            )
+
+        mock_tiingo.assert_called_once()
+        assert mock_tiingo.call_args[1]["asset_type"] == "crypto"

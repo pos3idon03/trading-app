@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
 from config import get_settings
+from features.execution.symbol_resolver import canonical_alpaca_symbol
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -20,9 +22,26 @@ class OrderResult:
     status: str
     filled_price: float | None = None
     filled_qty: float | None = None
+    filled_at: datetime | None = None
     limit_price: float | None = None
     stop_price: float | None = None
     error: str | None = None
+
+
+_TERMINAL_ORDER_STATUSES = frozenset({
+    "filled",
+    "canceled",
+    "cancelled",
+    "rejected",
+    "expired",
+    "replaced",
+    "done_for_day",
+})
+
+
+def is_terminal_order_status(status: str) -> bool:
+    normalized = status.lower().replace(" ", "_")
+    return normalized in _TERMINAL_ORDER_STATUSES
 
 
 @dataclass
@@ -139,6 +158,19 @@ def submit_stop_loss(symbol: str, qty: float, stop_price: float) -> OrderResult:
         )
 
 
+def fetch_order_by_id(alpaca_order_id: str) -> OrderResult | None:
+    """Fetch the latest order state from Alpaca."""
+    if not alpaca_order_id:
+        return None
+    client = _get_trading_client()
+    try:
+        order = client.get_order_by_id(alpaca_order_id)
+        return _order_to_result(order)
+    except Exception as exc:
+        logger.warning("fetch_order_failed", alpaca_order_id=alpaca_order_id, error=str(exc))
+        return None
+
+
 def cancel_order(alpaca_order_id: str) -> bool:
     client = _get_trading_client()
     try:
@@ -181,6 +213,18 @@ def get_account() -> AccountInfo | None:
         return None
 
 
+def _parse_filled_at(order) -> datetime | None:
+    raw = getattr(order, "filled_at", None)
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw
+    try:
+        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
 def _order_to_result(order) -> OrderResult:
     return OrderResult(
         order_id=str(order.id),
@@ -191,6 +235,7 @@ def _order_to_result(order) -> OrderResult:
         status=str(order.status.value) if hasattr(order.status, "value") else str(order.status),
         filled_price=float(order.filled_avg_price) if order.filled_avg_price else None,
         filled_qty=float(order.filled_qty) if order.filled_qty else None,
+        filled_at=_parse_filled_at(order),
         limit_price=float(order.limit_price) if order.limit_price else None,
         stop_price=float(order.stop_price) if order.stop_price else None,
     )
@@ -198,7 +243,7 @@ def _order_to_result(order) -> OrderResult:
 
 def _raw_to_position(p) -> Position:
     return Position(
-        symbol=p.symbol,
+        symbol=canonical_alpaca_symbol(p.symbol),
         qty=float(p.qty),
         market_value=float(p.market_value),
         avg_entry_price=float(p.avg_entry_price),

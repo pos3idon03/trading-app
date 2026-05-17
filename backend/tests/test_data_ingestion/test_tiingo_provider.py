@@ -7,11 +7,14 @@ import pytest
 
 from features.data_ingestion.tiingo_provider import (
     TiingoProvider,
-    _build_params,
+    _build_crypto_params,
+    _build_iex_params,
+    _crypto_response_to_rows,
     _parse_timestamp,
     _row_to_record,
     _RESAMPLE_MAP,
     _SUPPORTED_TIMEFRAMES,
+    symbol_to_tiingo_crypto_ticker,
 )
 
 
@@ -34,8 +37,38 @@ def _make_row(date: str = "2026-05-11T13:30:00.000Z") -> dict:
     }
 
 
+def _make_crypto_payload(tiingo_ticker: str = "btcusd") -> list:
+    return [
+        {
+            "ticker": tiingo_ticker,
+            "baseCurrency": "btc",
+            "quoteCurrency": "usd",
+            "priceData": [
+                _make_row(),
+                _make_row("2026-05-11T13:35:00.000Z"),
+            ],
+        }
+    ]
+
+
 def _make_provider() -> TiingoProvider:
     return TiingoProvider()
+
+
+# ---------------------------------------------------------------------------
+# symbol_to_tiingo_crypto_ticker
+# ---------------------------------------------------------------------------
+
+class TestSymbolToTiingoCryptoTicker:
+    def test_maps_base_quote(self):
+        assert symbol_to_tiingo_crypto_ticker("BTC-USD") == "btcusd"
+
+    def test_lowercases(self):
+        assert symbol_to_tiingo_crypto_ticker("eth-usd") == "ethusd"
+
+    def test_invalid_symbol_raises(self):
+        with pytest.raises(ValueError, match="BASE-QUOTE"):
+            symbol_to_tiingo_crypto_ticker("BTCUSD")
 
 
 # ---------------------------------------------------------------------------
@@ -60,13 +93,13 @@ class TestParseTimestamp:
 
 
 # ---------------------------------------------------------------------------
-# _build_params
+# _build_iex_params / _build_crypto_params
 # ---------------------------------------------------------------------------
 
-class TestBuildParams:
+class TestBuildIexParams:
     def test_contains_required_keys(self):
-        params = _build_params(
-            "AAPL", "5m",
+        params = _build_iex_params(
+            "5m",
             _utc(2026, 5, 1), _utc(2026, 5, 14),
             "test-token",
         )
@@ -78,8 +111,37 @@ class TestBuildParams:
 
     def test_resample_map_coverage(self):
         for tf in _SUPPORTED_TIMEFRAMES:
-            params = _build_params("SPY", tf, _utc(2026, 1, 1), _utc(2026, 1, 31), "tok")
+            params = _build_iex_params(tf, _utc(2026, 1, 1), _utc(2026, 1, 31), "tok")
             assert params["resampleFreq"] == _RESAMPLE_MAP[tf]
+
+
+class TestBuildCryptoParams:
+    def test_contains_tickers_and_resample(self):
+        params = _build_crypto_params(
+            "btcusd", "5m",
+            _utc(2026, 5, 1), _utc(2026, 5, 14),
+            "test-token",
+        )
+        assert params["tickers"] == "btcusd"
+        assert params["resampleFreq"] == "5min"
+        assert params["startDate"] == "2026-05-01"
+        assert params["endDate"] == "2026-05-14"
+        assert params["token"] == "test-token"
+        assert "columns" not in params
+
+
+# ---------------------------------------------------------------------------
+# _crypto_response_to_rows
+# ---------------------------------------------------------------------------
+
+class TestCryptoResponseToRows:
+    def test_extracts_price_data(self):
+        rows = _crypto_response_to_rows(_make_crypto_payload(), "btcusd")
+        assert len(rows) == 2
+
+    def test_unknown_ticker_returns_empty(self):
+        rows = _crypto_response_to_rows(_make_crypto_payload(), "ethusd")
+        assert rows == []
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +174,7 @@ class TestRowToRecord:
 
 
 # ---------------------------------------------------------------------------
-# TiingoProvider.fetch_ohlcv
+# TiingoProvider.fetch_ohlcv (IEX / stocks)
 # ---------------------------------------------------------------------------
 
 class TestTiingoProviderFetchOHLCV:
@@ -134,7 +196,7 @@ class TestTiingoProviderFetchOHLCV:
         with (
             patch("features.data_ingestion.tiingo_provider.get_settings") as mock_settings,
             patch(
-                "features.data_ingestion.tiingo_provider._fetch_tiingo_bars",
+                "features.data_ingestion.tiingo_provider._fetch_tiingo_iex_bars",
                 new=AsyncMock(return_value=rows),
             ),
         ):
@@ -151,7 +213,7 @@ class TestTiingoProviderFetchOHLCV:
         with (
             patch("features.data_ingestion.tiingo_provider.get_settings") as mock_settings,
             patch(
-                "features.data_ingestion.tiingo_provider._fetch_tiingo_bars",
+                "features.data_ingestion.tiingo_provider._fetch_tiingo_iex_bars",
                 new=AsyncMock(return_value=[]),
             ),
         ):
@@ -187,7 +249,7 @@ class TestTiingoProviderFetchOHLCV:
         with (
             patch("features.data_ingestion.tiingo_provider.get_settings") as mock_settings,
             patch(
-                "features.data_ingestion.tiingo_provider._fetch_tiingo_bars",
+                "features.data_ingestion.tiingo_provider._fetch_tiingo_iex_bars",
                 new=AsyncMock(side_effect=http_error),
             ),
         ):
@@ -201,7 +263,7 @@ class TestTiingoProviderFetchOHLCV:
         with (
             patch("features.data_ingestion.tiingo_provider.get_settings") as mock_settings,
             patch(
-                "features.data_ingestion.tiingo_provider._fetch_tiingo_bars",
+                "features.data_ingestion.tiingo_provider._fetch_tiingo_iex_bars",
                 new=AsyncMock(return_value=rows),
             ),
         ):
@@ -217,13 +279,86 @@ class TestTiingoProviderFetchOHLCV:
             with (
                 patch("features.data_ingestion.tiingo_provider.get_settings") as mock_settings,
                 patch(
-                    "features.data_ingestion.tiingo_provider._fetch_tiingo_bars",
+                    "features.data_ingestion.tiingo_provider._fetch_tiingo_iex_bars",
                     new=AsyncMock(return_value=rows),
                 ),
             ):
                 mock_settings.return_value.tiingo_api_key = "tok"
                 records = await provider.fetch_ohlcv("AAPL", tf, start, end, asset_id=1)
             assert len(records) == 1
+
+
+# ---------------------------------------------------------------------------
+# TiingoProvider.fetch_ohlcv (crypto)
+# ---------------------------------------------------------------------------
+
+class TestTiingoProviderFetchOHLCVCrypto:
+    @pytest.fixture
+    def provider(self):
+        return _make_provider()
+
+    @pytest.fixture
+    def start(self):
+        return _utc(2026, 5, 1)
+
+    @pytest.fixture
+    def end(self):
+        return _utc(2026, 5, 14)
+
+    @pytest.mark.asyncio
+    async def test_crypto_uses_crypto_endpoint(self, provider, start, end):
+        rows = [_make_row(), _make_row("2026-05-11T13:35:00.000Z")]
+        mock_crypto = AsyncMock(return_value=rows)
+        mock_iex = AsyncMock()
+
+        with (
+            patch("features.data_ingestion.tiingo_provider.get_settings") as mock_settings,
+            patch(
+                "features.data_ingestion.tiingo_provider._fetch_tiingo_crypto_bars",
+                mock_crypto,
+            ),
+            patch(
+                "features.data_ingestion.tiingo_provider._fetch_tiingo_iex_bars",
+                mock_iex,
+            ),
+        ):
+            mock_settings.return_value.tiingo_api_key = "test-token"
+            records = await provider.fetch_ohlcv(
+                "BTC-USD", "5m", start, end, asset_id=7, asset_type="crypto"
+            )
+
+        assert len(records) == 2
+        assert all(r.asset_id == 7 for r in records)
+        mock_crypto.assert_called_once()
+        mock_iex.assert_not_called()
+        call_params = mock_crypto.call_args[0][0]
+        assert call_params["tickers"] == "btcusd"
+        assert call_params["resampleFreq"] == "5min"
+
+    @pytest.mark.asyncio
+    async def test_crypto_empty_price_data(self, provider, start, end):
+        with (
+            patch("features.data_ingestion.tiingo_provider.get_settings") as mock_settings,
+            patch(
+                "features.data_ingestion.tiingo_provider._fetch_tiingo_crypto_bars",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            mock_settings.return_value.tiingo_api_key = "test-token"
+            records = await provider.fetch_ohlcv(
+                "ETH-USD", "5m", start, end, asset_id=1, asset_type="crypto"
+            )
+
+        assert records == []
+
+    @pytest.mark.asyncio
+    async def test_invalid_crypto_symbol_raises(self, provider, start, end):
+        with patch("features.data_ingestion.tiingo_provider.get_settings") as mock_settings:
+            mock_settings.return_value.tiingo_api_key = "test-token"
+            with pytest.raises(ValueError, match="BASE-QUOTE"):
+                await provider.fetch_ohlcv(
+                    "BTCUSD", "5m", start, end, asset_type="crypto"
+                )
 
 
 # ---------------------------------------------------------------------------

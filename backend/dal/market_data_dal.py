@@ -371,6 +371,15 @@ async def get_asset_id_by_symbol(session: AsyncSession, symbol: str) -> Optional
     return row[0] if row else None
 
 
+async def get_asset_type_by_symbol(session: AsyncSession, symbol: str) -> Optional[str]:
+    """Return stored asset_type for a symbol, or None if not registered."""
+    from models.asset import Asset
+    stmt = select(Asset.asset_type).where(Asset.symbol == symbol.upper())
+    result = await session.execute(stmt)
+    row = result.fetchone()
+    return row[0] if row else None
+
+
 async def ensure_asset_for_live_stream(session: AsyncSession, symbol: str) -> int:
     """Insert asset row if missing; never overwrite name or other existing fields.
 

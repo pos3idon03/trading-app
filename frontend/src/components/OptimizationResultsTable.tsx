@@ -1,4 +1,5 @@
 import type { OptimizationSummary } from '../api/types';
+import { fmtPct } from '../utils/formatting';
 
 interface OptimizationResultsTableProps {
   results: OptimizationSummary[];
@@ -36,11 +37,14 @@ export default function OptimizationResultsTable({ results, metric }: Optimizati
                 <th key={k} className="px-3 py-2 text-slate-400 font-medium">{k}</th>
               ))}
             <th className="px-3 py-2 text-slate-400 font-medium">Avg OOS {metric}</th>
+            <th className="px-3 py-2 text-slate-400 font-medium">Avg OOS max drawdown</th>
           </tr>
         </thead>
         <tbody>
           {sorted.map((row, i) => {
             const isInf = !isFinite(row.avg_oos_metric);
+            const dd = row.avg_oos_max_drawdown;
+            const ddDisplay = dd != null && isFinite(dd) ? fmtPct(dd) : '—';
             return (
               <tr key={i} className={`border-b border-slate-800 ${i === 0 ? 'bg-brand-500/10' : ''}`}>
                 {Object.values(row.params).map((v, j) => (
@@ -49,6 +53,7 @@ export default function OptimizationResultsTable({ results, metric }: Optimizati
                 <td className="px-3 py-2">
                   <MetricBar value={row.avg_oos_metric} max={max} isInf={isInf} />
                 </td>
+                <td className="px-3 py-2 font-mono text-slate-300">{ddDisplay}</td>
               </tr>
             );
           })}

@@ -30,6 +30,7 @@ from features.live_trading.signal_aggregator import (
     RiskBounds,
     aggregate_signal,
 )
+from features.live_trading.stream_symbols import build_stream_plan
 from features.live_trading.websocket_stream import TickData, get_stream
 from utils.logging import get_logger
 
@@ -59,6 +60,18 @@ async def _await_stream_connected(
         elapsed += poll_interval
 
 
+def _status_to_response(status) -> StreamStatusResponse:
+    return StreamStatusResponse(
+        connected=status.connected,
+        stock_connected=status.stock_connected,
+        crypto_connected=status.crypto_connected,
+        subscribed_symbols=status.subscribed_symbols,
+        last_tick_at=status.last_tick_at,
+        error=status.error,
+        reconnect_count=status.reconnect_count,
+    )
+
+
 async def _register_streaming_assets(session: AsyncSession, symbols: list[str]) -> None:
     """Ensure each streamed symbol has an assets row so indicators can be persisted."""
     for symbol in symbols:
@@ -73,7 +86,8 @@ async def start_stream(
     req: StreamStartRequest,
     session: AsyncSession = Depends(get_db),
 ):
-    await _register_streaming_assets(session, req.symbols)
+    plan = await build_stream_plan(session, req.symbols)
+    await _register_streaming_assets(session, plan.app_symbols)
 
     stream = get_stream()
     resampler = _get_resampler()
@@ -99,44 +113,24 @@ async def start_stream(
             "timestamp": tick.timestamp.isoformat(),
         })
 
-    stream.on_tick(on_tick)
-    await stream.start(req.symbols)
+    stream.set_tick_handler(on_tick)
+    await stream.start(plan)
     await _await_stream_connected(stream)
 
     status = stream.status
-    return StreamStatusResponse(
-        connected=status.connected,
-        subscribed_symbols=status.subscribed_symbols,
-        last_tick_at=status.last_tick_at,
-        error=status.error,
-        reconnect_count=status.reconnect_count,
-    )
+    return _status_to_response(status)
 
 
 @router.post("/stop", response_model=StreamStatusResponse)
 async def stop_stream():
     stream = get_stream()
     await stream.stop()
-    status = stream.status
-    return StreamStatusResponse(
-        connected=status.connected,
-        subscribed_symbols=status.subscribed_symbols,
-        last_tick_at=status.last_tick_at,
-        error=status.error,
-        reconnect_count=status.reconnect_count,
-    )
+    return _status_to_response(stream.status)
 
 
 @router.get("/status", response_model=StreamStatusResponse)
 async def stream_status():
-    status = get_stream().status
-    return StreamStatusResponse(
-        connected=status.connected,
-        subscribed_symbols=status.subscribed_symbols,
-        last_tick_at=status.last_tick_at,
-        error=status.error,
-        reconnect_count=status.reconnect_count,
-    )
+    return _status_to_response(get_stream().status)
 
 
 @router.get("/indicators/{symbol}", response_model=IndicatorSnapshotResponse)
@@ -146,8 +140,8 @@ async def get_indicators(
     session: AsyncSession = Depends(get_db),
 ):
     symbol = symbol.upper()
-    bars = _get_resampler().get_bars(symbol, timeframe)
-    if bars:
+    bars = await _resolve_live_bars(session, symbol, timeframe)
+    if len(bars) >= MIN_BARS_REQUIRED:
         return await _indicators_from_bars(session, bars, symbol, timeframe)
     return await _indicators_from_db(session, symbol, timeframe)
 
@@ -162,6 +156,10 @@ async def _indicators_from_bars(
     snapshot = compute_indicators(bars, symbol, timeframe)
     if snapshot is None:
         return IndicatorSnapshotResponse(symbol=symbol, timeframe=timeframe, close_price=0.0)
+
+    live_close = _get_resampler().get_live_close(symbol, timeframe)
+    if live_close is not None:
+        snapshot.close_price = live_close
 
     asset_id = await get_asset_id_by_symbol(session, symbol)
     if asset_id is not None:
@@ -250,13 +248,19 @@ def _ohlcv_query_args(timeframe: str) -> dict:
 def _df_rows_to_bars(df) -> list:
     """Convert a DataFrame of OHLCV rows into lightweight bar objects."""
     bars = []
-    for _, row in df.iterrows():
+    for idx, row in df.iterrows():
+        bar_time = row["time"] if "time" in row.index else idx
+        if hasattr(bar_time, "isoformat"):
+            bar_time = bar_time.isoformat()
+        else:
+            bar_time = str(bar_time)
         bars.append(SimpleNamespace(
             open=float(row["open"]),
             high=float(row["high"]),
             low=float(row["low"]),
             close=float(row["close"]),
             volume=int(row.get("volume", 0)),
+            bar_start=bar_time,
         ))
     return bars
 
@@ -280,21 +284,36 @@ async def _fetch_bars_from_db(
     return _df_rows_to_bars(df)
 
 
+async def _resolve_live_bars(
+    session: AsyncSession, symbol: str, timeframe: str,
+) -> list:
+    """Prefer resampler bars when sufficient; otherwise use DB OHLCV (aligned with strategy-signals)."""
+    bars = _get_resampler().get_bars(symbol, timeframe)
+    if len(bars) >= MIN_BARS_REQUIRED:
+        return bars
+    db_bars = await _fetch_bars_from_db(session, symbol, timeframe)
+    if len(db_bars) >= MIN_BARS_REQUIRED:
+        return db_bars
+    return bars
+
+
 @router.get("/strategy-signals/{symbol}", response_model=StrategySignalsResponse)
 async def get_strategy_signals(
     symbol: str,
     timeframe: str = Query("1h", description="Timeframe for strategy evaluation"),
+    include_timeline: bool = Query(False, description="Include per-bar signal timeline"),
+    timeline_bars: int = Query(120, ge=30, le=250, description="Bars in timeline when enabled"),
     session: AsyncSession = Depends(get_db),
 ):
     symbol = symbol.upper()
-    bars = _get_resampler().get_bars(symbol, timeframe)
+    bars = await _resolve_live_bars(session, symbol, timeframe)
 
-    if len(bars) < MIN_BARS_REQUIRED:
-        db_bars = await _fetch_bars_from_db(session, symbol, timeframe)
-        if len(db_bars) >= MIN_BARS_REQUIRED:
-            bars = db_bars
-
-    strategies = compute_strategy_signals(bars, symbol)
+    strategies = compute_strategy_signals(
+        bars,
+        symbol,
+        include_timeline=include_timeline,
+        timeline_bars=timeline_bars,
+    )
     return StrategySignalsResponse(
         symbol=symbol,
         timeframe=timeframe,
@@ -308,6 +327,7 @@ async def get_strategy_signals(
                 indicator_value=s.indicator_value,
                 indicator_label=s.indicator_label,
                 params=s.params,
+                signal_timeline=s.signal_timeline,
             )
             for s in strategies
         ],

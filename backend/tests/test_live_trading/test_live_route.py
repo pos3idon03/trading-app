@@ -4,15 +4,32 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from features.live_trading.stream_symbols import StreamPlan, StreamSymbolEntry
 from main import app
 
 client = TestClient(app)
+
+
+def _plan_for_symbols(symbols: list[str]) -> StreamPlan:
+    plan = StreamPlan()
+    for sym in symbols:
+        upper = sym.upper()
+        channel = "crypto" if "-" in upper and upper.endswith(("USD", "USDT")) else "stock"
+        alpaca = upper.replace("-", "/") if channel == "crypto" else upper
+        plan.entries.append(
+            StreamSymbolEntry(app_symbol=upper, alpaca_symbol=alpaca, channel=channel),
+        )
+    return plan
 
 
 class TestStreamStartEndpoint:
     def test_start_stream_success(self):
         with (
             patch("routes.live_trading.get_stream") as mock_stream,
+            patch(
+                "routes.live_trading.build_stream_plan",
+                new=AsyncMock(side_effect=lambda _s, syms: _plan_for_symbols(syms)),
+            ),
             patch(
                 "routes.live_trading._register_streaming_assets", new=AsyncMock()
             ) as mock_register,
@@ -26,7 +43,7 @@ class TestStreamStartEndpoint:
             stream_instance = MagicMock()
             stream_instance.status = mock_status
             stream_instance.start = AsyncMock()
-            stream_instance.on_tick = MagicMock()
+            stream_instance.set_tick_handler = MagicMock()
             mock_stream.return_value = stream_instance
 
             response = client.post("/api/v1/live/start", json={"symbols": ["AAPL"]})
@@ -41,6 +58,10 @@ class TestStreamStartEndpoint:
         with (
             patch("routes.live_trading.get_stream") as mock_stream,
             patch(
+                "routes.live_trading.build_stream_plan",
+                new=AsyncMock(side_effect=lambda _s, syms: _plan_for_symbols(syms)),
+            ),
+            patch(
                 "routes.live_trading._register_streaming_assets", new=AsyncMock()
             ) as mock_register,
         ):
@@ -53,18 +74,45 @@ class TestStreamStartEndpoint:
             stream_instance = MagicMock()
             stream_instance.status = mock_status
             stream_instance.start = AsyncMock()
-            stream_instance.on_tick = MagicMock()
+            stream_instance.set_tick_handler = MagicMock()
             mock_stream.return_value = stream_instance
 
             response = client.post(
                 "/api/v1/live/start", json={"symbols": ["AAPL", "MSFT"]}
             )
             assert response.status_code == 200
-            _, call_kwargs = mock_register.call_args
-            assert set(call_kwargs.get("symbols", mock_register.call_args[0][1])) == {
-                "AAPL",
-                "MSFT",
-            }
+            registered = mock_register.call_args[0][1]
+            assert set(registered) == {"AAPL", "MSFT"}
+
+    def test_start_stream_registers_stock_and_crypto(self):
+        with (
+            patch("routes.live_trading.get_stream") as mock_stream,
+            patch(
+                "routes.live_trading.build_stream_plan",
+                new=AsyncMock(side_effect=lambda _s, syms: _plan_for_symbols(syms)),
+            ),
+            patch(
+                "routes.live_trading._register_streaming_assets", new=AsyncMock()
+            ) as mock_register,
+        ):
+            mock_status = MagicMock()
+            mock_status.connected = True
+            mock_status.subscribed_symbols = ["AAPL", "BTC-USD"]
+            mock_status.last_tick_at = None
+            mock_status.error = None
+            mock_status.reconnect_count = 0
+            stream_instance = MagicMock()
+            stream_instance.status = mock_status
+            stream_instance.start = AsyncMock()
+            stream_instance.set_tick_handler = MagicMock()
+            mock_stream.return_value = stream_instance
+
+            response = client.post(
+                "/api/v1/live/start", json={"symbols": ["AAPL", "BTC-USD"]}
+            )
+            assert response.status_code == 200
+            registered = mock_register.call_args[0][1]
+            assert set(registered) == {"AAPL", "BTC-USD"}
 
     def test_start_stream_returns_connected_true_after_poll(self):
         """start_stream must wait for the WS task to set connected=True."""
@@ -82,15 +130,27 @@ class TestStreamStartEndpoint:
                 call_count += 1
                 return call_count >= 3  # False for first 2 polls, True on 3rd
 
+            @property
+            def stock_connected(self):
+                return self.connected
+
+            @property
+            def crypto_connected(self):
+                return False
+
         with (
             patch("routes.live_trading.get_stream") as mock_stream,
+            patch(
+                "routes.live_trading.build_stream_plan",
+                new=AsyncMock(side_effect=lambda _s, syms: _plan_for_symbols(syms)),
+            ),
             patch("routes.live_trading._register_streaming_assets", new=AsyncMock()),
         ):
             lazy_status = _LazyStatus()
             stream_instance = MagicMock()
             stream_instance.status = lazy_status
             stream_instance.start = AsyncMock()
-            stream_instance.on_tick = MagicMock()
+            stream_instance.set_tick_handler = MagicMock()
             mock_stream.return_value = stream_instance
 
             response = client.post("/api/v1/live/start", json={"symbols": ["AAPL"]})
@@ -100,6 +160,10 @@ class TestStreamStartEndpoint:
     def test_start_stream_error_propagated(self):
         with (
             patch("routes.live_trading.get_stream") as mock_stream,
+            patch(
+                "routes.live_trading.build_stream_plan",
+                new=AsyncMock(side_effect=lambda _s, syms: _plan_for_symbols(syms)),
+            ),
             patch(
                 "routes.live_trading._register_streaming_assets", new=AsyncMock()
             ),
@@ -113,7 +177,7 @@ class TestStreamStartEndpoint:
             stream_instance = MagicMock()
             stream_instance.status = mock_status
             stream_instance.start = AsyncMock()
-            stream_instance.on_tick = MagicMock()
+            stream_instance.set_tick_handler = MagicMock()
             mock_stream.return_value = stream_instance
 
             response = client.post("/api/v1/live/start", json={"symbols": ["AAPL"]})

@@ -179,3 +179,27 @@ class TestStrategySignalsDbFallback:
         assert response.status_code == 200
         assert len(response.json()["strategies"]) > 0
         mock_db.assert_not_called()
+
+    def test_include_timeline_query_param(self):
+        bars = _make_bars(60)
+        with patch("routes.live_trading._get_resampler") as mock_resampler:
+            mock_resampler.return_value.get_bars.return_value = bars
+            response = client.get(
+                "/api/v1/live/strategy-signals/AAPL?include_timeline=true&timeline_bars=40",
+            )
+
+        assert response.status_code == 200
+        strategies = response.json()["strategies"]
+        rsi = next(s for s in strategies if s["strategy"] == "rsi")
+        assert len(rsi["signal_timeline"]) == 40
+        assert rsi["signal_timeline"][-1]["signal"] in ("Buy", "Sell", "Neutral")
+
+    def test_default_response_has_empty_timeline(self):
+        bars = _make_bars(60)
+        with patch("routes.live_trading._get_resampler") as mock_resampler:
+            mock_resampler.return_value.get_bars.return_value = bars
+            response = client.get("/api/v1/live/strategy-signals/AAPL")
+
+        assert response.status_code == 200
+        for s in response.json()["strategies"]:
+            assert s.get("signal_timeline", []) == []

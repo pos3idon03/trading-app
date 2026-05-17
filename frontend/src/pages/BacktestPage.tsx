@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { backtestApi, dataApi, strategyBuilderApi } from '../api/endpoints';
-import type { AssetItem, BacktestResponse, OptimizationResponse } from '../api/types';
+import type { AssetItem, BacktestMetrics, BacktestResponse, OptimizationResponse } from '../api/types';
 import { STRATEGIES, DEFAULT_PARAMS_MAP, DEFAULT_GRID_MAP, OPTIMIZE_METRICS } from '../constants/strategies';
 import Spinner from '../components/Spinner';
 import ErrorAlert from '../components/ErrorAlert';
@@ -13,6 +13,7 @@ import OptimizationResultsTable from '../components/OptimizationResultsTable';
 import ComboTab from '../components/ComboTab';
 import StrategyGuideTab from '../components/StrategyGuideTab';
 import { formatAssetOptionLabel } from '../utils/assetDisplay';
+import { fmt, fmtPct } from '../utils/formatting';
 import { defaultDatesForTimeframe } from '../utils/backtestDates';
 import type { BacktestTimeframe } from '../utils/backtestDates';
 
@@ -327,12 +328,42 @@ function BacktestTab({ assets }: { assets: AssetItem[] }) {
   );
 }
 
+function OptimizeFullPeriodMetrics({ metrics }: { metrics: BacktestMetrics }) {
+  return (
+    <div className="grid grid-cols-2 gap-2 text-sm">
+      <div className="flex justify-between col-span-2">
+        <span className="text-slate-400">Total return</span>
+        <span className="text-slate-100 font-semibold">{fmtPct(metrics.total_return)}</span>
+      </div>
+      <div className="flex justify-between">
+        <span className="text-slate-400">Sharpe</span>
+        <span className="text-slate-100 font-semibold">{fmt(metrics.sharpe_ratio, 3)}</span>
+      </div>
+      <div className="flex justify-between">
+        <span className="text-slate-400">Sortino</span>
+        <span className="text-slate-100 font-semibold">{fmt(metrics.sortino_ratio, 3)}</span>
+      </div>
+      <div className="flex justify-between">
+        <span className="text-slate-400">Max drawdown</span>
+        <span className="text-red-400 font-semibold">{fmtPct(metrics.max_drawdown)}</span>
+      </div>
+      <div className="flex justify-between">
+        <span className="text-slate-400"># Trades</span>
+        <span className="text-slate-100 font-semibold">{metrics.num_trades ?? '—'}</span>
+      </div>
+    </div>
+  );
+}
+
 function OptimizeBestParams({ optResult }: { optResult: OptimizationResponse }) {
   if (!optResult.best_params) return null;
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
       <div className="card border border-brand-500/30">
-        <h3 className="text-brand-400 font-semibold mb-3">Best Parameters</h3>
+        <h3 className="text-brand-400 font-semibold mb-1">Best Parameters</h3>
+        <p className="text-slate-500 text-xs mb-3">
+          Avg OOS metrics are averaged across test folds where this combo won the prior in-sample leg.
+        </p>
         <div className="space-y-2">
           {Object.entries(optResult.best_params).map(([k, v]) => (
             <div key={k} className="flex justify-between">
@@ -348,8 +379,26 @@ function OptimizeBestParams({ optResult }: { optResult: OptimizationResponse }) 
                 : '—'}
             </span>
           </div>
+          {optResult.best_avg_oos_max_drawdown != null &&
+            isFinite(optResult.best_avg_oos_max_drawdown) && (
+            <div className="flex justify-between">
+              <span className="text-slate-400 text-sm">Avg OOS max drawdown</span>
+              <span className="text-slate-100 text-sm font-semibold">
+                {fmtPct(optResult.best_avg_oos_max_drawdown)}
+              </span>
+            </div>
+          )}
         </div>
       </div>
+      {optResult.full_period_metrics && (
+        <div className="card border border-slate-600">
+          <h3 className="text-slate-200 font-semibold mb-1">Full sample (same window)</h3>
+          <p className="text-slate-500 text-xs mb-3">
+            Same definition as the Backtest tab: one run over the full date range with best params.
+          </p>
+          <OptimizeFullPeriodMetrics metrics={optResult.full_period_metrics} />
+        </div>
+      )}
     </div>
   );
 }
@@ -387,9 +436,11 @@ function OptimizeTab({ assets }: { assets: AssetItem[] }) {
   const optDailyDefaults = defaultDatesForTimeframe('1d');
   const [optStartDate, setOptStartDate] = useState(optDailyDefaults.start);
   const [optEndDate, setOptEndDate] = useState(optDailyDefaults.end);
+  const [optTimeframe, setOptTimeframe] = useState<Timeframe>('1d');
   const [paramGrid, setParamGrid] = useState<Record<string, number[]>>(DEFAULT_GRID_MAP['ma_crossover']);
   const [nSplits, setNSplits] = useState(5);
   const [optimizeMetric, setOptimizeMetric] = useState('sharpe_ratio');
+  const [maxDrawdownCap, setMaxDrawdownCap] = useState('');
   const [optResult, setOptResult] = useState<OptimizationResponse | null>(null);
   const [optLoading, setOptLoading] = useState(false);
   const [optError, setOptError] = useState<string | null>(null);
@@ -403,21 +454,36 @@ function OptimizeTab({ assets }: { assets: AssetItem[] }) {
     setParamGrid(DEFAULT_GRID_MAP[s] ?? DEFAULT_GRID_MAP['ma_crossover']);
   };
 
+  const handleOptTimeframeChange = (tf: Timeframe) => {
+    setOptTimeframe(tf);
+    const dates = defaultDatesForTimeframe(tf);
+    setOptStartDate(dates.start);
+    setOptEndDate(dates.end);
+  };
+
   const runOptimization = async () => {
     if (!optSymbol) return;
     setOptLoading(true);
     setOptError(null);
     try {
+      const capRaw = maxDrawdownCap.trim();
+      const capParsed = capRaw === '' ? undefined : parseFloat(capRaw);
+      if (capParsed !== undefined && (Number.isNaN(capParsed) || capParsed > 0)) {
+        setOptError('Max avg OOS drawdown must be a negative number (e.g. -0.25)');
+        setOptLoading(false);
+        return;
+      }
       const resp = await backtestApi.optimize({
         symbol: optSymbol,
         strategy_name: optStrategy,
-        timeframe: '1d',
+        timeframe: optTimeframe,
         start_date: new Date(optStartDate).toISOString(),
         end_date: new Date(optEndDate).toISOString(),
         param_grid: paramGrid,
         n_splits: nSplits,
         optimize_metric: optimizeMetric,
         initial_capital: 100_000,
+        ...(capParsed !== undefined ? { max_drawdown_cap: capParsed } : {}),
       });
       setOptResult(resp);
     } catch (err) {
@@ -435,7 +501,9 @@ function OptimizeTab({ assets }: { assets: AssetItem[] }) {
       <div className="card">
         <h2 className="text-slate-200 font-semibold mb-4">Walk-Forward Optimization</h2>
         <p className="text-slate-400 text-xs mb-4">
-          Sweeps parameter combinations across rolling train/test folds to find the best out-of-sample parameters without overfitting.
+          Sweeps parameter combinations across rolling train/test folds to find robust out-of-sample
+          parameters. After optimization, full-sample metrics use the same engine as the Backtest tab
+          so you can compare walk-forward averages to a single full-window run.
         </p>
         <div className="flex flex-wrap gap-4 items-end mb-6">
           <TickerSelect assets={assets} value={optSymbol} onChange={setOptSymbol} />
@@ -464,7 +532,20 @@ function OptimizeTab({ assets }: { assets: AssetItem[] }) {
               onChange={(e) => setNSplits(parseInt(e.target.value) || 5)}
             />
           </div>
+          <div>
+            <label className="metric-label block mb-1" title="Worst allowed average OOS max drawdown">
+              Max avg OOS drawdown
+            </label>
+            <input
+              type="text"
+              placeholder="-0.25"
+              className={`${selectCls} w-28`}
+              value={maxDrawdownCap}
+              onChange={(e) => setMaxDrawdownCap(e.target.value)}
+            />
+          </div>
           <DateRangeInputs startDate={optStartDate} endDate={optEndDate} onStartChange={setOptStartDate} onEndChange={setOptEndDate} />
+          <PriceFrequencySelect value={optTimeframe} onChange={handleOptTimeframeChange} />
         </div>
         <div className="mb-4">
           <h3 className="text-slate-300 text-sm font-medium mb-2">Parameter Grid</h3>

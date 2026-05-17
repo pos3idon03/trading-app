@@ -99,6 +99,26 @@ const mockFullResponse: StrategyFullResponse = {
   financials_error: null,
 };
 
+function expandStrategyCard() {
+  fireEvent.click(screen.getByRole('button', { name: /expand strategy details/i }));
+}
+
+function expandSection(title: string) {
+  fireEvent.click(screen.getByText(title));
+}
+
+async function waitForStrategyLoad() {
+  const { strategyBuilderApi } = await import('../api/endpoints');
+  await waitFor(() => {
+    expect(strategyBuilderApi.getFull).toHaveBeenCalled();
+  });
+}
+
+async function expandCardAfterLoad() {
+  await waitForStrategyLoad();
+  expandStrategyCard();
+}
+
 vi.mock('../api/endpoints', () => ({
   strategyBuilderApi: {
     getFull: vi.fn(),
@@ -133,8 +153,20 @@ describe('AssetStrategyCard', () => {
     expect(document.querySelector('[class*="animate"]') || screen.queryByRole('img')).toBeTruthy();
   });
 
+  it('keeps card body collapsed by default after load', async () => {
+    render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await waitForStrategyLoad();
+    expect(screen.queryByText('Save Thresholds')).not.toBeInTheDocument();
+    expandStrategyCard();
+    await waitFor(() => {
+      expect(screen.getByText('Save Thresholds')).toBeInTheDocument();
+    });
+  });
+
   it('renders Monte Carlo section after load', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('Monte Carlo (Merton Jump-Diffusion)');
     await waitFor(() => {
       expect(screen.getByText('Prob. Positive Return')).toBeInTheDocument();
       expect(screen.getByText('65.00%')).toBeInTheDocument();
@@ -143,6 +175,8 @@ describe('AssetStrategyCard', () => {
 
   it('renders MC buy/sell threshold inputs', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('Monte Carlo (Merton Jump-Diffusion)');
     await waitFor(() => {
       expect(screen.getByText('Min Prob. Positive (BUY)')).toBeInTheDocument();
       expect(screen.getByText('Max Prob. Positive (SELL)')).toBeInTheDocument();
@@ -151,6 +185,8 @@ describe('AssetStrategyCard', () => {
 
   it('renders AI Agents section with bias', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('AI Agents');
     await waitFor(() => {
       expect(screen.getByText('bullish')).toBeInTheDocument();
       expect(screen.getByText('Conviction Score')).toBeInTheDocument();
@@ -159,6 +195,8 @@ describe('AssetStrategyCard', () => {
 
   it('renders AI buy and sell threshold inputs', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('AI Agents');
     await waitFor(() => {
       expect(screen.getByText('Min Conviction (BUY)')).toBeInTheDocument();
       expect(screen.getByText('Max Conviction (SELL)')).toBeInTheDocument();
@@ -171,6 +209,8 @@ describe('AssetStrategyCard', () => {
 
   it('renders algo timeframe selector', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('Algo Strategies');
     await waitFor(() => {
       expect(screen.getByText('Trading Timeframe')).toBeInTheDocument();
       expect(screen.getByDisplayValue('1d')).toBeInTheDocument();
@@ -179,6 +219,7 @@ describe('AssetStrategyCard', () => {
 
   it('renders combination mode selector', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
     await waitFor(() => {
       expect(screen.getByText('Signal Combination')).toBeInTheDocument();
       expect(screen.getByDisplayValue('All Agree (AND)')).toBeInTheDocument();
@@ -194,6 +235,7 @@ describe('AssetStrategyCard', () => {
   it('calls updateThresholds with new field names when Save Thresholds is clicked', async () => {
     const { strategyBuilderApi } = await import('../api/endpoints');
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
     await waitFor(() => screen.getByText('Save Thresholds'));
     fireEvent.click(screen.getByText('Save Thresholds'));
     await waitFor(() => {
@@ -222,6 +264,8 @@ describe('AssetStrategyCard', () => {
 
   it('renders Financials section', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('Financials');
     await waitFor(() => {
       expect(screen.getByText('P/E (TTM)')).toBeInTheDocument();
       expect(screen.getByText('28.00')).toBeInTheDocument();
@@ -230,6 +274,8 @@ describe('AssetStrategyCard', () => {
 
   it('renders Algo Strategies section', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('Algo Strategies');
     await waitFor(() => {
       expect(screen.getByText('MA Crossover')).toBeInTheDocument();
       expect(screen.getByText(/Added/)).toBeInTheDocument();
@@ -248,9 +294,10 @@ describe('AssetStrategyCard', () => {
 
   it('renders section collapse toggles', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
-    await waitFor(() => screen.getByText('Monte Carlo (Merton Jump-Diffusion)'));
-    const sectionToggle = screen.getByText('Monte Carlo (Merton Jump-Diffusion)');
-    fireEvent.click(sectionToggle);
+    await expandCardAfterLoad();
+    expandSection('Monte Carlo (Merton Jump-Diffusion)');
+    await waitFor(() => expect(screen.getByText('Prob. Positive Return')).toBeInTheDocument());
+    expandSection('Monte Carlo (Merton Jump-Diffusion)');
     await waitFor(() => {
       expect(screen.queryByText('Prob. Positive Return')).not.toBeInTheDocument();
     });
@@ -272,6 +319,8 @@ describe('AssetStrategyCard', () => {
     (strategyBuilderApi.getFull as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fullWithParams);
 
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('Algo Strategies');
     await waitFor(() => {
       expect(screen.getByText('RSI (Relative Strength Index)')).toBeInTheDocument();
       // Value "14" is in its own inner <span>
@@ -326,6 +375,8 @@ describe('AssetStrategyCard – combo algo strategy display', () => {
 
   it('renders "Combo Strategy" header instead of raw strategy_name', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('Algo Strategies');
     await waitFor(() => {
       expect(screen.getByText('Combo Strategy')).toBeInTheDocument();
     });
@@ -333,6 +384,8 @@ describe('AssetStrategyCard – combo algo strategy display', () => {
 
   it('renders the combination mode badge', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('Algo Strategies');
     await waitFor(() => {
       // "Majority Vote" may appear in the combo badge and the combination-mode select option
       expect(screen.getAllByText('Majority Vote').length).toBeGreaterThanOrEqual(1);
@@ -341,6 +394,8 @@ describe('AssetStrategyCard – combo algo strategy display', () => {
 
   it('renders added date for the combo', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('Algo Strategies');
     await waitFor(() => {
       expect(screen.getByText(/Added/)).toBeInTheDocument();
     });
@@ -348,6 +403,8 @@ describe('AssetStrategyCard – combo algo strategy display', () => {
 
   it('lists each sub-strategy name', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('Algo Strategies');
     await waitFor(() => {
       expect(screen.getByText('MA Crossover')).toBeInTheDocument();
       expect(screen.getByText('RSI (Relative Strength Index)')).toBeInTheDocument();
@@ -356,6 +413,8 @@ describe('AssetStrategyCard – combo algo strategy display', () => {
 
   it('renders param chips for each sub-strategy', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('Algo Strategies');
     await waitFor(() => {
       // ParamChips renders "{key}: {value}" — check key text appears somewhere
       expect(screen.getAllByText(/fast_window/).length).toBeGreaterThan(0);
@@ -366,6 +425,8 @@ describe('AssetStrategyCard – combo algo strategy display', () => {
 
   it('does not render raw "combo:majority" text as the card title', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
+    await expandCardAfterLoad();
+    expandSection('Algo Strategies');
     await waitFor(() => screen.getByText('Combo Strategy'));
     expect(screen.queryByText('combo:majority')).not.toBeInTheDocument();
   });

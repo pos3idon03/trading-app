@@ -4,6 +4,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from dtos.backtest_dto import SignalPoint
+
 
 class StreamStartRequest(BaseModel):
     symbols: list[str] = Field(..., min_length=1, description="Symbols to stream")
@@ -15,6 +17,8 @@ class StreamStartRequest(BaseModel):
 
 class StreamStatusResponse(BaseModel):
     connected: bool
+    stock_connected: bool = False
+    crypto_connected: bool = False
     subscribed_symbols: list[str]
     last_tick_at: Optional[datetime] = None
     error: Optional[str] = None
@@ -76,6 +80,7 @@ class StrategySignalItem(BaseModel):
     indicator_value: Optional[float] = None
     indicator_label: Optional[str] = None
     params: Optional[dict] = None
+    signal_timeline: list[SignalPoint] = Field(default_factory=list)
 
 
 class StrategySignalsResponse(BaseModel):

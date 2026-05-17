@@ -96,19 +96,33 @@ class StrategySignalResult:
     indicator_value: Optional[float] = None
     indicator_label: Optional[str] = None
     params: dict = field(default_factory=dict)
+    signal_timeline: list[dict] = field(default_factory=list)
+
+
+def _bar_time_iso(bar, index: int) -> str:
+    """Extract an ISO timestamp from a bar object, or fall back to index."""
+    for attr in ("bar_start", "time", "timestamp"):
+        val = getattr(bar, attr, None)
+        if val is None:
+            continue
+        if hasattr(val, "isoformat"):
+            return val.isoformat()
+        return str(val)
+    return str(index)
 
 
 def _build_dataframe(bars: list) -> pd.DataFrame:
     """Convert OHLCVBar list to a pandas DataFrame compatible with strategy functions."""
     records = [
         {
+            "time": _bar_time_iso(b, i),
             "open": b.open,
             "high": b.high,
             "low": b.low,
             "close": b.close,
             "volume": b.volume,
         }
-        for b in bars
+        for i, b in enumerate(bars)
     ]
     df = pd.DataFrame(records)
     df.columns = [c.lower() for c in df.columns]
@@ -117,13 +131,43 @@ def _build_dataframe(bars: list) -> pd.DataFrame:
 
 def _determine_signal(entries: pd.Series, exits: pd.Series) -> str:
     """Derive BUY/SELL/NEUTRAL from the last entry and exit boolean values."""
-    last_entry = bool(entries.iloc[-1]) if not entries.empty else False
-    last_exit = bool(exits.iloc[-1]) if not exits.empty else False
-    if last_entry:
+    if entries.empty:
+        return "NEUTRAL"
+    return _determine_signal_at_index(entries, exits, len(entries) - 1)
+
+
+def _determine_signal_at_index(entries: pd.Series, exits: pd.Series, index: int) -> str:
+    """Derive BUY/SELL/NEUTRAL at a single bar index."""
+    if entries.empty or index < 0 or index >= len(entries):
+        return "NEUTRAL"
+    if bool(entries.iloc[index]):
         return "BUY"
-    if last_exit:
+    if bool(exits.iloc[index]):
         return "SELL"
     return "NEUTRAL"
+
+
+def _to_timeline_signal(signal: str) -> str:
+    return {"BUY": "Buy", "SELL": "Sell", "NEUTRAL": "Neutral"}.get(signal, "Neutral")
+
+
+def _build_signal_timeline(
+    df: pd.DataFrame,
+    entries: pd.Series,
+    exits: pd.Series,
+    timeline_bars: int,
+) -> list[dict]:
+    """Build per-bar signal timeline for chart display."""
+    n = len(df)
+    if n == 0:
+        return []
+    start = max(0, n - timeline_bars)
+    times = df["time"] if "time" in df.columns else pd.Series(range(n))
+    timeline: list[dict] = []
+    for i in range(start, n):
+        sig = _determine_signal_at_index(entries, exits, i)
+        timeline.append({"time": str(times.iloc[i]), "signal": _to_timeline_signal(sig)})
+    return timeline
 
 
 def _safe_last(series: pd.Series) -> Optional[float]:
@@ -276,25 +320,40 @@ def _run_single_strategy(name: str, df: pd.DataFrame) -> str:
 
 
 def _run_strategy_full(
-    name: str, df: pd.DataFrame
-) -> tuple[str, Optional[float], Optional[str], dict]:
-    """Run one strategy; returns (signal, indicator_value, indicator_label, params)."""
+    name: str,
+    df: pd.DataFrame,
+    *,
+    include_timeline: bool = False,
+    timeline_bars: int = 120,
+) -> tuple[str, Optional[float], Optional[str], dict, list[dict]]:
+    """Run one strategy; returns signal, indicator, params, and optional timeline."""
     handler = _STRATEGY_MAP.get(name)
     params = _DEFAULT_PARAMS.get(name, {})
     if handler is None:
-        return "NEUTRAL", None, None, params
+        return "NEUTRAL", None, None, params, []
     try:
         entries, exits = handler(df, params)
         signal = _determine_signal(entries, exits)
+        timeline = (
+            _build_signal_timeline(df, entries, exits, timeline_bars)
+            if include_timeline
+            else []
+        )
     except Exception as exc:
         logger.warning("strategy_signal_error", strategy=name, error=str(exc))
-        return "NEUTRAL", None, None, params
+        return "NEUTRAL", None, None, params, []
 
     indicator_value, indicator_label = _compute_key_indicator(name, df, params)
-    return signal, indicator_value, indicator_label, params
+    return signal, indicator_value, indicator_label, params, timeline
 
 
-def compute_strategy_signals(bars: list, symbol: str) -> list[StrategySignalResult]:
+def compute_strategy_signals(
+    bars: list,
+    symbol: str,
+    *,
+    include_timeline: bool = False,
+    timeline_bars: int = 120,
+) -> list[StrategySignalResult]:
     """Run all backtest strategies on live OHLCV bars and return the latest signal per strategy.
 
     Returns an empty list when there are insufficient bars.
@@ -313,7 +372,9 @@ def compute_strategy_signals(bars: list, symbol: str) -> list[StrategySignalResu
 
     for name in _STRATEGY_MAP:
         meta = _STRATEGY_META.get(name, {"label": name, "group": "Other"})
-        signal, indicator_value, indicator_label, params = _run_strategy_full(name, df)
+        signal, indicator_value, indicator_label, params, timeline = _run_strategy_full(
+            name, df, include_timeline=include_timeline, timeline_bars=timeline_bars,
+        )
         results.append(
             StrategySignalResult(
                 strategy=name,
@@ -323,6 +384,7 @@ def compute_strategy_signals(bars: list, symbol: str) -> list[StrategySignalResu
                 indicator_value=indicator_value,
                 indicator_label=indicator_label,
                 params=params,
+                signal_timeline=timeline,
             )
         )
 

@@ -185,6 +185,65 @@ class TestIndicatorsAssetValidation:
 
 
 # ---------------------------------------------------------------------------
+# GET /indicators/{symbol}: DB fallback when resampler has few bars
+# ---------------------------------------------------------------------------
+
+class TestIndicatorsDbFallback:
+    def test_falls_back_to_db_when_resampler_has_few_bars(self):
+        """Short resampler bars must not yield close_price=0 when DB has enough OHLCV."""
+        resampler_bars = _make_bars(5)
+        db_bars = _make_bars(35)
+        db_bars[-1].close = 78394.38
+
+        with (
+            patch("routes.live_trading._get_resampler") as mock_res,
+            patch(
+                "routes.live_trading._fetch_bars_from_db",
+                new_callable=AsyncMock,
+                return_value=db_bars,
+            ),
+            patch(
+                "routes.live_trading.get_asset_id_by_symbol",
+                new=AsyncMock(return_value=1),
+            ),
+            patch("routes.live_trading.live_trading_dal") as mock_dal,
+        ):
+            mock_res.return_value.get_bars.return_value = resampler_bars
+            mock_dal.create_indicator = AsyncMock()
+
+            response = client.get("/api/v1/live/indicators/BTC-USD?timeframe=5m")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["symbol"] == "BTC-USD"
+        assert data["timeframe"] == "5m"
+        assert data["close_price"] == 78394.38
+
+    def test_skips_db_fallback_when_resampler_has_enough_bars(self):
+        resampler_bars = _make_bars(35)
+        with (
+            patch("routes.live_trading._get_resampler") as mock_res,
+            patch(
+                "routes.live_trading._fetch_bars_from_db",
+                new_callable=AsyncMock,
+            ) as mock_db,
+            patch(
+                "routes.live_trading.get_asset_id_by_symbol",
+                new=AsyncMock(return_value=1),
+            ),
+            patch("routes.live_trading.live_trading_dal") as mock_dal,
+        ):
+            mock_res.return_value.get_bars.return_value = resampler_bars
+            mock_dal.create_indicator = AsyncMock()
+
+            response = client.get("/api/v1/live/indicators/AAPL?timeframe=1h")
+
+        assert response.status_code == 200
+        assert response.json()["close_price"] == 152.0
+        mock_db.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # POST /start: auto-registers assets in the DB
 # ---------------------------------------------------------------------------
 

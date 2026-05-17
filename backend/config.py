@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     alpaca_base_url: str = "https://paper-api.alpaca.markets"
     alpaca_base_paper_url: str = "https://paper-api.alpaca.markets/v2"
     alpaca_data_ws_url: str = "wss://stream.data.alpaca.markets/v2/iex"
+    alpaca_crypto_data_ws_url: str = "wss://stream.data.alpaca.markets/v1beta3/crypto/us"
     fmp_api_key: str = ""
     tiingo_api_key: str = ""
 

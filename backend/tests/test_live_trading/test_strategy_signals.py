@@ -7,8 +7,10 @@ import pytest
 from features.live_trading.strategy_signals import (
     MIN_BARS_REQUIRED,
     _build_dataframe,
+    _build_signal_timeline,
     _compute_key_indicator,
     _determine_signal,
+    _determine_signal_at_index,
     _run_single_strategy,
     _run_strategy_full,
     compute_strategy_signals,
@@ -40,8 +42,15 @@ class TestBuildDataframe:
     def test_converts_bars_to_dataframe(self):
         bars = _make_bars(5)
         df = _build_dataframe(bars)
-        assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+        assert list(df.columns) == ["time", "open", "high", "low", "close", "volume"]
         assert len(df) == 5
+
+    def test_includes_bar_start_timestamp(self):
+        from datetime import datetime, timezone
+        bar = _make_bar()
+        bar.bar_start = datetime(2026, 5, 14, 12, 0, tzinfo=timezone.utc)
+        df = _build_dataframe([bar])
+        assert "2026-05-14" in df["time"].iloc[0]
 
     def test_columns_are_lowercase(self):
         bars = _make_bars(3)
@@ -122,22 +131,55 @@ class TestComputeKeyIndicator:
             assert 0.0 <= value <= 1.0
 
 
+class TestDetermineSignalAtIndex:
+    def test_buy_at_index_when_entry_true(self):
+        entries = pd.Series([False, True, False])
+        exits = pd.Series([False, False, True])
+        assert _determine_signal_at_index(entries, exits, 1) == "BUY"
+
+    def test_sell_at_index_when_exit_true(self):
+        entries = pd.Series([False, False, False])
+        exits = pd.Series([False, False, True])
+        assert _determine_signal_at_index(entries, exits, 2) == "SELL"
+
+
+class TestBuildSignalTimeline:
+    def test_returns_sliced_timeline_with_chart_signals(self):
+        df = _build_dataframe(_make_bars(60))
+        entries = pd.Series([False] * 59 + [True])
+        exits = pd.Series([False] * 60)
+        timeline = _build_signal_timeline(df, entries, exits, timeline_bars=10)
+        assert len(timeline) == 10
+        assert timeline[-1]["signal"] == "Buy"
+        assert "time" in timeline[0]
+
+
 class TestRunStrategyFull:
-    def test_returns_four_tuple(self):
+    def test_returns_five_tuple(self):
         df = _build_dataframe(_make_bars(60))
         result = _run_strategy_full("rsi", df)
-        assert len(result) == 4
-        signal, ind_val, ind_label, params = result
+        assert len(result) == 5
+        signal, ind_val, ind_label, params, timeline = result
         assert signal in ("BUY", "SELL", "NEUTRAL")
         assert ind_label == "RSI"
         assert "period" in params
+        assert timeline == []
+
+    def test_include_timeline_populates_points(self):
+        df = _build_dataframe(_make_bars(60))
+        _, _, _, _, timeline = _run_strategy_full(
+            "rsi", df, include_timeline=True, timeline_bars=20,
+        )
+        assert len(timeline) == 20
+        assert timeline[-1]["signal"] in ("Buy", "Sell", "Neutral")
 
     def test_unknown_strategy_returns_neutral_with_no_indicator(self):
         df = _build_dataframe(_make_bars(10))
-        signal, ind_val, ind_label, params = _run_strategy_full("nonexistent", df)
+        signal, ind_val, ind_label, params, timeline = _run_strategy_full("nonexistent", df)
         assert signal == "NEUTRAL"
         assert ind_val is None
         assert ind_label is None
+        assert timeline == []
 
 
 class TestComputeStrategySignals:
@@ -190,3 +232,18 @@ class TestComputeStrategySignals:
         results = compute_strategy_signals(bars, "AAPL")
         for r in results:
             assert isinstance(r.params, dict)
+
+    def test_include_timeline_adds_signal_timeline(self):
+        bars = _make_bars(60)
+        results = compute_strategy_signals(
+            bars, "AAPL", include_timeline=True, timeline_bars=30,
+        )
+        rsi = next(r for r in results if r.strategy == "rsi")
+        assert len(rsi.signal_timeline) == 30
+        assert rsi.signal_timeline[-1]["signal"] in ("Buy", "Sell", "Neutral")
+
+    def test_without_timeline_flag_timeline_empty(self):
+        bars = _make_bars(60)
+        results = compute_strategy_signals(bars, "AAPL")
+        for r in results:
+            assert r.signal_timeline == []

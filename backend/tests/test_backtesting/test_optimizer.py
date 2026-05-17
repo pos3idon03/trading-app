@@ -1,13 +1,18 @@
 """Tests for walk-forward optimizer: param generation, splitting, and full optimization run."""
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from features.backtesting.optimizer import (
+    NO_FEASIBLE_MSG,
+    _select_best_combo,
     generate_param_combinations,
     split_timeseries,
     walk_forward_optimize,
 )
+from features.backtesting.runner import BacktestResult
 
 
 # ---------------------------------------------------------------------------
@@ -171,3 +176,54 @@ class TestWalkForwardOptimize:
         )
         assert result.best_params["rv_window"] in [10, 20]
         assert isinstance(result.best_sharpe, float)
+
+
+class TestDrawdownCapSelection:
+    def test_select_best_combo_respects_cap(self):
+        avg_scores = {0: 2.5, 1: 1.2}
+        avg_drawdowns = {0: -0.35, 1: -0.15}
+        combo_scores = {0: [2.5], 1: [1.2]}
+        best = _select_best_combo(avg_scores, avg_drawdowns, combo_scores, -0.25)
+        assert best == 1
+
+    def test_select_best_combo_without_cap_picks_highest_metric(self):
+        avg_scores = {0: 2.5, 1: 1.2}
+        avg_drawdowns = {0: -0.35, 1: -0.15}
+        combo_scores = {0: [2.5], 1: [1.2]}
+        best = _select_best_combo(avg_scores, avg_drawdowns, combo_scores, None)
+        assert best == 0
+
+    def test_no_feasible_raises(self):
+        avg_scores = {0: 2.5}
+        avg_drawdowns = {0: -0.50}
+        combo_scores = {0: [2.5]}
+        with pytest.raises(ValueError, match=NO_FEASIBLE_MSG):
+            _select_best_combo(avg_scores, avg_drawdowns, combo_scores, -0.25)
+
+
+class TestWalkForwardDrawdownCapIntegration:
+    def _bt(self, sortino: float, drawdown: float) -> BacktestResult:
+        return BacktestResult(
+            metrics={"sortino_ratio": sortino, "max_drawdown": drawdown},
+            equity_curve=[],
+            trade_log=[],
+            buy_hold_curve=[],
+            indicator_series=[],
+            duration_ms=1.0,
+        )
+
+    def test_all_results_include_avg_drawdown(self):
+        df = _make_price_df(300)
+        with patch(
+            "features.backtesting.optimizer.run_backtest",
+            return_value=self._bt(1.5, -0.10),
+        ):
+            result = walk_forward_optimize(
+                df,
+                strategy="ma_crossover",
+                param_grid={"fast_window": [5, 10]},
+                n_splits=2,
+                optimize_metric="sortino_ratio",
+            )
+        assert all("avg_oos_max_drawdown" in row for row in result.all_results)
+        assert result.best_avg_oos_max_drawdown is not None

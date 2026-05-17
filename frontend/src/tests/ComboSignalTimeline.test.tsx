@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { ComboSignalTimeline } from '../components/ComboSignalTimeline';
+import { attachedSignalsToTimelineStrategies, ComboSignalTimeline } from '../components/ComboSignalTimeline';
 import type { ComboStrategySignal } from '../api/types';
 
 function makeStrategy(
@@ -105,5 +105,19 @@ describe('ComboSignalTimeline', () => {
   it('accepts syncId prop without crashing', () => {
     render(<ComboSignalTimeline strategies={TWO_STRATEGIES} syncId="test-sync" />);
     expect(screen.getByText(/Signal Agreement Timeline/i)).toBeInTheDocument();
+  });
+
+  it('attachedSignalsToTimelineStrategies maps execution monitor rows', () => {
+    const strategies = attachedSignalsToTimelineStrategies([
+      {
+        strategy: 'rsi',
+        label: 'rsi',
+        signal: 'BUY',
+        signalTimeline: [{ time: '2026-05-14T12:00:00Z', signal: 'Buy' }],
+      },
+    ]);
+    expect(strategies).toHaveLength(1);
+    expect(strategies[0].strategy_name).toBe('rsi');
+    expect(strategies[0].signal_timeline).toHaveLength(1);
   });
 });

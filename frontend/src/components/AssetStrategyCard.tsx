@@ -485,7 +485,7 @@ function AlgoStrategiesSection({
 function Section({
   title,
   children,
-  defaultOpen = true,
+  defaultOpen = false,
 }: {
   title: string;
   children: React.ReactNode;
@@ -553,6 +553,9 @@ export default function AssetStrategyCard({ strategy, onRemove, onUpdated }: Pro
   // Auto-trading toggle
   const [autoEnabled, setAutoEnabled] = useState(strategy.auto_trading_enabled);
   const [togglingAuto, setTogglingAuto] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const bodyId = `strategy-card-body-${strategy.id}`;
 
   useEffect(() => {
     strategyBuilderApi
@@ -660,10 +663,21 @@ export default function AssetStrategyCard({ strategy, onRemove, onUpdated }: Pro
       {/* Card header */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-3">
-          <span className="text-brand-500 font-bold text-base">{strategy.symbol}</span>
-          {strategy.asset_name && (
-            <span className="text-slate-400 text-sm">{strategy.asset_name}</span>
-          )}
+          <button
+            type="button"
+            onClick={() => setExpanded((e) => !e)}
+            className="flex items-center gap-2 text-left min-w-0"
+            aria-expanded={expanded}
+            aria-controls={bodyId}
+            aria-label={expanded ? 'Collapse strategy details' : 'Expand strategy details'}
+          >
+            <span className="text-slate-500 text-xs shrink-0">{expanded ? '▲' : '▼'}</span>
+            <span className="text-brand-500 font-bold text-base">{strategy.symbol}</span>
+            {strategy.asset_name && (
+              <span className="text-slate-400 text-sm truncate">{strategy.asset_name}</span>
+            )}
+          </button>
+          {!expanded && loading && <Spinner size="sm" />}
         </div>
 
         <div className="flex items-center gap-3">
@@ -702,15 +716,17 @@ export default function AssetStrategyCard({ strategy, onRemove, onUpdated }: Pro
 
       {loadError && <ErrorAlert message={loadError} />}
 
-      {loading && (
-        <div className="flex justify-center py-6">
-          <Spinner />
-        </div>
-      )}
+      {expanded && (
+        <div id={bodyId} className="space-y-3">
+          {loading && (
+            <div className="flex justify-center py-6">
+              <Spinner />
+            </div>
+          )}
 
-      {data && (
-        <>
-          <Section title="Monte Carlo (Merton Jump-Diffusion)">
+          {data && (
+            <>
+              <Section title="Monte Carlo (Merton Jump-Diffusion)">
             <MonteCarloSection
               data={data.monte_carlo}
               error={data.monte_carlo_error}
@@ -784,7 +800,9 @@ export default function AssetStrategyCard({ strategy, onRemove, onUpdated }: Pro
               </button>
             </div>
           </div>
-        </>
+            </>
+          )}
+        </div>
       )}
     </div>
   );

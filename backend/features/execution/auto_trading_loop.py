@@ -15,10 +15,13 @@ from dal.execution_dal import create_order, update_order_status
 from dal.market_data_dal import get_asset_id_by_symbol, get_ohlcv
 from dal.strategy_builder_dal import get_linked_algos, list_auto_trading_assets
 from features.execution.broker_client import has_position
+from features.execution.order_sync import parse_filled_at, wait_for_order_terminal
 from features.execution.order_manager import (
     execute_order_plan,
     plan_order_from_signal,
+    qty_decimals_for_asset_type,
 )
+from features.execution.symbol_resolver import _looks_like_yfinance_crypto_pair
 from features.execution.portfolio_tracker import sync_portfolio
 from features.execution.risk_manager import get_risk_manager
 from features.execution.symbol_resolver import to_alpaca_symbol
@@ -292,7 +295,19 @@ async def _execute_for_asset(
     )
 
     portfolio = sync_portfolio()
-    plan = plan_order_from_signal(signal, portfolio, current_price)
+    asset_type = asset.get("asset_type") or "stock"
+    decimals = qty_decimals_for_asset_type(asset_type)
+    if asset_type != "crypto" and _looks_like_yfinance_crypto_pair(yf_symbol):
+        decimals = qty_decimals_for_asset_type("crypto")
+
+    plan = plan_order_from_signal(
+        signal,
+        portfolio,
+        current_price,
+        max_amount_per_position=asset.get("max_amount_per_position"),
+        max_pct_of_capital=asset.get("max_pct_of_capital"),
+        qty_decimals=decimals,
+    )
     if plan is None:
         logger.info("no_order_plan", symbol=asset["symbol"], action=action)
         return
@@ -314,6 +329,9 @@ async def _execute_for_asset(
         )
         return
 
+    if order_result.order_id:
+        order_result = wait_for_order_terminal(order_result.order_id, order_result)
+
     await update_order_status(
         session,
         order_id,
@@ -321,6 +339,7 @@ async def _execute_for_asset(
         alpaca_order_id=order_result.order_id,
         filled_price=order_result.filled_price,
         filled_qty=order_result.filled_qty,
+        filled_at=parse_filled_at(order_result),
     )
     logger.info(
         "auto_trade_executed",

@@ -149,6 +149,8 @@ export interface OptimizationRequest {
   n_splits?: number;
   optimize_metric?: string;
   initial_capital?: number;
+  /** Worst allowed avg OOS max drawdown (negative decimal, e.g. -0.25). */
+  max_drawdown_cap?: number;
 }
 
 export type CombinationMode = 'and' | 'majority' | 'weighted';
@@ -175,6 +177,7 @@ export interface ComboBacktestRequest {
 export interface OptimizationSummary {
   params: Record<string, number>;
   avg_oos_metric: number;
+  avg_oos_max_drawdown?: number | null;
 }
 
 export interface OptimizationResponse {
@@ -186,7 +189,9 @@ export interface OptimizationResponse {
   n_splits?: number;
   best_params?: Record<string, number>;
   best_metric?: number;
+  best_avg_oos_max_drawdown?: number | null;
   all_results?: OptimizationSummary[];
+  full_period_metrics?: BacktestMetrics;
   duration_ms?: number;
   error_message?: string;
 }
@@ -247,6 +252,8 @@ export interface StreamStartRequest {
 
 export interface StreamStatusResponse {
   connected: boolean;
+  stock_connected?: boolean;
+  crypto_connected?: boolean;
   subscribed_symbols: string[];
   last_tick_at: string | null;
   error: string | null;
@@ -298,6 +305,7 @@ export interface LiveStrategySignalItem {
   indicator_value: number | null;
   indicator_label: string | null;
   params: Record<string, unknown> | null;
+  signal_timeline?: SignalPoint[];
 }
 
 export interface StrategySignalsResponse {
@@ -513,6 +521,7 @@ export interface ComboStrategySignal {
   trade_log: TradeRecord[];
   indicator_series: Record<string, string | number | null>[];
   equity_curve: { time: string; value: number }[];
+  buy_hold_curve?: { time: string; value: number }[];
   signal_timeline: SignalPoint[];
 }
 
@@ -595,6 +604,7 @@ export interface AutoTradingAssetRow {
   asset_id: number;
   symbol: string;
   asset_name: string | null;
+  asset_type: string;
   // Latest MC value
   mc_prob_positive: number | null;
   // MC thresholds
@@ -738,6 +748,7 @@ export interface AttachedAlgoSignal {
   indicatorValue?: number | null;
   indicatorLabel?: string | null;
   params?: Record<string, unknown> | null;
+  signalTimeline?: SignalPoint[];
 }
 
 export interface ComboGroupSignal {
@@ -747,10 +758,26 @@ export interface ComboGroupSignal {
   signal: CriteriaSignal;
 }
 
+/** Indicator fields carried on execution monitors for activity logging. */
+export type ExecutionIndicatorSnapshot = Pick<
+  IndicatorSnapshotResponse,
+  | 'close_price'
+  | 'rsi'
+  | 'macd'
+  | 'macd_signal'
+  | 'macd_histogram'
+  | 'bb_upper'
+  | 'bb_middle'
+  | 'bb_lower'
+  | 'vwap'
+  | 'bb_percent'
+>;
+
 export interface ExecutionAssetMonitor {
   strategyId: number;
   symbol: string;
   assetName: string | null;
+  assetType: string;
   combinationMode: 'all' | 'majority' | 'any';
   algoTimeframe: AlgoTimeframe;
   // Live criteria snapshot (from AutoTradingAssetRow values + thresholds)
@@ -764,8 +791,13 @@ export interface ExecutionAssetMonitor {
   // Latest price
   latestPrice: number | null;
   priceUpdatedAt: string | null;
+  /** ISO timestamp when indicators/strategy signals were last fetched for this asset. */
+  lastLivePollAt: string | null;
+  indicatorSnapshot: ExecutionIndicatorSnapshot | null;
   // Transactions
   orders: OrderItem[];
+  ordersTotal: number;
+  ordersPage: number;
   // Loading / error state
   loading: boolean;
   error: string | null;

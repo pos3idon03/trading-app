@@ -53,6 +53,42 @@ class TestOrderHistoryEndpoint:
         assert data["orders"] == []
         assert data["total"] == 0
 
+    @patch("routes.execution.refresh_open_orders_from_alpaca", new_callable=AsyncMock)
+    @patch("routes.execution.execution_dal")
+    def test_paginated_history(self, mock_dal, _mock_refresh):
+        mock_order = MagicMock(
+            id=11,
+            asset_id=1,
+            symbol="BTCUSD",
+            side="buy",
+            qty=0.1,
+            order_type="market",
+            limit_price=None,
+            stop_price=None,
+            status="filled",
+            alpaca_order_id="alp-11",
+            filled_price=100.0,
+            filled_qty=0.1,
+            filled_at=None,
+            signal_id=None,
+            error_message=None,
+            created_at=None,
+            updated_at=None,
+        )
+        mock_dal.get_order_history = AsyncMock(return_value=([mock_order], 25))
+
+        response = client.get("/api/v1/execution/orders?limit=10&offset=10")
+
+        assert response.status_code == 200
+        mock_dal.get_order_history.assert_awaited_once()
+        call_kwargs = mock_dal.get_order_history.await_args.kwargs
+        assert call_kwargs["limit"] == 10
+        assert call_kwargs["offset"] == 10
+        data = response.json()
+        assert data["total"] == 25
+        assert len(data["orders"]) == 1
+        assert data["orders"][0]["id"] == 11
+
 
 class TestPortfolioEndpoint:
     @patch("routes.execution.get_portfolio_summary")

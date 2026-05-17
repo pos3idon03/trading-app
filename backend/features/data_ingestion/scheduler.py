@@ -60,9 +60,15 @@ async def _tiingo_5m_ingest_job() -> None:
 
             logger.info("tiingo_5m_job_starting", asset_count=len(active_symbols))
             results = []
-            for symbol in active_symbols:
+            for asset in assets:
+                if not asset.get("is_active", True):
+                    continue
+                symbol = asset["symbol"]
+                asset_type = asset.get("asset_type") or "stock"
                 try:
-                    result = await ingest_tiingo_5m_for_symbol(session, symbol)
+                    result = await ingest_tiingo_5m_for_symbol(
+                        session, symbol, asset_type=asset_type
+                    )
                     results.append({**result, "status": "ok"})
                 except Exception as exc:
                     logger.error("tiingo_5m_symbol_error", symbol=symbol, error=str(exc))

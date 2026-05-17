@@ -11,6 +11,8 @@ skip order submission gracefully.
 """
 from __future__ import annotations
 
+import re
+
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -27,6 +29,8 @@ _CRYPTO_QUOTE_SUFFIXES = frozenset({
     "INR", "KRW", "TRY", "BRL", "MXN", "HKD", "NOK", "SEK", "NZD", "PLN",
     "ZAR", "SGD", "CNY", "BTC", "ETH", "DAI", "BUSD",
 })
+
+_ALPACA_COMPACT_CRYPTO = re.compile(r"^([A-Z0-9]{2,})(USD|USDT)$")
 
 
 def _looks_like_yfinance_crypto_pair(symbol: str) -> bool:
@@ -76,6 +80,28 @@ def to_alpaca_symbol(yf_symbol: str, asset_type: str) -> str | None:
         reason="unknown_asset_type",
     )
     return None
+
+
+def canonical_alpaca_symbol(symbol: str) -> str:
+    """Normalize broker position/order symbols to a single canonical form.
+
+    BTCUSD and BTC/USD both become BTC/USD; equities pass through unchanged.
+    """
+    if not symbol:
+        return symbol
+
+    upper = symbol.upper()
+    if "/" in upper:
+        return upper.replace("-", "/")
+
+    if "-" in upper and _looks_like_yfinance_crypto_pair(upper):
+        return upper.replace("-", "/")
+
+    match = _ALPACA_COMPACT_CRYPTO.match(upper)
+    if match:
+        return f"{match.group(1)}/{match.group(2)}"
+
+    return upper
 
 
 def _normalize_crypto(yf_symbol: str) -> str:

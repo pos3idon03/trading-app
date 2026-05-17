@@ -42,6 +42,7 @@ describe('BacktestResultCard', () => {
       metrics: {
         total_return: 0.25,
         sharpe_ratio: 1.5,
+        sortino_ratio: 1.8,
         max_drawdown: -0.1,
         win_rate: 0.6,
         profit_factor: 1.8,
@@ -52,7 +53,10 @@ describe('BacktestResultCard', () => {
     expect(screen.getByText('Total Return')).toBeInTheDocument();
     expect(screen.getByText('25.00%')).toBeInTheDocument();
     expect(screen.getByText('Sharpe Ratio')).toBeInTheDocument();
+    expect(screen.getByText('Sortino Ratio')).toBeInTheDocument();
     expect(screen.getByText('1.500')).toBeInTheDocument();
+    expect(screen.getByText('1.800')).toBeInTheDocument();
+    expect(screen.getByRole('meter', { name: /Sortino Ratio/i })).toBeInTheDocument();
     expect(screen.getByText('1.80')).toBeInTheDocument();
     expect(screen.getByRole('meter', { name: /Sharpe Ratio/i })).toBeInTheDocument();
     expect(screen.getByRole('meter', { name: /Profit Factor/i })).toBeInTheDocument();

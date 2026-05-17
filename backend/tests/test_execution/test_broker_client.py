@@ -98,6 +98,23 @@ class TestCancelOrder:
 
 class TestGetPositions:
     @patch("features.execution.broker_client._get_trading_client")
+    def test_crypto_position_symbol_canonicalized(self, mock_client):
+        pos = MagicMock()
+        pos.symbol = "BTCUSD"
+        pos.qty = 0.99
+        pos.market_value = 78000.0
+        pos.avg_entry_price = 75000.0
+        pos.current_price = 78000.0
+        pos.unrealized_pl = -200.0
+        pos.unrealized_plpc = -0.01
+
+        mock_client.return_value.get_all_positions.return_value = [pos]
+
+        positions = get_positions()
+        assert len(positions) == 1
+        assert positions[0].symbol == "BTC/USD"
+
+    @patch("features.execution.broker_client._get_trading_client")
     def test_returns_positions(self, mock_client):
         pos = MagicMock()
         pos.symbol = "AAPL"
@@ -174,6 +191,20 @@ class TestHasPosition:
     def test_returns_false_when_qty_is_zero(self, mock_get):
         mock_get.return_value = [self._make_position("BTC/USD", 0.0)]
         assert has_position("BTC/USD") is False
+
+    @patch("features.execution.broker_client._get_trading_client")
+    def test_has_position_after_btcusd_canonicalization(self, mock_client):
+        pos = MagicMock()
+        pos.symbol = "BTCUSD"
+        pos.qty = 0.99
+        pos.market_value = 78000.0
+        pos.avg_entry_price = 75000.0
+        pos.current_price = 78000.0
+        pos.unrealized_pl = 0.0
+        pos.unrealized_plpc = 0.0
+        mock_client.return_value.get_all_positions.return_value = [pos]
+
+        assert has_position("BTC/USD") is True
 
     @patch("features.execution.broker_client.get_positions")
     def test_matches_exact_symbol(self, mock_get):

@@ -6,8 +6,10 @@ import pytest
 from features.execution.order_manager import (
     OrderPlan,
     _calculate_position_size,
+    compute_buy_notional_usd,
     execute_order_plan,
     plan_order_from_signal,
+    qty_from_notional,
 )
 from features.execution.risk_manager import PortfolioState, RiskCheckResult
 from features.live_trading.signal_aggregator import AggregatedSignal
@@ -35,6 +37,43 @@ def _make_portfolio(equity=100_000.0, position_values=None, position_quantities=
         position_quantities=position_quantities or {},
         total_exposure=sum((position_values or {}).values()),
     )
+
+
+class TestComputeBuyNotionalUsd:
+    def test_legacy_equity_fraction(self):
+        notional = compute_buy_notional_usd(
+            100_000, 50_000, 0.75, position_fraction=0.02,
+        )
+        assert notional == pytest.approx(1500.0)
+
+    def test_amount_only_capped_by_cash(self):
+        notional = compute_buy_notional_usd(
+            100_000, 500, 0.75, max_amount_per_position=200.0,
+        )
+        assert notional == 200.0
+
+    def test_pct_only_uses_cash(self):
+        notional = compute_buy_notional_usd(
+            100_000, 20_000, 0.75, max_pct_of_capital=1.0,
+        )
+        assert notional == 200.0
+
+    def test_both_takes_minimum(self):
+        notional = compute_buy_notional_usd(
+            100_000, 20_000, 0.75,
+            max_amount_per_position=200.0,
+            max_pct_of_capital=10.0,
+        )
+        assert notional == 200.0
+
+    def test_zero_cash_returns_zero(self):
+        assert compute_buy_notional_usd(100_000, 0, 0.75, max_amount_per_position=200.0) == 0.0
+
+
+class TestQtyFromNotional:
+    def test_crypto_precision(self):
+        qty = qty_from_notional(80_000.0, 200.0, 8)
+        assert qty == pytest.approx(0.0025, rel=1e-8)
 
 
 class TestCalculatePositionSize:
@@ -87,6 +126,29 @@ class TestPlanOrderFromSignal:
         portfolio = _make_portfolio()
         plan = plan_order_from_signal(signal, portfolio, 150.0)
         assert plan is None
+
+    def test_buy_with_max_amount(self):
+        signal = _make_signal(action="BUY", confidence=0.75)
+        portfolio = _make_portfolio(equity=100_000.0)
+        portfolio.cash = 20_000.0
+        plan = plan_order_from_signal(
+            signal, portfolio, 80_000.0,
+            max_amount_per_position=200.0,
+            qty_decimals=8,
+        )
+        assert plan is not None
+        assert plan.qty == pytest.approx(0.0025, rel=1e-8)
+
+    def test_buy_with_max_pct_only(self):
+        signal = _make_signal(action="BUY", confidence=0.75)
+        portfolio = _make_portfolio(equity=100_000.0)
+        portfolio.cash = 10_000.0
+        plan = plan_order_from_signal(
+            signal, portfolio, 50.0,
+            max_pct_of_capital=1.0,
+        )
+        assert plan is not None
+        assert plan.qty == pytest.approx(2.0)
 
 
 class TestExecuteOrderPlan:

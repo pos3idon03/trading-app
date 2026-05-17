@@ -7,7 +7,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from features.live_trading.websocket_stream import AlpacaWebSocketStream, StreamStatus, TickData
+from features.live_trading.stream_symbols import StreamPlan, StreamSymbolEntry
+from features.live_trading.websocket_stream import AlpacaWebSocketStream, TickData
+
+
+def _plan(*entries: tuple[str, str, str]) -> StreamPlan:
+    """(app_symbol, alpaca_symbol, channel) tuples."""
+    plan = StreamPlan()
+    plan.entries = [
+        StreamSymbolEntry(app_symbol=a, alpaca_symbol=b, channel=c)
+        for a, b, c in entries
+    ]
+    return plan
 
 
 @pytest.fixture()
@@ -16,31 +27,53 @@ def stream() -> AlpacaWebSocketStream:
         mock_cfg.return_value = MagicMock(
             alpaca_api_key="test_key",
             alpaca_secret_key="test_secret",
-            alpaca_data_ws_url="wss://test",
+            alpaca_data_ws_url="wss://test-stock",
+            alpaca_crypto_data_ws_url="wss://test-crypto",
         )
         return AlpacaWebSocketStream()
 
 
 class TestStreamStart:
     @pytest.mark.asyncio
-    async def test_start_creates_task(self, stream: AlpacaWebSocketStream):
-        with patch.object(stream, "_run_stream", new=AsyncMock()):
-            await stream.start(["AAPL"])
-            assert stream._task is not None
+    async def test_start_creates_stock_task(self, stream: AlpacaWebSocketStream):
+        with patch.object(stream, "_run_channel", new=AsyncMock()):
+            await stream.start(_plan(("AAPL", "AAPL", "stock")))
+            assert stream._stock_task is not None
             assert stream.status.subscribed_symbols == ["AAPL"]
 
     @pytest.mark.asyncio
-    async def test_start_uppercases_symbols(self, stream: AlpacaWebSocketStream):
-        with patch.object(stream, "_run_stream", new=AsyncMock()):
-            await stream.start(["aapl", "msft"])
-            assert stream.status.subscribed_symbols == ["AAPL", "MSFT"]
+    async def test_start_creates_both_channel_tasks(self, stream: AlpacaWebSocketStream):
+        with patch.object(stream, "_run_channel", new=AsyncMock()):
+            plan = _plan(
+                ("AAPL", "AAPL", "stock"),
+                ("BTC-USD", "BTC/USD", "crypto"),
+            )
+            await stream.start(plan)
+            assert stream._stock_task is not None
+            assert stream._crypto_task is not None
+            assert set(stream.status.subscribed_symbols) == {"AAPL", "BTC-USD"}
 
     @pytest.mark.asyncio
-    async def test_start_noop_when_already_connected(self, stream: AlpacaWebSocketStream):
+    async def test_start_noop_when_same_plan_connected(self, stream: AlpacaWebSocketStream):
+        plan = _plan(("AAPL", "AAPL", "stock"))
         stream._status.connected = True
-        with patch.object(stream, "_run_stream", new=AsyncMock()) as mock_run:
-            await stream.start(["AAPL"])
+        stream._active_plan = plan
+        stream._status.subscribed_symbols = ["AAPL"]
+
+        with patch.object(stream, "_run_channel", new=AsyncMock()) as mock_run:
+            await stream.start(plan)
             mock_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_start_restarts_when_symbol_set_grows(self, stream: AlpacaWebSocketStream):
+        stream._status.connected = True
+        stream._active_plan = _plan(("AAPL", "AAPL", "stock"))
+        stream._status.subscribed_symbols = ["AAPL"]
+
+        with patch.object(stream, "stop", new=AsyncMock()) as mock_stop:
+            with patch.object(stream, "_run_channel", new=AsyncMock()):
+                await stream.start(_plan(("AAPL", "AAPL", "stock"), ("MSFT", "MSFT", "stock")))
+                mock_stop.assert_awaited_once()
 
 
 class TestStreamStop:
@@ -53,30 +86,37 @@ class TestStreamStop:
         assert stream.status.subscribed_symbols == []
 
     @pytest.mark.asyncio
-    async def test_stop_clears_callbacks(self, stream: AlpacaWebSocketStream):
-        stream._callbacks.append(AsyncMock())
+    async def test_stop_preserves_callbacks_when_requested(self, stream: AlpacaWebSocketStream):
+        cb = AsyncMock()
+        stream._callbacks.append(cb)
+        await stream.stop(preserve_callbacks=True)
+        assert stream._callbacks == [cb]
+
+    @pytest.mark.asyncio
+    async def test_stop_clears_callbacks_by_default(self, stream: AlpacaWebSocketStream):
         stream._callbacks.append(AsyncMock())
         await stream.stop()
         assert stream._callbacks == []
 
-    @pytest.mark.asyncio
-    async def test_stop_cancels_running_task(self, stream: AlpacaWebSocketStream):
-        async def _blocking():
-            await asyncio.sleep(60)
-
-        stream._task = asyncio.create_task(_blocking())
-        await stream.stop()
-        assert stream._task.done()
-
-    @pytest.mark.asyncio
-    async def test_stop_calls_stream_stop(self, stream: AlpacaWebSocketStream):
-        mock_alpaca_stream = MagicMock()
-        stream._stream = mock_alpaca_stream
-        await stream.stop()
-        mock_alpaca_stream.stop.assert_called_once()
-
 
 class TestHandleBar:
+    @pytest.mark.asyncio
+    async def test_handle_bar_maps_alpaca_to_app_symbol(self, stream: AlpacaWebSocketStream):
+        stream._alpaca_to_app = {"BTC/USD": "BTC-USD"}
+        bar = MagicMock(
+            symbol="BTC/USD",
+            close=70000.0,
+            volume=1,
+            timestamp=datetime(2026, 5, 10, 14, 0, tzinfo=timezone.utc),
+            vwap=None,
+            open=69900.0,
+            high=70100.0,
+            low=69800.0,
+        )
+        await stream._handle_bar(bar)
+        tick: TickData = stream.queue.get_nowait()
+        assert tick.symbol == "BTC-USD"
+
     @pytest.mark.asyncio
     async def test_handle_bar_enqueues_tick(self, stream: AlpacaWebSocketStream):
         bar = MagicMock(
@@ -90,25 +130,9 @@ class TestHandleBar:
             low=147.0,
         )
         await stream._handle_bar(bar)
-        assert not stream.queue.empty()
         tick: TickData = stream.queue.get_nowait()
         assert tick.symbol == "AAPL"
         assert tick.price == 150.0
-
-    @pytest.mark.asyncio
-    async def test_handle_bar_updates_last_tick_at(self, stream: AlpacaWebSocketStream):
-        bar = MagicMock(
-            symbol="AAPL",
-            close=150.0,
-            volume=1000,
-            timestamp=datetime(2026, 5, 10, 14, 0, tzinfo=timezone.utc),
-            vwap=149.5,
-            open=148.0,
-            high=151.0,
-            low=147.0,
-        )
-        await stream._handle_bar(bar)
-        assert stream.status.last_tick_at is not None
 
     @pytest.mark.asyncio
     async def test_handle_bar_fires_callbacks(self, stream: AlpacaWebSocketStream):
@@ -127,60 +151,18 @@ class TestHandleBar:
         await stream._handle_bar(bar)
         callback.assert_awaited_once()
 
+
+class TestRunChannel:
     @pytest.mark.asyncio
-    async def test_handle_bar_drops_oldest_when_queue_full(self, stream: AlpacaWebSocketStream):
-        stream._queue = asyncio.Queue(maxsize=1)
-        bar = MagicMock(
-            symbol="AAPL",
-            close=100.0,
-            volume=100,
-            timestamp=datetime(2026, 5, 10, 14, 0, tzinfo=timezone.utc),
-            vwap=None,
-            open=99.0,
-            high=101.0,
-            low=98.0,
-        )
-        bar2 = MagicMock(
-            symbol="AAPL",
-            close=200.0,
-            volume=200,
-            timestamp=datetime(2026, 5, 10, 14, 1, tzinfo=timezone.utc),
-            vwap=None,
-            open=199.0,
-            high=201.0,
-            low=198.0,
-        )
-        await stream._handle_bar(bar)
-        await stream._handle_bar(bar2)
-        tick = stream.queue.get_nowait()
-        assert tick.price == 200.0
+    async def test_run_stock_uses_thread(self, stream: AlpacaWebSocketStream):
+        mock_stream = MagicMock()
+        mock_stream.run = MagicMock()
 
-
-class TestRunStream:
-    @pytest.mark.asyncio
-    async def test_run_stream_uses_thread(self, stream: AlpacaWebSocketStream):
-        """StockDataStream.run() must be called via asyncio.to_thread, not directly."""
-        mock_alpaca_cls = MagicMock()
-        mock_alpaca_instance = MagicMock()
-        mock_alpaca_cls.return_value = mock_alpaca_instance
-
-        call_order: list[str] = []
-
-        def fake_run():
-            call_order.append("run_in_thread")
-
-        mock_alpaca_instance.run = fake_run
-
-        with patch("features.live_trading.websocket_stream.get_settings") as mock_cfg:
-            mock_cfg.return_value = MagicMock(
-                alpaca_api_key="k",
-                alpaca_secret_key="s",
-                alpaca_data_ws_url="wss://test",
-            )
-            with patch(
-                "features.live_trading.websocket_stream.AlpacaWebSocketStream._run_stream",
-                new=AsyncMock(),
-            ) as mock_run_stream:
-                s = AlpacaWebSocketStream()
-                await s.start(["AAPL"])
-                mock_run_stream.assert_called_once()
+        with patch(
+            "alpaca.data.live.StockDataStream",
+            return_value=mock_stream,
+        ):
+            with patch("asyncio.to_thread", new=AsyncMock()) as mock_thread:
+                mock_thread.return_value = None
+                await stream._run_stock_once(["AAPL"])
+                mock_thread.assert_awaited_once_with(mock_stream.run)

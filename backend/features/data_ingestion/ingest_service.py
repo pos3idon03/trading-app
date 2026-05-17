@@ -12,6 +12,7 @@ from dal.market_data_dal import (
     upsert_asset,
 )
 from dtos.market_data_dto import IngestRequest, OHLCVRecord
+from features.data_ingestion.asset_type_resolver import resolve_asset_type
 from features.data_ingestion.providers import get_provider
 from features.data_ingestion.sanitizer import run_sanitization_pipeline
 from utils.logging import get_logger
@@ -33,8 +34,8 @@ async def ingest_ohlcv_for_symbol(
     """Fetch, sanitize, and persist OHLCV for one symbol+timeframe."""
     symbol = symbol.upper()
     provider = get_provider(provider_name)
-
-    asset_id = await upsert_asset(session, symbol, asset_type="stock")
+    asset_type = await resolve_asset_type(session, symbol)
+    asset_id = await upsert_asset(session, symbol, asset_type=asset_type)
 
     if start is None:
         latest = await get_latest_timestamp(session, asset_id, timeframe)
@@ -79,11 +80,12 @@ async def ingest_fundamentals_for_symbol(
 async def ingest_tiingo_5m_for_symbol(
     session: AsyncSession,
     symbol: str,
+    asset_type: str = "stock",
 ) -> dict:
     """Fetch and persist the last 30 days of 5m Tiingo bars for one symbol (incremental)."""
     symbol = symbol.upper()
     provider = get_provider("tiingo")
-    asset_id = await upsert_asset(session, symbol, asset_type="stock")
+    asset_id = await upsert_asset(session, symbol, asset_type=asset_type)
 
     latest = await get_latest_timestamp(session, asset_id, "5m")
     if latest:
@@ -97,7 +99,9 @@ async def ingest_tiingo_5m_for_symbol(
         logger.info("tiingo_5m_already_up_to_date", symbol=symbol)
         return {"symbol": symbol, "timeframe": "5m", "inserted": 0}
 
-    records = await provider.fetch_ohlcv(symbol, "5m", start, end, asset_id=asset_id)
+    records = await provider.fetch_ohlcv(
+        symbol, "5m", start, end, asset_id=asset_id, asset_type=asset_type
+    )
 
     if not records:
         return {"symbol": symbol, "timeframe": "5m", "inserted": 0}
@@ -132,7 +136,10 @@ async def run_ingest_job(session: AsyncSession, request: IngestRequest) -> list[
 
         if needs_5m_backfill:
             try:
-                result = await ingest_tiingo_5m_for_symbol(session, symbol)
+                asset_type = await resolve_asset_type(session, symbol)
+                result = await ingest_tiingo_5m_for_symbol(
+                    session, symbol, asset_type=asset_type
+                )
                 results.append({**result, "provider": "tiingo", "status": "ok"})
             except Exception as exc:
                 logger.error("tiingo_5m_backfill_failed", symbol=symbol, error=str(exc))

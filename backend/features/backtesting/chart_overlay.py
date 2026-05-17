@@ -1,10 +1,13 @@
 """In-memory chart overlay: run backtest without persisting to the database."""
+from datetime import datetime
+
 import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal.market_data_dal import get_asset_id_by_symbol, get_ohlcv, resample_ohlcv
 from dtos.backtest_dto import VALID_STRATEGIES, BacktestTimeframe
 from features.backtesting.runner import run_backtest
+from features.backtesting.warmup import load_ohlcv_with_warmup, required_warmup_bars
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -29,12 +32,28 @@ async def load_ohlcv_for_overlay(
     timeframe: BacktestTimeframe,
     start=None,
     end=None,
-) -> pd.DataFrame:
-    """Fetch OHLCV rows for the requested slice.
+    strategy_name: str | None = None,
+    strategy_params: dict | None = None,
+    query_args: dict | None = None,
+) -> tuple[pd.DataFrame, datetime | None]:
+    """Fetch OHLCV rows for the requested slice, with optional indicator warm-up."""
+    eval_start = start
+    warmup_bars = 0
+    if strategy_name and start is not None:
+        warmup_bars = required_warmup_bars(strategy_name, strategy_params or {})
 
-    Falls back to resampling from 5m data when no direct rows are stored for
-    the requested timeframe (mirrors the OHLCV chart route behaviour).
-    """
+    if warmup_bars > 0 and start is not None and query_args is not None:
+        df = await load_ohlcv_with_warmup(
+            session,
+            asset_id=asset_id,
+            start=start,
+            end=end,
+            timeframe=timeframe,
+            warmup_bars=warmup_bars,
+            query_args=query_args,
+        )
+        return df, eval_start
+
     df = await get_ohlcv(session, asset_id=asset_id, timeframe=timeframe, start=start, end=end)
     if df.empty:
         df = await resample_ohlcv(session, asset_id, timeframe, start, end)
@@ -44,7 +63,7 @@ async def load_ohlcv_for_overlay(
                 asset_id=asset_id,
                 timeframe=timeframe,
             )
-    return df
+    return df, None
 
 
 def compute_chart_overlay(
@@ -52,6 +71,7 @@ def compute_chart_overlay(
     strategy_name: str,
     strategy_params: dict,
     timeframe: str,
+    evaluation_start: datetime | None = None,
 ) -> dict:
     """Run backtest in-memory and return overlay payload.
 
@@ -66,6 +86,7 @@ def compute_chart_overlay(
         strategy=strategy_name,
         params=strategy_params,
         timeframe=timeframe,
+        evaluation_start=evaluation_start,
     )
     logger.info(
         "chart_overlay_computed",

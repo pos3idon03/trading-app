@@ -6,6 +6,7 @@ Combination uses per-bar **stance** (Buy / Neutral / Sell) per leg:
 """
 import time
 from dataclasses import dataclass
+from datetime import datetime
 
 import pandas as pd
 
@@ -21,6 +22,11 @@ from features.backtesting.stance import (
     build_signal_timeline_from_stance,
     combine_stances,
     compute_strategy_stance,
+)
+from features.backtesting.warmup import (
+    evaluation_mask,
+    slice_time_series_rows,
+    slice_trade_log,
 )
 from utils.logging import get_logger
 
@@ -97,16 +103,25 @@ def run_combo_backtest(
     threshold: float = 0.5,
     initial_capital: float = 100_000.0,
     timeframe: str = "1d",
+    evaluation_start: datetime | None = None,
 ) -> BacktestResult:
     """Execute a combination backtest using vectorbt."""
     import vectorbt as vbt
 
     t0 = time.perf_counter()
 
-    close = df.set_index("time")["close"] if "time" in df.columns else df["close"]
-    close = close.astype(float)
-
     entries, exits = _build_combo_signals(df, strategies, combination_mode, threshold)
+
+    if evaluation_start is not None:
+        mask = evaluation_mask(df, evaluation_start)
+        df_eval = df.loc[mask].reset_index(drop=True)
+        entries = entries.loc[mask].reset_index(drop=True)
+        exits = exits.loc[mask].reset_index(drop=True)
+    else:
+        df_eval = df
+
+    close = df_eval.set_index("time")["close"] if "time" in df_eval.columns else df_eval["close"]
+    close = close.astype(float)
 
     vbt_freq = _TIMEFRAME_TO_VBT_FREQ.get(timeframe, "D")
     portfolio = vbt.Portfolio.from_signals(
@@ -121,7 +136,12 @@ def run_combo_backtest(
 
     equity = portfolio.value()
     returns = portfolio.returns()
-    trades_df = _extract_trades(portfolio)
+    raw_trades = _extract_trades(portfolio)
+    trades_df = (
+        slice_trade_log(raw_trades, evaluation_start)
+        if evaluation_start
+        else raw_trades
+    )
     metrics = compile_all_metrics(returns, equity, trades_df)
 
     equity_curve = [
@@ -162,6 +182,7 @@ class StrategySignalResult:
     trade_log: list[dict]
     indicator_series: list[dict]
     equity_curve: list[dict]
+    buy_hold_curve: list[dict]
     signal_timeline: list[dict]
 
 
@@ -170,6 +191,7 @@ def run_per_strategy_backtests(
     strategies: list[ComboStrategyConfig],
     timeframe: str = "1d",
     initial_capital: float = 100_000.0,
+    evaluation_start: datetime | None = None,
 ) -> list[StrategySignalResult]:
     """Run individual backtests for each combo leg and return per-strategy results."""
     results: list[StrategySignalResult] = []
@@ -180,15 +202,19 @@ def run_per_strategy_backtests(
             params=cfg.strategy_params,
             initial_capital=initial_capital,
             timeframe=timeframe,
+            evaluation_start=evaluation_start,
         )
         stance = compute_strategy_stance(df, cfg.strategy_name, cfg.strategy_params)
         timeline = build_signal_timeline_from_stance(df, stance)
+        if evaluation_start is not None:
+            timeline = slice_time_series_rows(timeline, evaluation_start)
         results.append(
             StrategySignalResult(
                 strategy_name=cfg.strategy_name,
                 trade_log=result.trade_log if isinstance(result.trade_log, list) else [],
                 indicator_series=result.indicator_series or [],
                 equity_curve=result.equity_curve,
+                buy_hold_curve=result.buy_hold_curve,
                 signal_timeline=timeline,
             )
         )

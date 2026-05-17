@@ -1,4 +1,10 @@
 import type { AttachedAlgoSignal, ComboGroupSignal, CriteriaSignal, CriterionEvaluation, ExecutionAssetMonitor, OrderItem } from '../api/types';
+import { TRANSACTIONS_PAGE_SIZE } from '../hooks/useExecutionMonitor';
+import {
+  attachedSignalsToTimelineStrategies,
+  ComboSignalTimeline,
+  isIntradayTimeframe,
+} from './ComboSignalTimeline';
 import { STRATEGIES } from '../constants/strategies';
 
 function resolveStrategyLabel(strategyName: string): string {
@@ -226,7 +232,7 @@ function AlgoStrategiesPanel({
         {standalone.length > 0 && (
           <div className="space-y-1.5">
             {standalone.map((s) => (
-              <AlgoSignalRow key={s.strategy} signal={s} />
+              <AlgoSignalRow key={s.strategy} signal={s} timeframe={timeframe} />
             ))}
           </div>
         )}
@@ -242,6 +248,7 @@ function AlgoStrategiesPanel({
               label={`Combo: ${modeLabel}`}
               childSignals={children}
               comboSignal={comboSig ?? null}
+              timeframe={timeframe}
             />
           );
         })}
@@ -250,15 +257,38 @@ function AlgoStrategiesPanel({
   );
 }
 
+function StrategyTimelineChart({
+  signal,
+  timeframe,
+}: {
+  signal: AttachedAlgoSignal;
+  timeframe: string;
+}) {
+  const strategies = attachedSignalsToTimelineStrategies([signal]);
+  if (strategies.length === 0) return null;
+  return (
+    <ComboSignalTimeline
+      strategies={strategies}
+      compact
+      intraday={isIntradayTimeframe(timeframe)}
+      hideHeader
+    />
+  );
+}
+
 function ComboGroup({
   label,
   childSignals,
   comboSignal,
+  timeframe,
 }: {
   label: string;
   childSignals: AttachedAlgoSignal[];
   comboSignal: ComboGroupSignal | null;
+  timeframe: string;
 }) {
+  const comboTimeline = attachedSignalsToTimelineStrategies(childSignals);
+  const intraday = isIntradayTimeframe(timeframe);
   return (
     <div className="rounded-lg border border-slate-700 overflow-hidden">
       {/* Combo header */}
@@ -266,7 +296,16 @@ function ComboGroup({
         <span className="text-slate-400 text-xs font-semibold uppercase tracking-wide">{label}</span>
         {comboSignal && <SignalBadge signal={comboSignal.signal} />}
       </div>
-      {/* Individual strategy rows */}
+      {comboTimeline.length > 0 && (
+        <div className="px-3 py-2 bg-surface-900 border-b border-slate-800">
+          <ComboSignalTimeline
+            strategies={comboTimeline}
+            syncId={`combo-${label}`}
+            compact
+            intraday={intraday}
+          />
+        </div>
+      )}
       <div className="divide-y divide-slate-800">
         {childSignals.map((s) => (
           <div key={s.strategy} className="bg-surface-900 px-3 py-2">
@@ -275,6 +314,7 @@ function ComboGroup({
               <SignalBadge signal={s.signal} />
             </div>
             <IndicatorHint signal={s} />
+            <StrategyTimelineChart signal={s} timeframe={timeframe} />
           </div>
         ))}
       </div>
@@ -298,7 +338,7 @@ function IndicatorHint({ signal: s }: { signal: AttachedAlgoSignal }) {
   );
 }
 
-function AlgoSignalRow({ signal: s }: { signal: AttachedAlgoSignal }) {
+function AlgoSignalRow({ signal: s, timeframe }: { signal: AttachedAlgoSignal; timeframe: string }) {
   return (
     <div className="bg-surface-900 rounded-lg px-3 py-2 border border-slate-700">
       <div className="flex items-center justify-between">
@@ -306,6 +346,7 @@ function AlgoSignalRow({ signal: s }: { signal: AttachedAlgoSignal }) {
         <SignalBadge signal={s.signal} />
       </div>
       <IndicatorHint signal={s} />
+      <StrategyTimelineChart signal={s} timeframe={timeframe} />
     </div>
   );
 }
@@ -314,17 +355,32 @@ function AlgoSignalRow({ signal: s }: { signal: AttachedAlgoSignal }) {
 // Transactions table
 // ---------------------------------------------------------------------------
 
-function TransactionsTable({ orders }: { orders: OrderItem[] }) {
+function TransactionsTable({
+  orders,
+  ordersTotal,
+  page,
+  onPageChange,
+}: {
+  orders: OrderItem[];
+  ordersTotal: number;
+  page: number;
+  onPageChange: (page: number) => void;
+}) {
+  const totalPages = maxOrdersPage(ordersTotal);
+  const canGoPrev = page > 1;
+  const canGoNext = page * TRANSACTIONS_PAGE_SIZE < ordersTotal;
+
   return (
     <div>
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
-        Transactions ({orders.length})
+        Transactions ({ordersTotal})
       </p>
-      {orders.length === 0 ? (
+      {ordersTotal === 0 ? (
         <p className="text-slate-600 text-xs italic">No orders created by this ruleset yet.</p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+        <>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
             <thead>
               <tr className="text-slate-500 border-b border-slate-700">
                 <th className="text-left py-1.5 pr-3">ID</th>
@@ -341,9 +397,64 @@ function TransactionsTable({ orders }: { orders: OrderItem[] }) {
                 <OrderRow key={o.id} order={o} />
               ))}
             </tbody>
-          </table>
-        </div>
+            </table>
+          </div>
+          {totalPages > 1 && (
+            <TransactionsPagination
+              page={page}
+              totalPages={totalPages}
+              canGoPrev={canGoPrev}
+              canGoNext={canGoNext}
+              onPageChange={onPageChange}
+            />
+          )}
+        </>
       )}
+    </div>
+  );
+}
+
+function maxOrdersPage(total: number): number {
+  if (total <= 0) return 1;
+  return Math.ceil(total / TRANSACTIONS_PAGE_SIZE);
+}
+
+function TransactionsPagination({
+  page,
+  totalPages,
+  canGoPrev,
+  canGoNext,
+  onPageChange,
+}: {
+  page: number;
+  totalPages: number;
+  canGoPrev: boolean;
+  canGoNext: boolean;
+  onPageChange: (page: number) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between mt-2">
+      <span className="text-xs text-slate-500">
+        Page {page} of {totalPages}
+      </span>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          disabled={!canGoPrev}
+          onClick={() => onPageChange(page - 1)}
+          className="px-2 py-1 text-xs rounded border border-slate-700 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-surface-800"
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          disabled={!canGoNext}
+          onClick={() => onPageChange(page + 1)}
+          className="px-2 py-1 text-xs rounded border border-slate-700 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-surface-800"
+        >
+          Next
+        </button>
+      </div>
     </div>
   );
 }
@@ -369,15 +480,20 @@ function OrderRow({ order: o }: { order: OrderItem }) {
 }
 
 function StatusChip({ status }: { status: string }) {
+  const normalized = status.toLowerCase().replace(/\s+/g, '_');
   const colors: Record<string, string> = {
     filled: 'text-green-400',
     partially_filled: 'text-yellow-400',
     cancelled: 'text-slate-500',
+    canceled: 'text-slate-500',
     rejected: 'text-red-400',
     pending: 'text-blue-400',
+    pending_new: 'text-blue-400',
+    accepted: 'text-blue-400',
+    new: 'text-blue-400',
   };
   return (
-    <span className={`font-medium capitalize ${colors[status] ?? 'text-slate-300'}`}>
+    <span className={`font-medium capitalize ${colors[normalized] ?? 'text-slate-300'}`}>
       {status.replace(/_/g, ' ')}
     </span>
   );
@@ -442,9 +558,10 @@ function PriceDisplay({ price, updatedAt }: { price: number | null; updatedAt: s
 
 interface Props {
   monitor: ExecutionAssetMonitor;
+  onOrdersPageChange: (page: number) => void;
 }
 
-export default function ExecutionAssetCard({ monitor }: Props) {
+export default function ExecutionAssetCard({ monitor, onOrdersPageChange }: Props) {
   return (
     <div className="card space-y-4">
       <CardHeader monitor={monitor} />
@@ -471,7 +588,12 @@ export default function ExecutionAssetCard({ monitor }: Props) {
 
       {/* Transactions */}
       <div className="border-t border-slate-700 pt-3">
-        <TransactionsTable orders={monitor.orders} />
+        <TransactionsTable
+          orders={monitor.orders}
+          ordersTotal={monitor.ordersTotal}
+          page={monitor.ordersPage}
+          onPageChange={onOrdersPageChange}
+        />
       </div>
     </div>
   );

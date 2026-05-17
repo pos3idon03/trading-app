@@ -21,6 +21,7 @@ class DataProvider(ABC):
         start: datetime,
         end: datetime,
         asset_id: Optional[int] = None,
+        asset_type: Optional[str] = None,
     ) -> list[OHLCVRecord]:
         ...
 

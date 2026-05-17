@@ -2,240 +2,141 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import LiveTradingPage from '../pages/LiveTradingPage';
+import type { AutoTradingAssetRow } from '../api/types';
+
+const runningAsset: AutoTradingAssetRow = {
+  strategy_id: 1,
+  asset_id: 10,
+  symbol: 'AAPL',
+  asset_name: 'Apple Inc.',
+  asset_type: 'stock',
+  mc_prob_positive: 0.7,
+  mc_buy_prob_positive: 0.65,
+  mc_sell_prob_positive: 0.4,
+  ai_conviction: 0.8,
+  ai_sentiment: 0.3,
+  ai_macro: 0.2,
+  ai_buy_conviction: 0.7,
+  ai_sell_conviction: 0.3,
+  ai_buy_sentiment: 0.2,
+  ai_sell_sentiment: -0.1,
+  ai_buy_macro: 0.1,
+  ai_sell_macro: -0.2,
+  combination_mode: 'all',
+  algo_timeframe: '1h',
+  auto_trading_started: true,
+  max_amount_per_position: null,
+  max_pct_of_capital: null,
+};
 
 vi.mock('../api/endpoints', () => ({
-  dataApi: {
-    getAssets: vi.fn().mockResolvedValue({
-      assets: [
-        { id: 1, symbol: 'AAPL', name: 'Apple Inc.', asset_type: 'stock', exchange: 'NASDAQ', currency: 'USD', is_active: true },
-        { id: 2, symbol: 'MSFT', name: 'Microsoft Corp.', asset_type: 'stock', exchange: 'NASDAQ', currency: 'USD', is_active: true },
-      ],
-      count: 2,
-    }),
-  },
+  autoTradingApi: { list: vi.fn() },
+  executionApi: { getOrders: vi.fn() },
   liveApi: {
-    getStatus: vi.fn().mockResolvedValue({
+    getStatus: vi.fn(),
+    startStream: vi.fn(),
+    getIndicators: vi.fn(),
+    getStrategySignals: vi.fn(),
+  },
+  strategyBuilderApi: { getFull: vi.fn() },
+}));
+
+describe('LiveTradingPage', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { autoTradingApi, executionApi, liveApi, strategyBuilderApi } = await import('../api/endpoints');
+
+    (autoTradingApi.list as ReturnType<typeof vi.fn>).mockResolvedValue([runningAsset]);
+    (executionApi.getOrders as ReturnType<typeof vi.fn>).mockResolvedValue({ orders: [], total: 0 });
+    (liveApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
       connected: false,
+      stock_connected: false,
+      crypto_connected: false,
       subscribed_symbols: [],
       last_tick_at: null,
       error: null,
       reconnect_count: 0,
-    }),
-    startStream: vi.fn().mockResolvedValue({
+    });
+    (liveApi.startStream as ReturnType<typeof vi.fn>).mockResolvedValue({
       connected: true,
+      stock_connected: true,
+      crypto_connected: true,
       subscribed_symbols: ['AAPL'],
       last_tick_at: null,
       error: null,
       reconnect_count: 0,
-    }),
-    stopStream: vi.fn().mockResolvedValue({
-      connected: false,
-      subscribed_symbols: [],
-      last_tick_at: null,
-      error: null,
-      reconnect_count: 0,
-    }),
-    getIndicators: vi.fn().mockResolvedValue({
+    });
+    (liveApi.getIndicators as ReturnType<typeof vi.fn>).mockResolvedValue({
       symbol: 'AAPL',
       timeframe: '1h',
       close_price: 175.5,
-      rsi: 55.2,
-      macd: 0.12,
-      macd_signal: 0.08,
-      macd_histogram: 0.04,
-      bb_upper: 180.0,
-      bb_middle: 175.0,
-      bb_lower: 170.0,
-      vwap: 174.8,
-      bb_percent: 0.55,
-    }),
-    getStrategySignals: vi.fn().mockResolvedValue({
+      created_at: '2026-05-16T12:00:00Z',
+    });
+    (liveApi.getStrategySignals as ReturnType<typeof vi.fn>).mockResolvedValue({
       symbol: 'AAPL',
       timeframe: '1h',
       bar_count: 60,
-      strategies: [
-        { strategy: 'rsi', label: 'RSI (Relative Strength Index)', group: 'Momentum', signal: 'BUY' },
-        { strategy: 'macd', label: 'MACD', group: 'Momentum', signal: 'SELL' },
-        { strategy: 'ma_crossover', label: 'MA Crossover', group: 'Original', signal: 'NEUTRAL' },
-      ],
-    }),
-  },
-}));
-
-describe('LiveTradingPage', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
+      strategies: [],
+    });
+    (strategyBuilderApi.getFull as ReturnType<typeof vi.fn>).mockResolvedValue({ algo_strategies: [] });
   });
 
-  it('renders the page heading', () => {
+  it('renders the page heading and terminal description', () => {
     render(<LiveTradingPage />);
     expect(screen.getByText('Live Trading')).toBeInTheDocument();
+    expect(screen.getByText(/Terminal log of auto-trading activity/i)).toBeInTheDocument();
   });
 
-  it('renders stream control panel', () => {
-    render(<LiveTradingPage />);
-    expect(screen.getByText('Stream Control')).toBeInTheDocument();
-  });
+  it('shows empty state when no auto-trading assets are running', async () => {
+    const { autoTradingApi } = await import('../api/endpoints');
+    (autoTradingApi.list as ReturnType<typeof vi.fn>).mockResolvedValue([]);
 
-  it('shows empty state when no streams added', () => {
-    render(<LiveTradingPage />);
-    expect(screen.getByText(/Add a symbol above/i)).toBeInTheDocument();
-  });
-
-  it('shows Add Stream button after assets load', async () => {
     render(<LiveTradingPage />);
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /\+ Add Stream/i })).toBeInTheDocument();
+      expect(screen.getByText(/No auto-trading assets are currently running/i)).toBeInTheDocument();
     });
   });
 
-  it('adds a stream card when Add Stream is clicked', async () => {
-    const user = userEvent.setup();
-    render(<LiveTradingPage />);
-
-    await waitFor(() => screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /\+ Add Stream/i }));
-
-    expect(screen.getByText('AAPL')).toBeInTheDocument();
-  });
-
-  it('fetches indicator data immediately on add without starting stream', async () => {
-    const user = userEvent.setup();
-    render(<LiveTradingPage />);
-
-    await waitFor(() => screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /\+ Add Stream/i }));
-
+  it('shows stream status and auto-starts for stock assets', async () => {
     const { liveApi } = await import('../api/endpoints');
+    render(<LiveTradingPage />);
     await waitFor(() => {
-      expect(liveApi.getIndicators).toHaveBeenCalledWith('AAPL', '1h');
+      expect(screen.getByTestId('stream-status')).toHaveTextContent(/connected/i);
+    });
+    expect(liveApi.startStream).toHaveBeenCalled();
+  });
+
+  it('shows activity terminal when assets are running', async () => {
+    render(<LiveTradingPage />);
+    await waitFor(() => {
+      expect(screen.getByTestId('activity-terminal')).toBeInTheDocument();
     });
   });
 
-  it('removes a stream card when Remove is clicked', async () => {
+  it('clear log button removes visible activity lines after criteria refresh', async () => {
     const user = userEvent.setup();
+    const { autoTradingApi } = await import('../api/endpoints');
+    let mcProb = 0.7;
+    (autoTradingApi.list as ReturnType<typeof vi.fn>).mockImplementation(async () => [
+      { ...runningAsset, mc_prob_positive: mcProb },
+    ]);
+
     render(<LiveTradingPage />);
-
-    await waitFor(() => screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /\+ Add Stream/i }));
-
-    expect(screen.getByRole('button', { name: /Remove AAPL stream/i })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /Remove AAPL stream/i }));
-
-    expect(screen.queryByRole('button', { name: /Remove AAPL stream/i })).not.toBeInTheDocument();
-  });
-
-  it('shows Start Live Stream button when streams are added', async () => {
-    const user = userEvent.setup();
-    render(<LiveTradingPage />);
-
-    await waitFor(() => screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /\+ Add Stream/i }));
-
-    expect(screen.getByRole('button', { name: /Start Live Stream/i })).toBeInTheDocument();
-  });
-
-  it('shows Stop Stream button after starting the live stream', async () => {
-    const user = userEvent.setup();
-    render(<LiveTradingPage />);
-
-    await waitFor(() => screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /Start Live Stream/i }));
-
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /Stop Stream/i })).toBeInTheDocument();
+      expect(screen.getByTestId('activity-terminal')).toBeInTheDocument();
     });
-  });
 
-  it('prevents adding the same symbol twice', async () => {
-    const user = userEvent.setup();
-    render(<LiveTradingPage />);
-
-    await waitFor(() => screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /\+ Add Stream/i }));
-
-    const removeButtons = screen.getAllByRole('button', { name: /Remove AAPL stream/i });
-    expect(removeButtons.length).toBe(1);
-  });
-});
-
-describe('LiveStreamCard — strategy signals display', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('shows indicator data after adding a stream (no start required)', async () => {
-    const user = userEvent.setup();
-    render(<LiveTradingPage />);
-
-    await waitFor(() => screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /\+ Add Stream/i }));
+    mcProb = 0.71;
+    await user.click(screen.getByRole('button', { name: /^Refresh$/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('$175.50')).toBeInTheDocument();
+      expect(screen.getByText(/MC Prob\+ updated/)).toBeInTheDocument();
     });
-  });
 
-  it('shows strategy signals after stream starts and bars accumulate', async () => {
-    const user = userEvent.setup();
-    render(<LiveTradingPage />);
-
-    await waitFor(() => screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /\+ Add Stream/i }));
+    await user.click(screen.getByRole('button', { name: /Clear log/i }));
 
     await waitFor(() => {
-      expect(screen.getByText('RSI (Relative Strength Index)')).toBeInTheDocument();
-    });
-  });
-
-  it('shows BUY signal badge in strategy panel', async () => {
-    const user = userEvent.setup();
-    render(<LiveTradingPage />);
-
-    await waitFor(() => screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /\+ Add Stream/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText('BUY')).toBeInTheDocument();
-    });
-  });
-
-  it('shows summary counts for BUY and SELL', async () => {
-    const user = userEvent.setup();
-    render(<LiveTradingPage />);
-
-    await waitFor(() => screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /\+ Add Stream/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText(/1 BUY/i)).toBeInTheDocument();
-      expect(screen.getByText(/1 SELL/i)).toBeInTheDocument();
-    });
-  });
-
-  it('shows strategy group label in panel', async () => {
-    const user = userEvent.setup();
-    render(<LiveTradingPage />);
-
-    await waitFor(() => screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /\+ Add Stream/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText('Momentum')).toBeInTheDocument();
-    });
-  });
-
-  it('shows Live badge when stream is running', async () => {
-    const user = userEvent.setup();
-    render(<LiveTradingPage />);
-
-    await waitFor(() => screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /\+ Add Stream/i }));
-    await user.click(screen.getByRole('button', { name: /Start Live Stream/i }));
-
-    await waitFor(() => {
-      expect(screen.getByText('Live')).toBeInTheDocument();
+      expect(screen.queryByText(/MC Prob\+/)).not.toBeInTheDocument();
     });
   });
 });

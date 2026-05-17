@@ -119,7 +119,7 @@ export default function ExecutionPage() {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [riskLoading, setRiskLoading] = useState(true);
 
-  const { monitors, assetsLoading, assetsError, refresh } = useExecutionMonitor();
+  const { monitors, assetsLoading, assetsError, refresh, setOrdersPage } = useExecutionMonitor();
 
   const fetchRiskData = async () => {
     try {
@@ -209,7 +209,11 @@ export default function ExecutionPage() {
         ) : (
           <div className="space-y-6">
             {monitors.map((m) => (
-              <ExecutionAssetCard key={m.strategyId} monitor={m} />
+              <ExecutionAssetCard
+                key={m.strategyId}
+                monitor={m}
+                onOrdersPageChange={(page) => setOrdersPage(m.strategyId, page)}
+              />
             ))}
           </div>
         )}

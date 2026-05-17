@@ -1,6 +1,6 @@
 import { getMetricFill, getMetricTier } from '../utils/metricQuality';
 
-export type MetricQualityKind = 'sharpe' | 'profit_factor';
+export type MetricQualityKind = 'sharpe' | 'sortino' | 'profit_factor';
 
 interface MetricQualityBarProps {
   label: string;

@@ -157,10 +157,18 @@ export const liveApi = {
       })
       .then((r) => r.data),
 
-  getStrategySignals: (symbol: string, timeframe = '1h') =>
+  getStrategySignals: (
+    symbol: string,
+    timeframe = '1h',
+    options?: { includeTimeline?: boolean; timelineBars?: number },
+  ) =>
     api
       .get<StrategySignalsResponse>(`/live/strategy-signals/${symbol}`, {
-        params: { timeframe },
+        params: {
+          timeframe,
+          ...(options?.includeTimeline ? { include_timeline: true } : {}),
+          ...(options?.timelineBars != null ? { timeline_bars: options.timelineBars } : {}),
+        },
       })
       .then((r) => r.data),
 };
@@ -229,10 +237,10 @@ export const executionApi = {
   getStatus: () =>
     api.get<ExecutionStatusResponse>('/execution/status').then((r) => r.data),
 
-  getOrders: (symbol?: string, limit = 50) =>
+  getOrders: (symbol?: string, limit = 50, offset = 0) =>
     api
       .get<OrderHistoryResponse>('/execution/orders', {
-        params: { symbol, limit },
+        params: { symbol, limit, offset },
       })
       .then((r) => r.data),
 

@@ -115,6 +115,33 @@ class TestTiingo5mIngestJob:
 
     @pytest.mark.asyncio
     @patch("features.data_ingestion.scheduler.AsyncSessionLocal")
+    async def test_passes_asset_type_for_crypto(self, mock_session_local):
+        mock_session = AsyncMock()
+        mock_session_local.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_local.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        fake_assets = [
+            {"id": 1, "symbol": "BTC-USD", "is_active": True, "asset_type": "crypto"},
+            {"id": 2, "symbol": "AAPL", "is_active": True, "asset_type": "stock"},
+        ]
+        mock_ingest = AsyncMock(return_value={"symbol": "X", "timeframe": "5m", "inserted": 1})
+
+        with (
+            patch("dal.market_data_dal.list_assets", new_callable=AsyncMock, return_value=fake_assets),
+            patch(
+                "features.data_ingestion.ingest_service.ingest_tiingo_5m_for_symbol",
+                mock_ingest,
+            ),
+        ):
+            await _tiingo_5m_ingest_job()
+
+        assert mock_ingest.call_count == 2
+        by_symbol = {c[0][1]: c[1]["asset_type"] for c in mock_ingest.call_args_list}
+        assert by_symbol["BTC-USD"] == "crypto"
+        assert by_symbol["AAPL"] == "stock"
+
+    @pytest.mark.asyncio
+    @patch("features.data_ingestion.scheduler.AsyncSessionLocal")
     async def test_skips_when_no_active_assets(self, mock_session_local):
         mock_session = AsyncMock()
         mock_session_local.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -147,7 +174,7 @@ class TestTiingo5mIngestJob:
         ]
         call_count = 0
 
-        async def _flaky_ingest(session, symbol):
+        async def _flaky_ingest(session, symbol, asset_type="stock"):
             nonlocal call_count
             call_count += 1
             if symbol == "AAPL":

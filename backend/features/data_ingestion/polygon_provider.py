@@ -30,6 +30,7 @@ class PolygonProvider(DataProvider):
         start: datetime,
         end: datetime,
         asset_id: Optional[int] = None,
+        asset_type: Optional[str] = None,
     ) -> list[OHLCVRecord]:
         multiplier, timespan = self._timeframe_to_provider_params(timeframe)
         url = (

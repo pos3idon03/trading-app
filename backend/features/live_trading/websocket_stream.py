@@ -1,12 +1,13 @@
-"""Alpaca WebSocket stream client for live market data."""
+"""Alpaca WebSocket stream client for live stock and crypto market data."""
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
 from config import get_settings
+from features.live_trading.stream_symbols import StreamPlan
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -28,6 +29,8 @@ class TickData:
 @dataclass
 class StreamStatus:
     connected: bool = False
+    stock_connected: bool = False
+    crypto_connected: bool = False
     subscribed_symbols: list[str] = field(default_factory=list)
     last_tick_at: datetime | None = None
     error: str | None = None
@@ -35,14 +38,20 @@ class StreamStatus:
 
 
 class AlpacaWebSocketStream:
-    """Manages an Alpaca StockDataStream connection and publishes ticks."""
+    """Manages Alpaca StockDataStream and CryptoDataStream connections."""
 
     def __init__(self) -> None:
         self._settings = get_settings()
         self._queue: asyncio.Queue[TickData] = asyncio.Queue(maxsize=10_000)
         self._status = StreamStatus()
-        self._stream = None
-        self._task: asyncio.Task | None = None
+        self._alpaca_to_app: dict[str, str] = {}
+        self._active_plan: StreamPlan | None = None
+        self._stock_stream: Any = None
+        self._crypto_stream: Any = None
+        self._stock_task: asyncio.Task | None = None
+        self._crypto_task: asyncio.Task | None = None
+        self._stock_connected = False
+        self._crypto_connected = False
         self._callbacks: list[Callable[[TickData], Awaitable[None]]] = []
 
     @property
@@ -54,66 +63,126 @@ class AlpacaWebSocketStream:
         return self._status
 
     def on_tick(self, callback: Callable[[TickData], Awaitable[None]]) -> None:
-        self._callbacks.append(callback)
+        if callback not in self._callbacks:
+            self._callbacks.append(callback)
 
-    async def start(self, symbols: list[str]) -> None:
-        if self._status.connected:
-            logger.warning("stream_already_connected")
+    def set_tick_handler(self, callback: Callable[[TickData], Awaitable[None]]) -> None:
+        """Replace tick handlers (avoids duplicate callbacks on stream restart)."""
+        self._callbacks = [callback]
+
+    async def start(self, plan: StreamPlan) -> None:
+        if not plan.entries:
+            logger.warning("stream_start_empty_plan")
             return
 
-        self._status.subscribed_symbols = [s.upper() for s in symbols]
-        self._task = asyncio.create_task(self._run_stream())
-        logger.info("stream_starting", symbols=self._status.subscribed_symbols)
+        if (
+            self._status.connected
+            and self._active_plan is not None
+            and self._active_plan.app_symbol_set() == plan.app_symbol_set()
+        ):
+            return
 
-    async def stop(self) -> None:
-        if self._stream is not None:
-            try:
-                self._stream.stop()
-            except Exception as exc:
-                logger.warning("stream_stop_error", error=str(exc))
+        await self.stop(preserve_callbacks=True)
 
-        if self._task and not self._task.done():
-            self._task.cancel()
+        self._active_plan = plan
+        self._alpaca_to_app = {
+            e.alpaca_symbol.upper(): e.app_symbol for e in plan.entries
+        }
+        self._status.subscribed_symbols = plan.app_symbols
+        self._status.error = None
+
+        stock_syms = plan.stock_alpaca_symbols()
+        crypto_syms = plan.crypto_alpaca_symbols()
+
+        if stock_syms:
+            self._stock_task = asyncio.create_task(
+                self._run_channel("stock", stock_syms),
+            )
+        if crypto_syms:
+            self._crypto_task = asyncio.create_task(
+                self._run_channel("crypto", crypto_syms),
+            )
+
+        self._sync_connected_flag()
+        logger.info(
+            "stream_starting",
+            app_symbols=plan.app_symbols,
+            stock=stock_syms,
+            crypto=crypto_syms,
+            skipped=plan.skipped,
+        )
+
+    async def stop(self, preserve_callbacks: bool = False) -> None:
+        await self._stop_stream_instance(self._stock_stream)
+        await self._stop_stream_instance(self._crypto_stream)
+        self._stock_stream = None
+        self._crypto_stream = None
+
+        await self._cancel_task(self._stock_task)
+        await self._cancel_task(self._crypto_task)
+        self._stock_task = None
+        self._crypto_task = None
+
+        self._stock_connected = False
+        self._crypto_connected = False
+        self._status.connected = False
+        self._status.stock_connected = False
+        self._status.crypto_connected = False
+        self._status.subscribed_symbols = []
+        self._alpaca_to_app = {}
+        self._active_plan = None
+
+        if not preserve_callbacks:
+            self._callbacks.clear()
+        logger.info("stream_stopped")
+
+    async def _cancel_task(self, task: asyncio.Task | None) -> None:
+        if task and not task.done():
+            task.cancel()
             try:
-                await self._task
+                await task
             except asyncio.CancelledError:
                 pass
 
-        self._status.connected = False
-        self._status.subscribed_symbols = []
-        self._callbacks.clear()
-        logger.info("stream_stopped")
+    async def _stop_stream_instance(self, stream: Any) -> None:
+        if stream is None:
+            return
+        try:
+            stream.stop()
+        except Exception as exc:
+            logger.warning("stream_stop_error", error=str(exc))
 
-    async def _run_stream(self) -> None:
-        from alpaca.data.live import StockDataStream
+    def _sync_connected_flag(self) -> None:
+        self._status.connected = self._stock_connected or self._crypto_connected
 
+    def _set_channel_connected(self, channel: str, connected: bool) -> None:
+        if channel == "stock":
+            self._stock_connected = connected
+            self._status.stock_connected = connected
+        else:
+            self._crypto_connected = connected
+            self._status.crypto_connected = connected
+        self._sync_connected_flag()
+
+    async def _run_channel(self, channel: str, alpaca_symbols: list[str]) -> None:
         max_retries = 5
         retry_delay = 2.0
 
         for attempt in range(max_retries):
             try:
-                self._stream = StockDataStream(
-                    api_key=self._settings.alpaca_api_key,
-                    secret_key=self._settings.alpaca_secret_key,
-                    url_override=self._settings.alpaca_data_ws_url,
-                )
-                self._stream.subscribe_bars(
-                    self._handle_bar,
-                    *self._status.subscribed_symbols,
-                )
-                self._status.connected = True
-                self._status.error = None
-                logger.info("stream_connected", attempt=attempt + 1)
-
-                await asyncio.to_thread(self._stream.run)
+                if channel == "stock":
+                    await self._run_stock_once(alpaca_symbols)
+                else:
+                    await self._run_crypto_once(alpaca_symbols)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._status.connected = False
+                self._set_channel_connected(channel, False)
                 self._status.error = str(exc)
                 self._status.reconnect_count += 1
                 logger.error(
                     "stream_error",
+                    channel=channel,
                     error=str(exc),
                     attempt=attempt + 1,
                     max_retries=max_retries,
@@ -121,11 +190,51 @@ class AlpacaWebSocketStream:
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay * (2 ** attempt))
                 else:
-                    logger.error("stream_max_retries_exceeded")
+                    logger.error("stream_max_retries_exceeded", channel=channel)
+
+    async def _run_stock_once(self, symbols: list[str]) -> None:
+        from alpaca.data.live import StockDataStream
+
+        stream = StockDataStream(
+            api_key=self._settings.alpaca_api_key,
+            secret_key=self._settings.alpaca_secret_key,
+            url_override=self._settings.alpaca_data_ws_url,
+        )
+        self._stock_stream = stream
+        stream.subscribe_bars(self._handle_bar, *symbols)
+        self._set_channel_connected("stock", True)
+        logger.info("stream_connected", channel="stock", symbols=symbols)
+        await asyncio.to_thread(stream.run)
+
+    async def _run_crypto_once(self, symbols: list[str]) -> None:
+        from alpaca.data.enums import CryptoFeed
+        from alpaca.data.live import CryptoDataStream
+
+        crypto_url = (self._settings.alpaca_crypto_data_ws_url or "").rstrip("/")
+        if crypto_url.endswith("/us"):
+            stream = CryptoDataStream(
+                api_key=self._settings.alpaca_api_key,
+                secret_key=self._settings.alpaca_secret_key,
+                url_override=crypto_url,
+            )
+        else:
+            stream = CryptoDataStream(
+                api_key=self._settings.alpaca_api_key,
+                secret_key=self._settings.alpaca_secret_key,
+                feed=CryptoFeed.US,
+            )
+        self._crypto_stream = stream
+        stream.subscribe_bars(self._handle_bar, *symbols)
+        self._set_channel_connected("crypto", True)
+        logger.info("stream_connected", channel="crypto", symbols=symbols)
+        await asyncio.to_thread(stream.run)
 
     async def _handle_bar(self, bar) -> None:
+        raw = bar.symbol.upper() if bar.symbol else ""
+        app_symbol = self._alpaca_to_app.get(raw, raw)
+
         tick = TickData(
-            symbol=bar.symbol,
+            symbol=app_symbol,
             price=float(bar.close),
             volume=int(bar.volume),
             timestamp=bar.timestamp.replace(tzinfo=timezone.utc)

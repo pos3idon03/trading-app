@@ -43,6 +43,7 @@ class AlpacaProvider(DataProvider):
         start: datetime,
         end: datetime,
         asset_id: Optional[int] = None,
+        asset_type: Optional[str] = None,
     ) -> list[OHLCVRecord]:
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame, TimeFrameUnit

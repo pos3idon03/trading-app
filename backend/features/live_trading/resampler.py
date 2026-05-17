@@ -12,6 +12,7 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 TIMEFRAME_DELTAS: dict[str, timedelta] = {
+    "5m": timedelta(minutes=5),
     "30m": timedelta(minutes=30),
     "1h": timedelta(hours=1),
     "4h": timedelta(hours=4),
@@ -119,6 +120,13 @@ class ResamplingEngine:
     def get_bars(self, symbol: str, timeframe: str, limit: int = 200) -> list[OHLCVBar]:
         bars = self._bar_history.get(symbol, {}).get(timeframe, [])
         return bars[-limit:]
+
+    def get_live_close(self, symbol: str, timeframe: str) -> float | None:
+        """Return the in-progress bar close for a symbol/timeframe, if ticks are flowing."""
+        buf = self._buffers.get(symbol, {}).get(timeframe)
+        if buf is None or buf.tick_count == 0:
+            return None
+        return buf.close
 
     async def process_tick(
         self,

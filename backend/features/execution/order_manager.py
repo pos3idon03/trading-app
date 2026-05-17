@@ -17,6 +17,8 @@ logger = get_logger(__name__)
 
 DEFAULT_POSITION_FRACTION = 0.02
 STOP_LOSS_PCT = 0.03
+CRYPTO_QTY_DECIMALS = 8
+EQUITY_QTY_DECIMALS = 2
 
 
 @dataclass
@@ -30,11 +32,58 @@ class OrderPlan:
     estimated_price: float = 0.0
 
 
+def qty_decimals_for_asset_type(asset_type: str | None) -> int:
+    if (asset_type or "stock").lower() == "crypto":
+        return CRYPTO_QTY_DECIMALS
+    return EQUITY_QTY_DECIMALS
+
+
+def compute_buy_notional_usd(
+    equity: float,
+    cash: float,
+    confidence: float,
+    max_amount_per_position: float | None = None,
+    max_pct_of_capital: float | None = None,
+    position_fraction: float = DEFAULT_POSITION_FRACTION,
+) -> float:
+    """Dollar notional for a buy; capped by available cash."""
+    if cash <= 0:
+        return 0.0
+
+    if max_amount_per_position is None and max_pct_of_capital is None:
+        scaled_fraction = position_fraction * min(1.0, confidence)
+        return min(equity * scaled_fraction, cash)
+
+    pct_cap = (
+        (max_pct_of_capital / 100.0) * cash
+        if max_pct_of_capital is not None
+        else None
+    )
+
+    if max_amount_per_position is not None and pct_cap is not None:
+        notional = min(max_amount_per_position, pct_cap)
+    elif max_amount_per_position is not None:
+        notional = max_amount_per_position
+    else:
+        notional = pct_cap
+
+    return min(notional, cash) if notional is not None else 0.0
+
+
+def qty_from_notional(price: float, notional: float, decimals: int) -> float:
+    if price <= 0 or notional <= 0:
+        return 0.0
+    return round(notional / price, decimals)
+
+
 def plan_order_from_signal(
     signal: AggregatedSignal,
     portfolio: PortfolioState,
     current_price: float,
     position_fraction: float = DEFAULT_POSITION_FRACTION,
+    max_amount_per_position: float | None = None,
+    max_pct_of_capital: float | None = None,
+    qty_decimals: int = EQUITY_QTY_DECIMALS,
 ) -> OrderPlan | None:
     """Convert an aggregated signal into an order plan with position sizing."""
     if signal.action == "HOLD":
@@ -55,9 +104,21 @@ def plan_order_from_signal(
             estimated_price=current_price,
         )
 
-    qty = _calculate_position_size(
-        portfolio.equity, current_price, signal.confidence, position_fraction,
-    )
+    if max_amount_per_position is None and max_pct_of_capital is None:
+        qty = _calculate_position_size(
+            portfolio.equity, current_price, signal.confidence, position_fraction,
+        )
+    else:
+        notional = compute_buy_notional_usd(
+            portfolio.equity,
+            portfolio.cash,
+            signal.confidence,
+            max_amount_per_position=max_amount_per_position,
+            max_pct_of_capital=max_pct_of_capital,
+            position_fraction=position_fraction,
+        )
+        qty = qty_from_notional(current_price, notional, qty_decimals)
+
     if qty <= 0:
         return None
 
@@ -83,7 +144,7 @@ def _calculate_position_size(
     scaled_fraction = base_fraction * min(1.0, confidence)
     dollar_amount = equity * scaled_fraction
     qty = dollar_amount / price
-    return round(max(0, qty), 2)
+    return round(max(0, qty), EQUITY_QTY_DECIMALS)
 
 
 def _get_position_qty(portfolio: PortfolioState, symbol: str) -> float:

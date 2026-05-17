@@ -17,6 +17,13 @@ vi.mock('../api/endpoints', () => ({
       status: 'done',
       duration_ms: 50,
     }),
+    optimize: vi.fn().mockResolvedValue({
+      asset_id: 1,
+      strategy_name: 'ma_crossover',
+      status: 'done',
+      optimize_metric: 'sharpe_ratio',
+      n_splits: 5,
+    }),
   },
 }));
 
@@ -101,6 +108,38 @@ describe('BacktestPage — Price Frequency selector', () => {
 
     await waitFor(() =>
       expect(backtestApi.run).toHaveBeenCalledWith(
+        expect.objectContaining({ timeframe: '1w' }),
+      ),
+    );
+  });
+});
+
+describe('BacktestPage — Optimize tab Price Frequency', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function openOptimizeTab() {
+    render(<BacktestPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^optimize$/i }));
+    await waitFor(() => expect(screen.getByLabelText(/price frequency/i)).toBeInTheDocument());
+  }
+
+  it('renders Price Frequency on Optimize tab defaulting to Daily', async () => {
+    await openOptimizeTab();
+    const select = screen.getByLabelText<HTMLSelectElement>(/price frequency/i);
+    expect(select.value).toBe('1d');
+  });
+
+  it('sends timeframe 1w when Weekly is selected and Run Optimization is clicked', async () => {
+    await openOptimizeTab();
+    const select = screen.getByLabelText<HTMLSelectElement>(/price frequency/i);
+    fireEvent.change(select, { target: { value: '1w' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /run optimization/i }));
+
+    await waitFor(() =>
+      expect(backtestApi.optimize).toHaveBeenCalledWith(
         expect.objectContaining({ timeframe: '1w' }),
       ),
     );

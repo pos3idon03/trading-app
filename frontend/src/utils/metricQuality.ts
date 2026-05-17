@@ -55,16 +55,28 @@ export function normalizeProfitFactorFill(value: number | null | undefined): num
   return clamp01(value / PROFIT_FACTOR_CAP);
 }
 
+export function getSortinoTier(value: number | null | undefined): MetricTier | null {
+  return getSharpeTier(value);
+}
+
+export function normalizeSortinoFill(value: number | null | undefined): number | null {
+  return normalizeSharpeFill(value);
+}
+
 export function getMetricTier(
-  kind: 'sharpe' | 'profit_factor',
+  kind: 'sharpe' | 'sortino' | 'profit_factor',
   value: number | null | undefined,
 ): MetricTier | null {
-  return kind === 'sharpe' ? getSharpeTier(value) : getProfitFactorTier(value);
+  if (kind === 'profit_factor') return getProfitFactorTier(value);
+  if (kind === 'sortino') return getSortinoTier(value);
+  return getSharpeTier(value);
 }
 
 export function getMetricFill(
-  kind: 'sharpe' | 'profit_factor',
+  kind: 'sharpe' | 'sortino' | 'profit_factor',
   value: number | null | undefined,
 ): number | null {
-  return kind === 'sharpe' ? normalizeSharpeFill(value) : normalizeProfitFactorFill(value);
+  if (kind === 'profit_factor') return normalizeProfitFactorFill(value);
+  if (kind === 'sortino') return normalizeSortinoFill(value);
+  return normalizeSharpeFill(value);
 }

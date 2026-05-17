@@ -170,6 +170,7 @@ export function expandAlgoSignals(
             indicatorValue: live?.indicator_value ?? null,
             indicatorLabel: live?.indicator_label ?? null,
             params: live?.params ?? null,
+            signalTimeline: live?.signal_timeline,
           };
         });
         algoSignals.push(...childSignals);
@@ -200,6 +201,7 @@ export function expandAlgoSignals(
         indicatorValue: live?.indicator_value ?? null,
         indicatorLabel: live?.indicator_label ?? null,
         params: live?.params ?? null,
+        signalTimeline: live?.signal_timeline,
       });
     }
   }

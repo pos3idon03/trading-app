@@ -102,7 +102,10 @@ class TestChartOverlayRoute:
 
         with (
             patch("routes.backtest.resolve_asset_id", new=AsyncMock(return_value=1)),
-            patch("routes.backtest.load_ohlcv_for_overlay", new=AsyncMock(return_value=df)),
+            patch(
+                "routes.backtest.load_ohlcv_for_overlay",
+                new=AsyncMock(return_value=(df, request.start_date)),
+            ),
             patch(
                 "routes.backtest.compute_chart_overlay",
                 return_value={
@@ -142,7 +145,10 @@ class TestChartOverlayRoute:
 
         with (
             patch("routes.backtest.resolve_asset_id", new=AsyncMock(return_value=1)),
-            patch("routes.backtest.load_ohlcv_for_overlay", new=AsyncMock(return_value=pd.DataFrame())),
+            patch(
+                "routes.backtest.load_ohlcv_for_overlay",
+                new=AsyncMock(return_value=(pd.DataFrame(), request.start_date)),
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await compute_overlay(request, session=mock_session)
@@ -158,7 +164,10 @@ class TestChartOverlayRoute:
 
         with (
             patch("routes.backtest.resolve_asset_id", new=AsyncMock(return_value=1)),
-            patch("routes.backtest.load_ohlcv_for_overlay", new=AsyncMock(return_value=_make_df(5))),
+            patch(
+                "routes.backtest.load_ohlcv_for_overlay",
+                new=AsyncMock(return_value=(_make_df(5), request.start_date)),
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 await compute_overlay(request, session=mock_session)
@@ -178,11 +187,15 @@ class TestLoadOhlcvForOverlayResample:
         resampled_df = _make_df(30)
         session = AsyncMock()
 
+        start = datetime(2022, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2023, 1, 1, tzinfo=timezone.utc)
         with (
             patch("features.backtesting.chart_overlay.get_ohlcv", new=AsyncMock(return_value=pd.DataFrame())),
             patch("features.backtesting.chart_overlay.resample_ohlcv", new=AsyncMock(return_value=resampled_df)),
         ):
-            result = await load_ohlcv_for_overlay(session, asset_id=1, timeframe="15m")
+            result, _ = await load_ohlcv_for_overlay(
+                session, asset_id=1, timeframe="15m", start=start, end=end
+            )
 
         assert len(result) == 30
 
@@ -193,11 +206,15 @@ class TestLoadOhlcvForOverlayResample:
         direct_df = _make_df(50)
         session = AsyncMock()
 
+        start = datetime(2022, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2023, 1, 1, tzinfo=timezone.utc)
         with (
             patch("features.backtesting.chart_overlay.get_ohlcv", new=AsyncMock(return_value=direct_df)),
             patch("features.backtesting.chart_overlay.resample_ohlcv", new=AsyncMock()) as mock_resample,
         ):
-            result = await load_ohlcv_for_overlay(session, asset_id=1, timeframe="1d")
+            result, _ = await load_ohlcv_for_overlay(
+                session, asset_id=1, timeframe="1d", start=start, end=end
+            )
 
         mock_resample.assert_not_called()
         assert len(result) == 50
@@ -208,10 +225,14 @@ class TestLoadOhlcvForOverlayResample:
 
         session = AsyncMock()
 
+        start = datetime(2022, 1, 1, tzinfo=timezone.utc)
+        end = datetime(2023, 1, 1, tzinfo=timezone.utc)
         with (
             patch("features.backtesting.chart_overlay.get_ohlcv", new=AsyncMock(return_value=pd.DataFrame())),
             patch("features.backtesting.chart_overlay.resample_ohlcv", new=AsyncMock(return_value=pd.DataFrame())),
         ):
-            result = await load_ohlcv_for_overlay(session, asset_id=1, timeframe="15m")
+            result, _ = await load_ohlcv_for_overlay(
+                session, asset_id=1, timeframe="15m", start=start, end=end
+            )
 
         assert result.empty

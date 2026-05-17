@@ -26,6 +26,7 @@ function MetricsGrid({ metrics }: { metrics: NonNullable<BacktestResponse['metri
     <div className="grid grid-cols-2 gap-2">
       <MetricCard label="Total Return"  value={fmtPct(m.total_return)}    positive={(m.total_return ?? 0) > 0}  negative={(m.total_return ?? 0) < 0} />
       <MetricQualityBar label="Sharpe Ratio" value={m.sharpe_ratio} formattedValue={fmt(m.sharpe_ratio, 3)} kind="sharpe" />
+      <MetricQualityBar label="Sortino Ratio" value={m.sortino_ratio} formattedValue={fmt(m.sortino_ratio, 3)} kind="sortino" />
       <MetricCard label="Max Drawdown"  value={fmtPct(m.max_drawdown)}    negative />
       <MetricCard label="Win Rate"      value={fmtPct(m.win_rate)}        positive={(m.win_rate ?? 0) > 0.5} />
       <MetricQualityBar label="Profit Factor" value={m.profit_factor} formattedValue={fmt(m.profit_factor, 2)} kind="profit_factor" />

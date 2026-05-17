@@ -262,6 +262,20 @@ class OptimizationRequest(BaseModel):
     n_splits: int = Field(default=5, ge=2, le=20)
     optimize_metric: str = Field(default="sharpe_ratio")
     initial_capital: float = Field(default=100_000.0, ge=1000.0)
+    max_drawdown_cap: Optional[float] = Field(
+        default=None,
+        description=(
+            "Worst allowed average OOS max drawdown (negative decimal, e.g. -0.25). "
+            "Only combos with avg OOS max_drawdown >= this value are eligible."
+        ),
+    )
+
+    @field_validator("max_drawdown_cap")
+    @classmethod
+    def validate_max_drawdown_cap(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None and v > 0:
+            raise ValueError("max_drawdown_cap must be <= 0 (e.g. -0.25 for 25% drawdown)")
+        return v
 
     @model_validator(mode="after")
     def require_asset_or_symbol(self) -> "OptimizationRequest":
@@ -270,9 +284,21 @@ class OptimizationRequest(BaseModel):
         return self
 
 
+class BacktestMetrics(BaseModel):
+    sharpe_ratio: Optional[float] = None
+    sortino_ratio: Optional[float] = None
+    max_drawdown: Optional[float] = None
+    win_rate: Optional[float] = None
+    profit_factor: Optional[float] = None
+    total_return: Optional[float] = None
+    annualized_return: Optional[float] = None
+    num_trades: Optional[int] = None
+
+
 class OptimizationSummary(BaseModel):
     params: dict
     avg_oos_metric: float
+    avg_oos_max_drawdown: Optional[float] = None
 
 
 class OptimizationResponse(BaseModel):
@@ -284,7 +310,9 @@ class OptimizationResponse(BaseModel):
     n_splits: Optional[int] = None
     best_params: Optional[dict] = None
     best_metric: Optional[float] = None
+    best_avg_oos_max_drawdown: Optional[float] = None
     all_results: Optional[list[OptimizationSummary]] = None
+    full_period_metrics: Optional[BacktestMetrics] = None
     duration_ms: Optional[int] = None
     error_message: Optional[str] = None
 
@@ -297,17 +325,6 @@ class TradeRecord(BaseModel):
     exit_price: Optional[float] = None
     pnl: Optional[float] = None
     return_pct: Optional[float] = None
-
-
-class BacktestMetrics(BaseModel):
-    sharpe_ratio: Optional[float] = None
-    sortino_ratio: Optional[float] = None
-    max_drawdown: Optional[float] = None
-    win_rate: Optional[float] = None
-    profit_factor: Optional[float] = None
-    total_return: Optional[float] = None
-    annualized_return: Optional[float] = None
-    num_trades: Optional[int] = None
 
 
 class BacktestResponse(BaseModel):
@@ -359,6 +376,7 @@ class ComboStrategySignal(BaseModel):
     trade_log: list[dict]
     indicator_series: list[dict]
     equity_curve: list[dict]
+    buy_hold_curve: list[dict] = []
     signal_timeline: list[SignalPoint]
 
 

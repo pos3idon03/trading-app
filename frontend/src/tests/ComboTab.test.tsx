@@ -34,6 +34,7 @@ const MOCK_SIGNALS: ComboSignalsResponse = {
       trade_log: [],
       indicator_series: [],
       equity_curve: [{ time: '2022-01-01', value: 100000 }],
+      buy_hold_curve: [{ time: '2022-01-01', value: 100000 }],
       signal_timeline: [
         { time: '2022-01-01', signal: 'Buy' },
         { time: '2022-02-01', signal: 'Sell' },
@@ -44,6 +45,7 @@ const MOCK_SIGNALS: ComboSignalsResponse = {
       trade_log: [],
       indicator_series: [],
       equity_curve: [{ time: '2022-01-01', value: 100000 }],
+      buy_hold_curve: [{ time: '2022-01-01', value: 100000 }],
       // RSI is neutral-aware: flat bars are Neutral, not Sell
       signal_timeline: [
         { time: '2022-01-01', signal: 'Buy' },

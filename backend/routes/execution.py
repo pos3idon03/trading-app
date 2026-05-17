@@ -18,6 +18,7 @@ from dtos.execution_dto import (
     RiskEventHistoryResponse,
     RiskEventResponse,
 )
+from features.execution.order_sync import refresh_open_orders_from_alpaca
 from features.execution.portfolio_tracker import get_portfolio_summary, sync_portfolio
 from features.execution.risk_manager import get_risk_manager
 from features.live_trading.websocket_stream import get_stream
@@ -73,6 +74,7 @@ async def get_orders(
     orders, total = await execution_dal.get_order_history(
         session, symbol=symbol.upper() if symbol else None, limit=limit, offset=offset,
     )
+    await refresh_open_orders_from_alpaca(session, orders)
     return OrderHistoryResponse(
         orders=[_order_to_response(o) for o in orders],
         total=total,
