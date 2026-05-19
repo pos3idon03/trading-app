@@ -16,6 +16,8 @@ from dtos.backtest_dto import (
     ChartOverlayRequest,
     ChartOverlayResponse,
     ComboBacktestRequest,
+    ComboMatrixRequest,
+    ComboMatrixResponse,
     ComboSignalsResponse,
     ComboStrategySignal,
     OptimizationRequest,
@@ -28,6 +30,7 @@ from features.backtesting.chart_overlay import (
     load_ohlcv_for_overlay,
     resolve_asset_id,
 )
+from features.backtesting.combo_matrix_runner import run_combo_matrix
 from features.backtesting.combo_runner import (
     ComboStrategyConfig,
     run_combo_backtest,
@@ -141,6 +144,59 @@ async def execute_combo_backtest(
     if request.simulation_id is not None:
         return await _run_combo_simulated(session, request)
     return await _run_combo_historical(session, request)
+
+
+@router.post("/combo-matrix", response_model=ComboMatrixResponse, status_code=200)
+async def execute_combo_matrix(
+    request: ComboMatrixRequest,
+    session: AsyncSession = Depends(get_db),
+) -> ComboMatrixResponse:
+    """Run pairwise strategy combinations and return an N×N metric heatmap grid."""
+    asset_id = await _resolve_asset_id(session, request.asset_id, request.symbol)
+    df, evaluation_start = await _load_combo_matrix_ohlcv(session, asset_id, request)
+
+    if df.empty:
+        symbol_label = request.symbol or str(request.asset_id)
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No {request.timeframe} price data for {symbol_label}. "
+                "Ingest data for this frequency first."
+            ),
+        )
+    eval_rows = count_evaluation_rows(df, evaluation_start)
+    if eval_rows < 20:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Insufficient data for combo matrix: {eval_rows} rows in range",
+        )
+
+    try:
+        result = run_combo_matrix(
+            df,
+            request.strategies,
+            request.strategy_params,
+            combination_mode=request.combination_mode,
+            threshold=request.threshold,
+            metric=request.metric,
+            initial_capital=request.initial_capital,
+            timeframe=request.timeframe,
+            evaluation_start=evaluation_start,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        logger.error("combo_matrix_error", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return ComboMatrixResponse(
+        asset_id=asset_id,
+        strategies=result.strategies,
+        metric=result.metric,
+        combination_mode=result.combination_mode,
+        values=result.values,
+        duration_ms=int(result.duration_ms),
+    )
 
 
 @router.post("/combo-signals", response_model=ComboSignalsResponse, status_code=200)
@@ -436,6 +492,28 @@ async def _load_backtest_ohlcv(
     request: ComboBacktestRequest,
 ) -> tuple:
     legs = [(s.strategy_name, s.strategy_params) for s in request.strategies]
+    warmup_bars = max_warmup_bars(legs)
+    df = await load_ohlcv_with_warmup(
+        session,
+        asset_id=asset_id,
+        start=request.start_date,
+        end=request.end_date,
+        timeframe=request.timeframe,
+        warmup_bars=warmup_bars,
+        query_args=_ohlcv_query_args(request.timeframe),
+    )
+    return df, request.start_date
+
+
+async def _load_combo_matrix_ohlcv(
+    session: AsyncSession,
+    asset_id: int,
+    request: ComboMatrixRequest,
+) -> tuple:
+    legs = [
+        (name, request.strategy_params.get(name, {}))
+        for name in request.strategies
+    ]
     warmup_bars = max_warmup_bars(legs)
     df = await load_ohlcv_with_warmup(
         session,

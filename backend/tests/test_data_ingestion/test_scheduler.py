@@ -1,5 +1,5 @@
 """Unit tests for the APScheduler ingestion and auto-trading scheduler."""
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from apscheduler.triggers.cron import CronTrigger
@@ -342,3 +342,34 @@ class TestDailyYfinanceIngestJob:
             await _daily_yfinance_ingest_job()
 
         mock_tiingo.assert_not_called()
+
+
+class TestAutoTradingEvaluationJob:
+    @pytest.mark.asyncio
+    @patch("features.data_ingestion.scheduler.AsyncSessionLocal")
+    async def test_syncs_stream_and_passes_resampler(self, mock_session_local):
+        mock_session = AsyncMock()
+        mock_session_local.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_local.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_resampler = MagicMock()
+
+        with (
+            patch(
+                "features.live_trading.stream_orchestrator.sync_stream_with_running_assets",
+                new_callable=AsyncMock,
+            ) as mock_sync,
+            patch(
+                "features.live_trading.live_engine.get_resampler",
+                return_value=mock_resampler,
+            ),
+            patch(
+                "features.execution.auto_trading_loop.run_auto_trading_cycle",
+                new_callable=AsyncMock,
+                return_value=[{"symbol": "AAPL", "signal": "NEUTRAL"}],
+            ) as mock_cycle,
+        ):
+            await _auto_trading_evaluation_job()
+
+        mock_sync.assert_awaited_once()
+        mock_cycle.assert_awaited_once_with(mock_session, resampler=mock_resampler)
+        mock_session.commit.assert_called_once()

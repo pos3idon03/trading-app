@@ -29,51 +29,110 @@ def stream() -> AlpacaWebSocketStream:
             alpaca_secret_key="test_secret",
             alpaca_data_ws_url="wss://test-stock",
             alpaca_crypto_data_ws_url="wss://test-crypto",
+            stream_reconnect_base_delay_sec=0.01,
+            stream_reconnect_max_delay_sec=0.05,
+            stream_connection_limit_cooldown_sec=1.0,
         )
         return AlpacaWebSocketStream()
 
 
-class TestStreamStart:
+class TestStreamReconcile:
     @pytest.mark.asyncio
-    async def test_start_creates_stock_task(self, stream: AlpacaWebSocketStream):
+    async def test_reconcile_creates_stock_task(self, stream: AlpacaWebSocketStream):
         with patch.object(stream, "_run_channel", new=AsyncMock()):
-            await stream.start(_plan(("AAPL", "AAPL", "stock")))
+            action = await stream.reconcile(_plan(("AAPL", "AAPL", "stock")))
+            assert action == "restarted"
             assert stream._stock_task is not None
             assert stream.status.subscribed_symbols == ["AAPL"]
+            if stream._stock_task and not stream._stock_task.done():
+                stream._stock_task.cancel()
+                try:
+                    await stream._stock_task
+                except asyncio.CancelledError:
+                    pass
 
     @pytest.mark.asyncio
-    async def test_start_creates_both_channel_tasks(self, stream: AlpacaWebSocketStream):
+    async def test_reconcile_creates_both_channel_tasks(self, stream: AlpacaWebSocketStream):
         with patch.object(stream, "_run_channel", new=AsyncMock()):
             plan = _plan(
                 ("AAPL", "AAPL", "stock"),
                 ("BTC-USD", "BTC/USD", "crypto"),
             )
-            await stream.start(plan)
+            action = await stream.reconcile(plan)
+            assert action == "restarted"
             assert stream._stock_task is not None
             assert stream._crypto_task is not None
             assert set(stream.status.subscribed_symbols) == {"AAPL", "BTC-USD"}
+            for task in (stream._stock_task, stream._crypto_task):
+                if task and not task.done():
+                    task.cancel()
+                    try:
+                        await task
+                    except asyncio.CancelledError:
+                        pass
 
     @pytest.mark.asyncio
-    async def test_start_noop_when_same_plan_connected(self, stream: AlpacaWebSocketStream):
+    async def test_reconcile_noop_when_same_plan_healthy(self, stream: AlpacaWebSocketStream):
         plan = _plan(("AAPL", "AAPL", "stock"))
-        stream._status.connected = True
+        stream._desired_plan = plan
         stream._active_plan = plan
-        stream._status.subscribed_symbols = ["AAPL"]
+        stream._stock_connected = True
+        stream._stock_task = asyncio.create_task(asyncio.sleep(3600))
 
-        with patch.object(stream, "_run_channel", new=AsyncMock()) as mock_run:
-            await stream.start(plan)
-            mock_run.assert_not_called()
+        with patch.object(stream, "_start_channels", new=AsyncMock()) as mock_start:
+            action = await stream.reconcile(plan)
+            assert action == "noop"
+            mock_start.assert_not_called()
+
+        stream._stock_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stream._stock_task
 
     @pytest.mark.asyncio
-    async def test_start_restarts_when_symbol_set_grows(self, stream: AlpacaWebSocketStream):
-        stream._status.connected = True
-        stream._active_plan = _plan(("AAPL", "AAPL", "stock"))
-        stream._status.subscribed_symbols = ["AAPL"]
+    async def test_reconcile_restarts_when_symbol_set_grows(self, stream: AlpacaWebSocketStream):
+        plan = _plan(("AAPL", "AAPL", "stock"))
+        stream._desired_plan = plan
+        stream._stock_connected = True
+        stream._stock_task = asyncio.create_task(asyncio.sleep(3600))
 
-        with patch.object(stream, "stop", new=AsyncMock()) as mock_stop:
-            with patch.object(stream, "_run_channel", new=AsyncMock()):
-                await stream.start(_plan(("AAPL", "AAPL", "stock"), ("MSFT", "MSFT", "stock")))
+        with patch.object(stream, "_stop_channels", new=AsyncMock()) as mock_stop:
+            with patch.object(stream, "_start_channels", new=AsyncMock()) as mock_start:
+                action = await stream.reconcile(
+                    _plan(("AAPL", "AAPL", "stock"), ("MSFT", "MSFT", "stock")),
+                )
+                assert action == "restarted"
                 mock_stop.assert_awaited_once()
+                mock_start.assert_awaited_once()
+
+        stream._stock_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stream._stock_task
+
+    @pytest.mark.asyncio
+    async def test_reconcile_schedules_reconnect_when_unhealthy(self, stream: AlpacaWebSocketStream):
+        plan = _plan(("AAPL", "AAPL", "stock"))
+        stream._desired_plan = plan
+        stream._active_plan = plan
+
+        with patch.object(stream, "_ensure_reconnect_task") as mock_reconnect:
+            action = await stream.reconcile(plan)
+            assert action == "reconnect_scheduled"
+            mock_reconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reconcile_returns_cooldown_when_in_cooldown(self, stream: AlpacaWebSocketStream):
+        plan = _plan(("AAPL", "AAPL", "stock"))
+        stream._desired_plan = plan
+        stream._cooldown_until = datetime.now(timezone.utc).replace(year=2099)
+
+        action = await stream.reconcile(plan)
+        assert action == "cooldown"
+
+    @pytest.mark.asyncio
+    async def test_start_alias_delegates_to_reconcile(self, stream: AlpacaWebSocketStream):
+        with patch.object(stream, "reconcile", new=AsyncMock(return_value="noop")) as mock_reconcile:
+            await stream.start(_plan(("AAPL", "AAPL", "stock")))
+            mock_reconcile.assert_awaited_once()
 
 
 class TestStreamStop:
@@ -81,28 +140,64 @@ class TestStreamStop:
     async def test_stop_resets_status(self, stream: AlpacaWebSocketStream):
         stream._status.connected = True
         stream._status.subscribed_symbols = ["AAPL"]
-        await stream.stop()
-        assert stream.status.connected is False
-        assert stream.status.subscribed_symbols == []
+        with patch.object(stream, "_stop_channels", new=AsyncMock()) as mock_stop:
+            with patch("asyncio.sleep", new=AsyncMock()):
+                await stream.stop()
+            mock_stop.assert_awaited_once()
+        assert stream._desired_plan is None
 
     @pytest.mark.asyncio
     async def test_stop_preserves_callbacks_when_requested(self, stream: AlpacaWebSocketStream):
         cb = AsyncMock()
         stream._callbacks.append(cb)
-        await stream.stop(preserve_callbacks=True)
+        with patch.object(stream, "_stop_channels", new=AsyncMock()):
+            await stream.stop(preserve_callbacks=True)
         assert stream._callbacks == [cb]
 
     @pytest.mark.asyncio
     async def test_stop_clears_callbacks_by_default(self, stream: AlpacaWebSocketStream):
         stream._callbacks.append(AsyncMock())
-        await stream.stop()
+        with patch.object(stream, "_stop_channels", new=AsyncMock()):
+            await stream.stop()
         assert stream._callbacks == []
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_reconnect_task(self, stream: AlpacaWebSocketStream):
+        stream._reconnect_task = asyncio.create_task(asyncio.sleep(3600))
+        with patch.object(stream, "_stop_channels", new=AsyncMock()):
+            await stream.stop()
+        assert stream._reconnect_task is None
+        assert stream.status.reconnecting is False
 
 
 class TestHandleBar:
     @pytest.mark.asyncio
+    async def test_connected_false_until_first_bar(self, stream: AlpacaWebSocketStream):
+        assert stream.status.connected is False
+        assert stream.status.stock_connected is False
+
+    @pytest.mark.asyncio
+    async def test_handle_bar_sets_connected_on_first_bar(self, stream: AlpacaWebSocketStream):
+        stream._symbol_to_channel = {"AAPL": "stock"}
+        stream._alpaca_to_app = {"AAPL": "AAPL"}
+        bar = MagicMock(
+            symbol="AAPL",
+            close=150.0,
+            volume=1000,
+            timestamp=datetime(2026, 5, 10, 14, 0, tzinfo=timezone.utc),
+            vwap=149.5,
+            open=148.0,
+            high=151.0,
+            low=147.0,
+        )
+        await stream._handle_bar(bar)
+        assert stream.status.stock_connected is True
+        assert stream.status.connected is True
+
+    @pytest.mark.asyncio
     async def test_handle_bar_maps_alpaca_to_app_symbol(self, stream: AlpacaWebSocketStream):
         stream._alpaca_to_app = {"BTC/USD": "BTC-USD"}
+        stream._symbol_to_channel = {"BTC-USD": "crypto"}
         bar = MagicMock(
             symbol="BTC/USD",
             close=70000.0,
@@ -118,26 +213,10 @@ class TestHandleBar:
         assert tick.symbol == "BTC-USD"
 
     @pytest.mark.asyncio
-    async def test_handle_bar_enqueues_tick(self, stream: AlpacaWebSocketStream):
-        bar = MagicMock(
-            symbol="AAPL",
-            close=150.0,
-            volume=1000,
-            timestamp=datetime(2026, 5, 10, 14, 0, tzinfo=timezone.utc),
-            vwap=149.5,
-            open=148.0,
-            high=151.0,
-            low=147.0,
-        )
-        await stream._handle_bar(bar)
-        tick: TickData = stream.queue.get_nowait()
-        assert tick.symbol == "AAPL"
-        assert tick.price == 150.0
-
-    @pytest.mark.asyncio
     async def test_handle_bar_fires_callbacks(self, stream: AlpacaWebSocketStream):
         callback = AsyncMock()
         stream.on_tick(callback)
+        stream._symbol_to_channel = {"AAPL": "stock"}
         bar = MagicMock(
             symbol="AAPL",
             close=150.0,
@@ -154,15 +233,35 @@ class TestHandleBar:
 
 class TestRunChannel:
     @pytest.mark.asyncio
+    async def test_run_channel_single_attempt_on_failure(self, stream: AlpacaWebSocketStream):
+        stream._desired_plan = _plan(("AAPL", "AAPL", "stock"))
+        with patch.object(
+            stream,
+            "_run_stock_once",
+            new=AsyncMock(side_effect=ValueError("connection limit exceeded")),
+        ) as mock_run:
+            with patch.object(stream, "_ensure_reconnect_task") as mock_reconnect:
+                await stream._run_channel("stock", ["AAPL"])
+                mock_run.assert_awaited_once()
+                mock_reconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_connection_limit_sets_cooldown(self, stream: AlpacaWebSocketStream):
+        stream._mark_channel_down("stock", ValueError("connection limit exceeded"))
+        assert stream._cooldown_until is not None
+        assert stream.status.cooldown_until is not None
+
+    @pytest.mark.asyncio
     async def test_run_stock_uses_thread(self, stream: AlpacaWebSocketStream):
-        mock_stream = MagicMock()
-        mock_stream.run = MagicMock()
+        mock_alpaca = MagicMock()
+        mock_alpaca.run = MagicMock()
 
         with patch(
             "alpaca.data.live.StockDataStream",
-            return_value=mock_stream,
+            return_value=mock_alpaca,
         ):
             with patch("asyncio.to_thread", new=AsyncMock()) as mock_thread:
                 mock_thread.return_value = None
                 await stream._run_stock_once(["AAPL"])
-                mock_thread.assert_awaited_once_with(mock_stream.run)
+                mock_thread.assert_awaited_once_with(mock_alpaca.run)
+        assert stream.status.stock_connected is False

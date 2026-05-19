@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     enable_scheduler: bool = True
 
     # Live Trading & Execution (Phase 5-6)
+    stream_reconnect_base_delay_sec: float = 5.0
+    stream_reconnect_max_delay_sec: float = 300.0
+    stream_connection_limit_cooldown_sec: float = 900.0
     trading_mode: str = "paper"
     max_position_pct: float = 5.0
     max_exposure_pct: float = 80.0

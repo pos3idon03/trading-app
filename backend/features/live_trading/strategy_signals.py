@@ -7,6 +7,11 @@ from typing import Optional
 import pandas as pd
 
 from features.backtesting.strategies import _STRATEGY_MAP
+from features.backtesting.stance import (
+    _STANCE_MAP,
+    build_signal_timeline_from_stance,
+    compute_strategy_stance,
+)
 from features.backtesting.strategies.helpers import (
     _calc_adx,
     _calc_aroon,
@@ -149,6 +154,38 @@ def _determine_signal_at_index(entries: pd.Series, exits: pd.Series, index: int)
 
 def _to_timeline_signal(signal: str) -> str:
     return {"BUY": "Buy", "SELL": "Sell", "NEUTRAL": "Neutral"}.get(signal, "Neutral")
+
+
+def _stance_label_to_api_signal(stance: str) -> str:
+    """Map stance chart labels (Buy/Sell/Neutral) to API signal strings."""
+    normalized = stance.strip().lower()
+    if normalized == "buy":
+        return "BUY"
+    if normalized == "sell":
+        return "SELL"
+    return "NEUTRAL"
+
+
+def _signal_from_stance(df: pd.DataFrame, name: str, params: dict) -> str:
+    """Derive the current signal from continuous stance (not cross events)."""
+    stance = compute_strategy_stance(df, name, params)
+    if stance.empty:
+        return "NEUTRAL"
+    return _stance_label_to_api_signal(str(stance.iloc[-1]))
+
+
+def _build_stance_timeline(
+    df: pd.DataFrame,
+    name: str,
+    params: dict,
+    timeline_bars: int,
+) -> list[dict]:
+    """Build per-bar stance timeline for strategies with continuous stance."""
+    stance = compute_strategy_stance(df, name, params)
+    timeline = build_signal_timeline_from_stance(df, stance)
+    if len(timeline) <= timeline_bars:
+        return timeline
+    return timeline[-timeline_bars:]
 
 
 def _build_signal_timeline(
@@ -313,6 +350,8 @@ def _run_single_strategy(name: str, df: pd.DataFrame) -> str:
     try:
         params = _DEFAULT_PARAMS.get(name, {})
         entries, exits = handler(df, params)
+        if name in _STANCE_MAP:
+            return _signal_from_stance(df, name, params)
         return _determine_signal(entries, exits)
     except Exception as exc:
         logger.warning("strategy_signal_error", strategy=name, error=str(exc))
@@ -333,12 +372,17 @@ def _run_strategy_full(
         return "NEUTRAL", None, None, params, []
     try:
         entries, exits = handler(df, params)
-        signal = _determine_signal(entries, exits)
-        timeline = (
-            _build_signal_timeline(df, entries, exits, timeline_bars)
-            if include_timeline
-            else []
-        )
+        if name in _STANCE_MAP:
+            signal = _signal_from_stance(df, name, params)
+        else:
+            signal = _determine_signal(entries, exits)
+        if include_timeline:
+            if name in _STANCE_MAP:
+                timeline = _build_stance_timeline(df, name, params, timeline_bars)
+            else:
+                timeline = _build_signal_timeline(df, entries, exits, timeline_bars)
+        else:
+            timeline = []
     except Exception as exc:
         logger.warning("strategy_signal_error", strategy=name, error=str(exc))
         return "NEUTRAL", None, None, params, []

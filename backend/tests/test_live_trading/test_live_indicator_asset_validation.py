@@ -191,14 +191,12 @@ class TestIndicatorsAssetValidation:
 class TestIndicatorsDbFallback:
     def test_falls_back_to_db_when_resampler_has_few_bars(self):
         """Short resampler bars must not yield close_price=0 when DB has enough OHLCV."""
-        resampler_bars = _make_bars(5)
         db_bars = _make_bars(35)
         db_bars[-1].close = 78394.38
 
         with (
-            patch("routes.live_trading._get_resampler") as mock_res,
             patch(
-                "routes.live_trading._fetch_bars_from_db",
+                "routes.live_trading.resolve_bars",
                 new_callable=AsyncMock,
                 return_value=db_bars,
             ),
@@ -208,7 +206,6 @@ class TestIndicatorsDbFallback:
             ),
             patch("routes.live_trading.live_trading_dal") as mock_dal,
         ):
-            mock_res.return_value.get_bars.return_value = resampler_bars
             mock_dal.create_indicator = AsyncMock()
 
             response = client.get("/api/v1/live/indicators/BTC-USD?timeframe=5m")
@@ -219,28 +216,26 @@ class TestIndicatorsDbFallback:
         assert data["timeframe"] == "5m"
         assert data["close_price"] == 78394.38
 
-    def test_skips_db_fallback_when_resampler_has_enough_bars(self):
-        resampler_bars = _make_bars(35)
+    def test_uses_merged_bars_when_enough_history(self):
+        merged_bars = _make_bars(35)
         with (
-            patch("routes.live_trading._get_resampler") as mock_res,
             patch(
-                "routes.live_trading._fetch_bars_from_db",
+                "routes.live_trading.resolve_bars",
                 new_callable=AsyncMock,
-            ) as mock_db,
+                return_value=merged_bars,
+            ),
             patch(
                 "routes.live_trading.get_asset_id_by_symbol",
                 new=AsyncMock(return_value=1),
             ),
             patch("routes.live_trading.live_trading_dal") as mock_dal,
         ):
-            mock_res.return_value.get_bars.return_value = resampler_bars
             mock_dal.create_indicator = AsyncMock()
 
             response = client.get("/api/v1/live/indicators/AAPL?timeframe=1h")
 
         assert response.status_code == 200
         assert response.json()["close_price"] == 152.0
-        mock_db.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -257,8 +252,16 @@ class TestStreamStartAutoRegistration:
 
         with (
             patch("routes.live_trading.get_stream") as mock_stream,
-            patch("routes.live_trading.upsert_asset", side_effect=capture_upsert),
+            patch("routes.live_trading.build_stream_plan", new_callable=AsyncMock) as mock_plan,
+            patch(
+                "dal.market_data_dal.ensure_asset_for_live_stream",
+                side_effect=capture_upsert,
+            ),
         ):
+            plan = MagicMock()
+            plan.app_symbols = ["AAPL", "MSFT"]
+            plan.entries = [MagicMock(), MagicMock()]
+            mock_plan.return_value = plan
             mock_status = MagicMock()
             mock_status.connected = True
             mock_status.subscribed_symbols = ["AAPL", "MSFT"]
@@ -286,8 +289,16 @@ class TestStreamStartAutoRegistration:
 
         with (
             patch("routes.live_trading.get_stream") as mock_stream,
-            patch("routes.live_trading.upsert_asset", side_effect=failing_upsert),
+            patch("routes.live_trading.build_stream_plan", new_callable=AsyncMock) as mock_plan,
+            patch(
+                "dal.market_data_dal.ensure_asset_for_live_stream",
+                side_effect=failing_upsert,
+            ),
         ):
+            plan = MagicMock()
+            plan.app_symbols = ["AAPL"]
+            plan.entries = [MagicMock()]
+            mock_plan.return_value = plan
             mock_status = MagicMock()
             mock_status.connected = True
             mock_status.subscribed_symbols = ["AAPL"]

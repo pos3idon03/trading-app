@@ -466,3 +466,49 @@ class ComboBacktestRequest(BaseModel):
                         f"Strategy '{entry.strategy_name}' has weight 0 in weighted mode"
                     )
         return self
+
+
+# ---------------------------------------------------------------------------
+# Combo matrix (heatmap) DTOs
+# ---------------------------------------------------------------------------
+
+ComboMatrixMetric = Literal["sharpe_ratio", "sortino_ratio", "total_return", "profit_factor"]
+
+
+class ComboMatrixRequest(BaseModel):
+    asset_id: Optional[int] = None
+    symbol: Optional[str] = Field(default=None, description="Ticker symbol (alternative to asset_id)")
+    strategies: list[str] = Field(..., min_length=2)
+    combination_mode: CombinationMode = Field(default="majority")
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    metric: ComboMatrixMetric = Field(default="sharpe_ratio")
+    timeframe: BacktestTimeframe = "1d"
+    start_date: datetime
+    end_date: datetime
+    initial_capital: float = Field(default=100_000.0, ge=1000.0)
+    strategy_params: dict[str, dict] = Field(default_factory=dict)
+
+    @field_validator("strategies")
+    @classmethod
+    def validate_strategies(cls, v: list[str]) -> list[str]:
+        for name in v:
+            if name not in VALID_STRATEGIES:
+                raise ValueError(f"Unknown strategy: {name!r}. Valid: {sorted(VALID_STRATEGIES)}")
+        if len(set(v)) != len(v):
+            raise ValueError("Duplicate strategy names are not allowed")
+        return v
+
+    @model_validator(mode="after")
+    def require_asset_or_symbol(self) -> "ComboMatrixRequest":
+        if self.asset_id is None and self.symbol is None:
+            raise ValueError("Provide either asset_id or symbol")
+        return self
+
+
+class ComboMatrixResponse(BaseModel):
+    asset_id: int
+    strategies: list[str]
+    metric: str
+    combination_mode: str
+    values: list[list[Optional[float]]]
+    duration_ms: int

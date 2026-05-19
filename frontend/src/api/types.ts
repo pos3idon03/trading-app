@@ -174,6 +174,35 @@ export interface ComboBacktestRequest {
   initial_capital?: number;
 }
 
+export type ComboMatrixMetric =
+  | 'sharpe_ratio'
+  | 'sortino_ratio'
+  | 'total_return'
+  | 'profit_factor';
+
+export interface ComboMatrixRequest {
+  symbol?: string;
+  asset_id?: number;
+  strategies: string[];
+  combination_mode: CombinationMode;
+  threshold?: number;
+  metric: ComboMatrixMetric;
+  timeframe: string;
+  start_date: string;
+  end_date: string;
+  initial_capital?: number;
+  strategy_params?: Record<string, Record<string, number>>;
+}
+
+export interface ComboMatrixResponse {
+  asset_id: number;
+  strategies: string[];
+  metric: string;
+  combination_mode: string;
+  values: (number | null)[][];
+  duration_ms: number;
+}
+
 export interface OptimizationSummary {
   params: Record<string, number>;
   avg_oos_metric: number;

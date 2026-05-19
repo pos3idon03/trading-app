@@ -11,6 +11,10 @@ function renderCard(monitor: ExecutionAssetMonitor, onOrdersPageChange = noopPag
   );
 }
 
+function expandCard() {
+  fireEvent.click(screen.getByRole('button', { name: /expand asset details/i }));
+}
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -93,6 +97,24 @@ describe('ExecutionAssetCard', () => {
     expect(screen.getAllByText('5m').length).toBeGreaterThan(0);
   });
 
+  it('keeps detail sections collapsed by default', () => {
+    renderCard(baseMonitor);
+    expect(screen.getByText('AAPL')).toBeTruthy();
+    expect(screen.getByText('Running')).toBeTruthy();
+    expect(screen.getByText('Combo: All')).toBeTruthy();
+    expect(screen.getByText('Combined Signal')).toBeTruthy();
+    expect(screen.getAllByText('$185.50').length).toBeGreaterThan(0);
+    expect(screen.queryByText('MC Prob+')).toBeNull();
+    expect(screen.queryByText('Transactions (1)')).toBeNull();
+  });
+
+  it('expands detail sections when header toggle is clicked', () => {
+    renderCard(baseMonitor);
+    expandCard();
+    expect(screen.getByText('MC Prob+')).toBeTruthy();
+    expect(screen.getByText('Transactions (1)')).toBeTruthy();
+  });
+
   it('renders the combined signal', () => {
     renderCard(baseMonitor);
     expect(screen.getByText('Combined Signal')).toBeTruthy();
@@ -102,6 +124,7 @@ describe('ExecutionAssetCard', () => {
 
   it('renders all four criteria labels', () => {
     renderCard(baseMonitor);
+    expandCard();
     expect(screen.getByText('MC Prob+')).toBeTruthy();
     expect(screen.getByText('AI Conviction')).toBeTruthy();
     expect(screen.getByText('AI Sentiment')).toBeTruthy();
@@ -115,6 +138,7 @@ describe('ExecutionAssetCard', () => {
 
   it('renders standalone algo strategy signals with resolved labels', () => {
     renderCard(baseMonitor);
+    expandCard();
     // Card resolves strategy key "rsi" → "RSI (Relative Strength Index)" via STRATEGIES constant
     expect(screen.getByText('RSI (Relative Strength Index)')).toBeTruthy();
     expect(screen.getByText('MACD')).toBeTruthy();
@@ -122,6 +146,7 @@ describe('ExecutionAssetCard', () => {
 
   it('renders the transactions table with an order', () => {
     renderCard(baseMonitor);
+    expandCard();
     expect(screen.getByText('Transactions (1)')).toBeTruthy();
     expect(screen.getAllByText('$185.50').length).toBeGreaterThan(0);
   });
@@ -129,6 +154,7 @@ describe('ExecutionAssetCard', () => {
   it('shows empty state when no orders', () => {
     const monitor = { ...baseMonitor, orders: [], ordersTotal: 0, ordersPage: 1 };
     renderCard(monitor);
+    expandCard();
     expect(screen.getByText('Transactions (0)')).toBeTruthy();
     expect(screen.getByText(/No orders created by this ruleset yet/)).toBeTruthy();
   });
@@ -136,6 +162,7 @@ describe('ExecutionAssetCard', () => {
   it('shows empty algo panel message when no algos configured', () => {
     const monitor = { ...baseMonitor, algoSignals: [], comboSignals: [] };
     renderCard(monitor);
+    expandCard();
     expect(screen.getByText(/No algo strategies configured/)).toBeTruthy();
   });
 
@@ -158,6 +185,7 @@ describe('ExecutionAssetCard', () => {
 
   it('renders threshold hints for criteria', () => {
     renderCard(baseMonitor);
+    expandCard();
     expect(screen.getByText('buy ≥ 0.65')).toBeTruthy();
   });
 
@@ -181,6 +209,7 @@ describe('ExecutionAssetCard', () => {
       ],
     };
     renderCard(monitor);
+    expandCard();
     expect(screen.getAllByText(/RSI: 45\.2/).length).toBeGreaterThan(0);
   });
 
@@ -199,6 +228,7 @@ describe('ExecutionAssetCard', () => {
       ],
     };
     renderCard(monitor);
+    expandCard();
     expect(screen.getByText('buy ≥ 30 / sell ≤ 70')).toBeTruthy();
   });
 
@@ -210,12 +240,14 @@ describe('ExecutionAssetCard', () => {
       ],
     };
     const { queryByText } = renderCard(monitor);
+    expandCard();
     expect(queryByText(/RSI:/)).toBeNull();
   });
 
   it('shows pagination controls when ordersTotal exceeds page size', () => {
     const monitor = { ...baseMonitor, ordersTotal: 25, ordersPage: 1 };
     renderCard(monitor);
+    expandCard();
     expect(screen.getByText('Page 1 of 3')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Next' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Previous' })).toHaveProperty('disabled', true);
@@ -225,6 +257,7 @@ describe('ExecutionAssetCard', () => {
     const onPageChange = vi.fn();
     const monitor = { ...baseMonitor, ordersTotal: 25, ordersPage: 1 };
     renderCard(monitor, onPageChange);
+    expandCard();
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(onPageChange).toHaveBeenCalledWith(2);
   });
@@ -237,11 +270,13 @@ describe('ExecutionAssetCard', () => {
 describe('ExecutionAssetCard – combo group', () => {
   it('renders the combo group header with mode label', () => {
     renderCard(comboMonitor);
+    expandCard();
     expect(screen.getByText('Combo: majority')).toBeTruthy();
   });
 
   it('renders the combo aggregate signal badge in the header', () => {
     renderCard(comboMonitor);
+    expandCard();
     // The combo header shows its own signal badge
     const buyBadges = screen.getAllByText('BUY');
     expect(buyBadges.length).toBeGreaterThan(0);
@@ -249,6 +284,7 @@ describe('ExecutionAssetCard – combo group', () => {
 
   it('renders individual strategy rows inside the combo group', () => {
     renderCard(comboMonitor);
+    expandCard();
     // MA Crossover label resolved from STRATEGIES constant
     expect(screen.getByText('MA Crossover')).toBeTruthy();
     // RSI resolved label
@@ -257,6 +293,7 @@ describe('ExecutionAssetCard – combo group', () => {
 
   it('shows NEUTRAL badge for rsi inside the combo group', () => {
     renderCard(comboMonitor);
+    expandCard();
     expect(screen.getByText('NEUTRAL')).toBeTruthy();
   });
 });

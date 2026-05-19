@@ -11,6 +11,8 @@ import type {
   ChartOverlayRequest,
   ChartOverlayResponse,
   ComboBacktestRequest,
+  ComboMatrixRequest,
+  ComboMatrixResponse,
   ComboSignalsResponse,
   CompanyProfile,
   CreateStrategyRequest,
@@ -117,6 +119,9 @@ export const backtestApi = {
 
   getComboSignals: (req: ComboBacktestRequest) =>
     api.post<ComboSignalsResponse>('/backtest/combo-signals', req).then((r) => r.data),
+
+  runComboMatrix: (req: ComboMatrixRequest) =>
+    api.post<ComboMatrixResponse>('/backtest/combo-matrix', req).then((r) => r.data),
 
   getChartOverlay: (req: ChartOverlayRequest) =>
     api.post<ChartOverlayResponse>('/backtest/chart-overlay', req).then((r) => r.data),

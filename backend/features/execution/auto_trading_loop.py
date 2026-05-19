@@ -6,13 +6,9 @@ signal is produced.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal.execution_dal import create_order, update_order_status
-from dal.market_data_dal import get_asset_id_by_symbol, get_ohlcv
 from dal.strategy_builder_dal import get_linked_algos, list_auto_trading_assets
 from features.execution.broker_client import has_position
 from features.execution.order_sync import parse_filled_at, wait_for_order_terminal
@@ -25,6 +21,7 @@ from features.execution.symbol_resolver import _looks_like_yfinance_crypto_pair
 from features.execution.portfolio_tracker import sync_portfolio
 from features.execution.risk_manager import get_risk_manager
 from features.execution.symbol_resolver import to_alpaca_symbol
+from features.live_trading.bar_resolution import resolve_bars
 from features.live_trading.resampler import ResamplingEngine
 from features.live_trading.signal_aggregator import AggregatedSignal
 from features.live_trading.strategy_signals import (
@@ -34,10 +31,6 @@ from features.live_trading.strategy_signals import (
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-_WEEKLY_LOOKBACK = timedelta(weeks=104)
-_DEFAULT_LOOKBACK = timedelta(days=365)
-
 
 # ---------------------------------------------------------------------------
 # Signal evaluation helpers
@@ -122,47 +115,14 @@ def combine_signals(
 # OHLCV helpers
 # ---------------------------------------------------------------------------
 
-def _ohlcv_query_args(timeframe: str) -> dict:
-    if timeframe == "1w":
-        return {"timeframe": "1d", "bucket_interval": timedelta(weeks=1)}
-    return {"timeframe": timeframe}
-
-
-def _df_rows_to_bars(df) -> list:
-    bars = []
-    for _, row in df.iterrows():
-        bars.append(SimpleNamespace(
-            open=float(row["open"]),
-            high=float(row["high"]),
-            low=float(row["low"]),
-            close=float(row["close"]),
-            volume=int(row.get("volume", 0)),
-        ))
-    return bars
-
-
 async def _get_bars_for_asset(
     session: AsyncSession,
     symbol: str,
     timeframe: str,
     resampler: ResamplingEngine | None,
 ) -> list:
-    """Get bars from resampler first, falling back to DB historical data."""
-    if resampler is not None:
-        bars = resampler.get_bars(symbol, timeframe)
-        if len(bars) >= MIN_BARS_REQUIRED:
-            return bars
-
-    asset_id = await get_asset_id_by_symbol(session, symbol)
-    if asset_id is None:
-        return []
-
-    now = datetime.now(timezone.utc)
-    lookback = _WEEKLY_LOOKBACK if timeframe == "1w" else _DEFAULT_LOOKBACK
-    df = await get_ohlcv(session, asset_id, start=now - lookback, end=now, **_ohlcv_query_args(timeframe))
-    if df.empty:
-        return []
-    return _df_rows_to_bars(df)
+    """Merge DB history with live resampler bars."""
+    return await resolve_bars(session, symbol, timeframe, resampler)
 
 
 # ---------------------------------------------------------------------------

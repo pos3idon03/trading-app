@@ -28,6 +28,6 @@ CREATE INDEX IF NOT EXISTS idx_ohlcv_asset_tf_time
 
 -- Enable columnstore (TimescaleDB 3.x) then set compression policy
 ALTER TABLE ohlcv SET (timescaledb.enable_columnstore = true);
-SELECT add_columnstore_policy('ohlcv', INTERVAL '30 days');
+CALL add_columnstore_policy('ohlcv', INTERVAL '30 days');
 
 COMMENT ON TABLE ohlcv IS 'OHLCV price data hypertable, partitioned by time';

@@ -190,7 +190,7 @@ export default function LiveTradingPage() {
         </p>
         <p className="text-slate-600 text-xs mt-1">
           Full evaluation block every 60s per asset. Criteria refresh with the asset list (~30s).
-          All running assets auto-subscribe to Alpaca (stocks, ETFs, crypto); unsupported symbols use DB bars.
+          Alpaca stream starts automatically on the backend when auto-trading is running.
         </p>
       </div>
 

@@ -12,13 +12,18 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 TIMEFRAME_DELTAS: dict[str, timedelta] = {
+    "1m": timedelta(minutes=1),
     "5m": timedelta(minutes=5),
+    "15m": timedelta(minutes=15),
     "30m": timedelta(minutes=30),
     "1h": timedelta(hours=1),
+    "3h": timedelta(hours=3),
     "4h": timedelta(hours=4),
     "1d": timedelta(days=1),
     "1w": timedelta(weeks=1),
 }
+
+DEFAULT_RESAMPLE_TIMEFRAMES = ["5m", "30m", "1h", "4h", "1d", "1w"]
 
 
 @dataclass
@@ -100,19 +105,39 @@ class ResamplingEngine:
     """Accumulates ticks and emits OHLCV bars when a timeframe period closes."""
 
     def __init__(self, timeframes: list[str] | None = None) -> None:
-        self._timeframes = timeframes or list(TIMEFRAME_DELTAS.keys())
-        self._buffers: dict[str, dict[str, _BarBuffer]] = defaultdict(
-            lambda: {tf: _BarBuffer() for tf in self._timeframes}
-        )
+        self._timeframes = self._normalize_timeframes(timeframes or DEFAULT_RESAMPLE_TIMEFRAMES)
+        self._buffers: dict[str, dict[str, _BarBuffer]] = defaultdict(self._new_symbol_buffers)
         self._callbacks: list[BarCallback] = []
         self._bar_history: dict[str, dict[str, list[OHLCVBar]]] = defaultdict(
             lambda: defaultdict(list)
         )
         self._max_history = 250
 
+    @staticmethod
+    def _normalize_timeframes(timeframes: list[str]) -> list[str]:
+        valid = [tf for tf in timeframes if tf in TIMEFRAME_DELTAS]
+        return valid or list(DEFAULT_RESAMPLE_TIMEFRAMES)
+
+    def _new_symbol_buffers(self) -> dict[str, _BarBuffer]:
+        return {tf: _BarBuffer() for tf in self._timeframes}
+
+    @property
+    def active_timeframes(self) -> list[str]:
+        return list(self._timeframes)
+
     @property
     def bar_history(self) -> dict[str, dict[str, list[OHLCVBar]]]:
         return dict(self._bar_history)
+
+    def set_timeframes(self, timeframes: list[str]) -> None:
+        """Hot-update active resample buckets when running assets change."""
+        normalized = self._normalize_timeframes(timeframes)
+        if normalized == self._timeframes:
+            return
+        self._timeframes = normalized
+        for symbol, tf_buffers in list(self._buffers.items()):
+            updated = {tf: tf_buffers.get(tf, _BarBuffer()) for tf in self._timeframes}
+            self._buffers[symbol] = updated
 
     def on_bar(self, callback: BarCallback) -> None:
         self._callbacks.append(callback)

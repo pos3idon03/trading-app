@@ -1,13 +1,12 @@
 /**
- * Auto-starts Alpaca stock + crypto streams for running auto-trading assets on the Live page.
+ * Polls backend Alpaca stream status for running auto-trading assets.
+ * Stream start/stop is managed by the backend when auto-trading runs.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { liveApi } from '../api/endpoints';
 import type { ExecutionAssetMonitor, StreamStatusResponse } from '../api/types';
-import { isSymbolSubscribed } from '../utils/streamSymbolMatch';
 
 const STREAM_STATUS_INTERVAL_MS = 8_000;
-const DEFAULT_TIMEFRAMES = ['5m', '30m', '1h', '4h', '1d'];
 
 function streamSymbolsFromMonitors(monitors: ExecutionAssetMonitor[]): string[] {
   const seen = new Set<string>();
@@ -19,14 +18,6 @@ function streamSymbolsFromMonitors(monitors: ExecutionAssetMonitor[]): string[] 
     symbols.push(sym);
   }
   return symbols.sort();
-}
-
-function symbolsMatchSubscribed(
-  requested: string[],
-  subscribed: string[],
-): boolean {
-  if (requested.length === 0) return true;
-  return requested.every((s) => isSymbolSubscribed(s, subscribed));
 }
 
 export interface LiveStreamSyncOptions {
@@ -41,10 +32,8 @@ export function useLiveStreamSync(
   onStreamEventRef.current = options.onStreamEvent;
 
   const [streamStatus, setStreamStatus] = useState<StreamStatusResponse | null>(null);
-  const [streamStarting, setStreamStarting] = useState(false);
-  const startInFlightRef = useRef(false);
   const streamSymbols = streamSymbolsFromMonitors(monitors);
-  const streamSymbolsKey = streamSymbols.join(',');
+  const prevConnectedRef = useRef<boolean | null>(null);
 
   const refreshStatus = useCallback(() => {
     return liveApi.getStatus().then(setStreamStatus).catch(() => {});
@@ -56,54 +45,27 @@ export function useLiveStreamSync(
     return () => clearInterval(interval);
   }, [refreshStatus]);
 
-  const tryStartStream = useCallback(async () => {
-    const symbols = streamSymbolsKey ? streamSymbolsKey.split(',') : [];
-    if (symbols.length === 0) return;
-
-    const status = await liveApi.getStatus().catch(() => null);
-    if (status) setStreamStatus(status);
-
-    if (
-      status?.connected
-      && symbolsMatchSubscribed(symbols, status.subscribed_symbols)
-    ) {
-      return;
-    }
-
-    if (startInFlightRef.current) return;
-    startInFlightRef.current = true;
-    setStreamStarting(true);
-
-    try {
-      const next = await liveApi.startStream({
-        symbols,
-        timeframes: DEFAULT_TIMEFRAMES,
-      });
-      setStreamStatus(next);
-      if (next.connected) {
-        onStreamEventRef.current?.(
-          `Alpaca stream connected | ${next.subscribed_symbols.join(', ')}`,
-          'info',
-        );
-      } else if (next.error) {
-        onStreamEventRef.current?.(`Alpaca stream failed | ${next.error}`, 'error');
-      }
-    } catch (e) {
-      const msg = (e as Error).message;
-      onStreamEventRef.current?.(`Alpaca stream failed | ${msg}`, 'error');
-    } finally {
-      startInFlightRef.current = false;
-      setStreamStarting(false);
-    }
-  }, [streamSymbolsKey]);
-
   useEffect(() => {
-    tryStartStream();
-  }, [tryStartStream]);
+    if (!streamStatus) return;
+
+    const wasConnected = prevConnectedRef.current;
+    const isConnected = streamStatus.connected;
+    prevConnectedRef.current = isConnected;
+
+    if (wasConnected === null && isConnected && streamSymbols.length > 0) {
+      onStreamEventRef.current?.(
+        `Alpaca stream connected (backend) | ${streamStatus.subscribed_symbols.join(', ')}`,
+        'info',
+      );
+    } else if (wasConnected === true && !isConnected && streamSymbols.length > 0) {
+      const detail = streamStatus.error ? ` | ${streamStatus.error}` : '';
+      onStreamEventRef.current?.(`Alpaca stream disconnected${detail}`, 'warn');
+    }
+  }, [streamStatus, streamSymbols.length]);
 
   return {
     streamStatus,
-    streamStarting,
+    streamStarting: false,
     streamSymbols,
     refreshStatus,
   };

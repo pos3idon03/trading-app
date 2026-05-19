@@ -40,9 +40,11 @@ class TestStreamStartEndpoint:
             mock_status.last_tick_at = None
             mock_status.error = None
             mock_status.reconnect_count = 0
+            mock_status.reconnecting = False
+            mock_status.cooldown_until = None
             stream_instance = MagicMock()
             stream_instance.status = mock_status
-            stream_instance.start = AsyncMock()
+            stream_instance.reconcile = AsyncMock(return_value="restarted")
             stream_instance.set_tick_handler = MagicMock()
             mock_stream.return_value = stream_instance
 
@@ -51,7 +53,7 @@ class TestStreamStartEndpoint:
             data = response.json()
             assert data["connected"] is True
             assert "AAPL" in data["subscribed_symbols"]
-            stream_instance.start.assert_awaited_once()
+            stream_instance.reconcile.assert_awaited_once()
             mock_register.assert_awaited_once()
 
     def test_start_stream_registers_all_symbols(self):
@@ -71,9 +73,11 @@ class TestStreamStartEndpoint:
             mock_status.last_tick_at = None
             mock_status.error = None
             mock_status.reconnect_count = 0
+            mock_status.reconnecting = False
+            mock_status.cooldown_until = None
             stream_instance = MagicMock()
             stream_instance.status = mock_status
-            stream_instance.start = AsyncMock()
+            stream_instance.reconcile = AsyncMock(return_value="restarted")
             stream_instance.set_tick_handler = MagicMock()
             mock_stream.return_value = stream_instance
 
@@ -101,9 +105,11 @@ class TestStreamStartEndpoint:
             mock_status.last_tick_at = None
             mock_status.error = None
             mock_status.reconnect_count = 0
+            mock_status.reconnecting = False
+            mock_status.cooldown_until = None
             stream_instance = MagicMock()
             stream_instance.status = mock_status
-            stream_instance.start = AsyncMock()
+            stream_instance.reconcile = AsyncMock(return_value="restarted")
             stream_instance.set_tick_handler = MagicMock()
             mock_stream.return_value = stream_instance
 
@@ -114,30 +120,8 @@ class TestStreamStartEndpoint:
             registered = mock_register.call_args[0][1]
             assert set(registered) == {"AAPL", "BTC-USD"}
 
-    def test_start_stream_returns_connected_true_after_poll(self):
-        """start_stream must wait for the WS task to set connected=True."""
-        call_count = 0
-
-        class _LazyStatus:
-            subscribed_symbols = ["AAPL"]
-            last_tick_at = None
-            error = None
-            reconnect_count = 0
-
-            @property
-            def connected(self):
-                nonlocal call_count
-                call_count += 1
-                return call_count >= 3  # False for first 2 polls, True on 3rd
-
-            @property
-            def stock_connected(self):
-                return self.connected
-
-            @property
-            def crypto_connected(self):
-                return False
-
+    def test_start_stream_returns_current_status(self):
+        """start_stream returns stream status immediately after reconcile."""
         with (
             patch("routes.live_trading.get_stream") as mock_stream,
             patch(
@@ -146,16 +130,26 @@ class TestStreamStartEndpoint:
             ),
             patch("routes.live_trading._register_streaming_assets", new=AsyncMock()),
         ):
-            lazy_status = _LazyStatus()
+            mock_status = MagicMock()
+            mock_status.connected = True
+            mock_status.stock_connected = True
+            mock_status.crypto_connected = False
+            mock_status.subscribed_symbols = ["AAPL"]
+            mock_status.last_tick_at = None
+            mock_status.error = None
+            mock_status.reconnect_count = 0
+            mock_status.reconnecting = False
+            mock_status.cooldown_until = None
             stream_instance = MagicMock()
-            stream_instance.status = lazy_status
-            stream_instance.start = AsyncMock()
+            stream_instance.status = mock_status
+            stream_instance.reconcile = AsyncMock(return_value="restarted")
             stream_instance.set_tick_handler = MagicMock()
             mock_stream.return_value = stream_instance
 
             response = client.post("/api/v1/live/start", json={"symbols": ["AAPL"]})
             assert response.status_code == 200
             assert response.json()["connected"] is True
+            stream_instance.reconcile.assert_awaited_once()
 
     def test_start_stream_error_propagated(self):
         with (
@@ -174,9 +168,11 @@ class TestStreamStartEndpoint:
             mock_status.last_tick_at = None
             mock_status.error = "'NoneType' object has no attribute 'is_running'"
             mock_status.reconnect_count = 5
+            mock_status.reconnecting = True
+            mock_status.cooldown_until = None
             stream_instance = MagicMock()
             stream_instance.status = mock_status
-            stream_instance.start = AsyncMock()
+            stream_instance.reconcile = AsyncMock(return_value="reconnect_scheduled")
             stream_instance.set_tick_handler = MagicMock()
             mock_stream.return_value = stream_instance
 
@@ -208,14 +204,16 @@ class TestStreamStatusEndpoint:
 class TestIndicatorsEndpoint:
     def test_get_indicators_no_data(self):
         with (
-            patch("routes.live_trading._get_resampler") as mock_res,
+            patch(
+                "routes.live_trading._resolve_live_bars",
+                new=AsyncMock(return_value=[]),
+            ),
             patch("routes.live_trading.live_trading_dal") as mock_dal,
             patch(
                 "routes.live_trading.get_asset_id_by_symbol",
                 new=AsyncMock(return_value=1),
             ),
         ):
-            mock_res.return_value.get_bars.return_value = []
             mock_dal.get_latest_indicator = AsyncMock(return_value=None)
 
             response = client.get("/api/v1/live/indicators/AAPL?timeframe=1h")

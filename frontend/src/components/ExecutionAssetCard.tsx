@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { AttachedAlgoSignal, ComboGroupSignal, CriteriaSignal, CriterionEvaluation, ExecutionAssetMonitor, OrderItem } from '../api/types';
 import { TRANSACTIONS_PAGE_SIZE } from '../hooks/useExecutionMonitor';
 import {
@@ -505,23 +506,39 @@ function StatusChip({ status }: { status: string }) {
 
 function CardHeader({
   monitor,
+  expanded,
+  onToggle,
+  bodyId,
 }: {
   monitor: ExecutionAssetMonitor;
+  expanded: boolean;
+  onToggle: () => void;
+  bodyId: string;
 }) {
   const modeLabel: Record<string, string> = { all: 'All', majority: 'Majority', any: 'Any' };
 
   return (
     <div className="flex items-center gap-3 flex-wrap">
-      <span className="text-brand-500 font-bold text-base">{monitor.symbol}</span>
-      {monitor.assetName && (
-        <span className="text-slate-400 text-sm">{monitor.assetName}</span>
-      )}
-      <span className="text-xs bg-surface-900 border border-slate-700 rounded px-2 py-0.5 text-slate-300">
-        {monitor.algoTimeframe}
-      </span>
-      <span className="text-xs bg-surface-900 border border-slate-700 rounded px-2 py-0.5 text-slate-400">
-        Combo: {modeLabel[monitor.combinationMode] ?? monitor.combinationMode}
-      </span>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex items-center gap-2 text-left min-w-0 flex-wrap"
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        aria-label={expanded ? 'Collapse asset details' : 'Expand asset details'}
+      >
+        <span className="text-slate-500 text-xs shrink-0">{expanded ? '▲' : '▼'}</span>
+        <span className="text-brand-500 font-bold text-base">{monitor.symbol}</span>
+        {monitor.assetName && (
+          <span className="text-slate-400 text-sm">{monitor.assetName}</span>
+        )}
+        <span className="text-xs bg-surface-900 border border-slate-700 rounded px-2 py-0.5 text-slate-300">
+          {monitor.algoTimeframe}
+        </span>
+        <span className="text-xs bg-surface-900 border border-slate-700 rounded px-2 py-0.5 text-slate-400">
+          Combo: {modeLabel[monitor.combinationMode] ?? monitor.combinationMode}
+        </span>
+      </button>
       <div className="ml-auto flex items-center gap-1.5">
         <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
         <span className="text-green-400 text-xs font-medium">Running</span>
@@ -562,39 +579,46 @@ interface Props {
 }
 
 export default function ExecutionAssetCard({ monitor, onOrdersPageChange }: Props) {
+  const [expanded, setExpanded] = useState(false);
+  const bodyId = `execution-card-body-${monitor.strategyId}`;
+
   return (
     <div className="card space-y-4">
-      <CardHeader monitor={monitor} />
+      <CardHeader
+        monitor={monitor}
+        expanded={expanded}
+        onToggle={() => setExpanded((e) => !e)}
+        bodyId={bodyId}
+      />
 
-      {/* Price */}
       <div className="border-t border-slate-700 pt-3">
         <PriceDisplay price={monitor.latestPrice} updatedAt={monitor.priceUpdatedAt} />
       </div>
 
-      {/* Overall combined signal */}
       <OverallSignalBanner signal={monitor.overallSignal} />
 
-      {/* Criteria grid */}
-      <CriteriaGrid criteria={monitor.criteria} />
+      {expanded && (
+        <div id={bodyId} className="space-y-4">
+          <CriteriaGrid criteria={monitor.criteria} />
 
-      {/* Algo strategies */}
-      <div className="border-t border-slate-700 pt-3">
-        <AlgoStrategiesPanel
-          signals={monitor.algoSignals}
-          comboSignals={monitor.comboSignals}
-          timeframe={monitor.algoTimeframe}
-        />
-      </div>
+          <div className="border-t border-slate-700 pt-3">
+            <AlgoStrategiesPanel
+              signals={monitor.algoSignals}
+              comboSignals={monitor.comboSignals}
+              timeframe={monitor.algoTimeframe}
+            />
+          </div>
 
-      {/* Transactions */}
-      <div className="border-t border-slate-700 pt-3">
-        <TransactionsTable
-          orders={monitor.orders}
-          ordersTotal={monitor.ordersTotal}
-          page={monitor.ordersPage}
-          onPageChange={onOrdersPageChange}
-        />
-      </div>
+          <div className="border-t border-slate-700 pt-3">
+            <TransactionsTable
+              orders={monitor.orders}
+              ordersTotal={monitor.ordersTotal}
+              page={monitor.ordersPage}
+              onPageChange={onOrdersPageChange}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

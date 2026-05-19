@@ -24,6 +24,17 @@ async def lifespan(app: FastAPI):
         start_scheduler()
         logger.info("scheduler_enabled")
 
+        from db import AsyncSessionLocal
+        from routes.live_trading import bootstrap_live_stream
+
+        async with AsyncSessionLocal() as session:
+            try:
+                await bootstrap_live_stream(session)
+                await session.commit()
+            except Exception as exc:
+                await session.rollback()
+                logger.warning("bootstrap_live_stream_failed", error=str(exc))
+
     yield
 
     if settings.enable_scheduler:

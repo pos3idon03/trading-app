@@ -11,13 +11,14 @@ import BacktestResultCard from '../components/BacktestResultCard';
 import ParamGridEditor from '../components/ParamGridEditor';
 import OptimizationResultsTable from '../components/OptimizationResultsTable';
 import ComboTab from '../components/ComboTab';
+import ComboMatrixTab from '../components/ComboMatrixTab';
 import StrategyGuideTab from '../components/StrategyGuideTab';
 import { formatAssetOptionLabel } from '../utils/assetDisplay';
 import { fmt, fmtPct } from '../utils/formatting';
 import { defaultDatesForTimeframe } from '../utils/backtestDates';
 import type { BacktestTimeframe } from '../utils/backtestDates';
 
-type TabId = 'backtest' | 'optimize' | 'combo' | 'guide';
+type TabId = 'backtest' | 'optimize' | 'combo' | 'matrix' | 'guide';
 
 function useAssets() {
   const [assets, setAssets] = useState<AssetItem[]>([]);
@@ -142,6 +143,7 @@ function TabBar({ active, onChange }: { active: TabId; onChange: (t: TabId) => v
       <button className={cls('backtest')} onClick={() => onChange('backtest')}>Backtest</button>
       <button className={cls('optimize')} onClick={() => onChange('optimize')}>Optimize</button>
       <button className={cls('combo')} onClick={() => onChange('combo')}>Combo</button>
+      <button className={cls('matrix')} onClick={() => onChange('matrix')}>Matrix</button>
       <button className={cls('guide')} onClick={() => onChange('guide')}>Strategy guide</button>
     </div>
   );
@@ -578,6 +580,7 @@ export default function BacktestPage() {
       {activeTab === 'backtest' && <BacktestTab assets={assets} />}
       {activeTab === 'optimize' && <OptimizeTab assets={assets} />}
       {activeTab === 'combo' && <ComboTab assets={assets} />}
+      {activeTab === 'matrix' && <ComboMatrixTab assets={assets} />}
       {activeTab === 'guide' && <StrategyGuideTab />}
     </div>
   );

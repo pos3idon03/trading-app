@@ -23,6 +23,8 @@ class StreamStatusResponse(BaseModel):
     last_tick_at: Optional[datetime] = None
     error: Optional[str] = None
     reconnect_count: int = 0
+    reconnecting: bool = False
+    cooldown_until: Optional[datetime] = None
 
 
 class IndicatorSnapshotResponse(BaseModel):

@@ -96,21 +96,25 @@ def _build_combo_signals(
     return combine_signals(stance_list, mode, weights, threshold)
 
 
-def run_combo_backtest(
+@dataclass
+class PortfolioRunResult:
+    metrics: dict
+    equity: pd.Series
+    close: pd.Series
+    trades_df: list[dict]
+
+
+def run_portfolio_from_signals(
     df: pd.DataFrame,
-    strategies: list[ComboStrategyConfig],
-    combination_mode: str,
-    threshold: float = 0.5,
+    entries: pd.Series,
+    exits: pd.Series,
+    *,
     initial_capital: float = 100_000.0,
     timeframe: str = "1d",
     evaluation_start: datetime | None = None,
-) -> BacktestResult:
-    """Execute a combination backtest using vectorbt."""
+) -> PortfolioRunResult:
+    """Run vectorbt portfolio from entry/exit bars."""
     import vectorbt as vbt
-
-    t0 = time.perf_counter()
-
-    entries, exits = _build_combo_signals(df, strategies, combination_mode, threshold)
 
     if evaluation_start is not None:
         mask = evaluation_mask(df, evaluation_start)
@@ -143,12 +147,36 @@ def run_combo_backtest(
         else raw_trades
     )
     metrics = compile_all_metrics(returns, equity, trades_df)
+    return PortfolioRunResult(metrics=metrics, equity=equity, close=close, trades_df=trades_df)
 
+
+def run_combo_backtest(
+    df: pd.DataFrame,
+    strategies: list[ComboStrategyConfig],
+    combination_mode: str,
+    threshold: float = 0.5,
+    initial_capital: float = 100_000.0,
+    timeframe: str = "1d",
+    evaluation_start: datetime | None = None,
+) -> BacktestResult:
+    """Execute a combination backtest using vectorbt."""
+    t0 = time.perf_counter()
+
+    entries, exits = _build_combo_signals(df, strategies, combination_mode, threshold)
+    run_result = run_portfolio_from_signals(
+        df,
+        entries,
+        exits,
+        initial_capital=initial_capital,
+        timeframe=timeframe,
+        evaluation_start=evaluation_start,
+    )
+    metrics = run_result.metrics
     equity_curve = [
         {"time": str(t), "value": float(v)}
-        for t, v in equity.items()
+        for t, v in run_result.equity.items()
     ]
-    buy_hold_curve = _compute_buy_hold_curve(close, initial_capital)
+    buy_hold_curve = _compute_buy_hold_curve(run_result.close, initial_capital)
 
     duration_ms = (time.perf_counter() - t0) * 1000
     strategy_names = "+".join(c.strategy_name for c in strategies)
@@ -165,7 +193,7 @@ def run_combo_backtest(
     return BacktestResult(
         metrics=metrics,
         equity_curve=equity_curve,
-        trade_log=trades_df,
+        trade_log=run_result.trades_df,
         buy_hold_curve=buy_hold_curve,
         indicator_series=[],
         duration_ms=duration_ms,

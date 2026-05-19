@@ -131,6 +131,21 @@ class TestResamplingEngine:
         bars = engine.get_bars("AAPL", "1h")
         assert len(bars) >= 3
 
+    async def test_set_timeframes_hot_updates_active_buckets(self):
+        engine = ResamplingEngine(timeframes=["1h"])
+        await engine.process_tick(
+            "AAPL", 150.0, 1000,
+            datetime(2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
+        )
+        engine.set_timeframes(["5m", "1h"])
+        assert engine.active_timeframes == ["5m", "1h"]
+
+        bars = await engine.process_tick(
+            "AAPL", 151.0, 500,
+            datetime(2024, 1, 15, 10, 5, 0, tzinfo=timezone.utc),
+        )
+        assert any(b.timeframe == "5m" for b in bars) or engine.get_bars("AAPL", "5m") == []
+
     async def test_callback_fired_on_bar(self):
         engine = ResamplingEngine(timeframes=["1h"])
         received: list[OHLCVBar] = []

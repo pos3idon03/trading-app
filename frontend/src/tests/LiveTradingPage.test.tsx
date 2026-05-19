@@ -97,13 +97,23 @@ describe('LiveTradingPage', () => {
     });
   });
 
-  it('shows stream status and auto-starts for stock assets', async () => {
+  it('shows stream status from backend-managed stream', async () => {
     const { liveApi } = await import('../api/endpoints');
+    (liveApi.getStatus as ReturnType<typeof vi.fn>).mockResolvedValue({
+      connected: true,
+      stock_connected: true,
+      crypto_connected: false,
+      subscribed_symbols: ['AAPL'],
+      last_tick_at: null,
+      error: null,
+      reconnect_count: 0,
+    });
+
     render(<LiveTradingPage />);
     await waitFor(() => {
       expect(screen.getByTestId('stream-status')).toHaveTextContent(/connected/i);
     });
-    expect(liveApi.startStream).toHaveBeenCalled();
+    expect(liveApi.startStream).not.toHaveBeenCalled();
   });
 
   it('shows activity terminal when assets are running', async () => {

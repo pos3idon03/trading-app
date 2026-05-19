@@ -113,7 +113,8 @@ class TestStartAutoTrading:
 
         with patch("routes.auto_trading.get_strategy", new=AsyncMock(return_value=strategy)), \
              patch("routes.auto_trading.update_position_sizing", new=AsyncMock()), \
-             patch("routes.auto_trading.list_auto_trading_assets", new=AsyncMock(return_value=[updated_row])):
+             patch("routes.auto_trading.list_auto_trading_assets", new=AsyncMock(return_value=[updated_row])), \
+             patch("routes.auto_trading.sync_stream_with_running_assets", new=AsyncMock()):
             result = await start_auto_trading(
                 1, UpdatePositionSizingRequest(max_amount_per_position=500.0), session
             )
@@ -131,7 +132,8 @@ class TestStartAutoTrading:
 
         with patch("routes.auto_trading.get_strategy", new=AsyncMock(return_value=strategy)), \
              patch("routes.auto_trading.update_position_sizing", new=AsyncMock()) as mock_update, \
-             patch("routes.auto_trading.list_auto_trading_assets", new=AsyncMock(return_value=[updated_row])):
+             patch("routes.auto_trading.list_auto_trading_assets", new=AsyncMock(return_value=[updated_row])), \
+             patch("routes.auto_trading.sync_stream_with_running_assets", new=AsyncMock()):
             await start_auto_trading(1, UpdatePositionSizingRequest(), session)
 
         mock_update.assert_awaited_once_with(
@@ -160,7 +162,8 @@ class TestStopAutoTrading:
 
         with patch("routes.auto_trading.get_strategy", new=AsyncMock(return_value=strategy)), \
              patch("routes.auto_trading.update_position_sizing", new=AsyncMock()), \
-             patch("routes.auto_trading.list_auto_trading_assets", new=AsyncMock(return_value=[stopped_row])):
+             patch("routes.auto_trading.list_auto_trading_assets", new=AsyncMock(return_value=[stopped_row])), \
+             patch("routes.auto_trading.sync_stream_with_running_assets", new=AsyncMock()):
             result = await stop_auto_trading(1, session)
 
         assert result.auto_trading_started is False

@@ -123,10 +123,14 @@ async def _daily_yfinance_ingest_job() -> None:
 async def _auto_trading_evaluation_job() -> None:
     """Periodic job: evaluate all running auto-trading assets and execute orders."""
     from features.execution.auto_trading_loop import run_auto_trading_cycle
+    from features.live_trading.live_engine import get_resampler
+    from features.live_trading.stream_orchestrator import sync_stream_with_running_assets
 
     async with AsyncSessionLocal() as session:
         try:
-            results = await run_auto_trading_cycle(session)
+            resampler = get_resampler()
+            await sync_stream_with_running_assets(session, resampler)
+            results = await run_auto_trading_cycle(session, resampler=resampler)
             await session.commit()
             if results:
                 logger.info("auto_trading_cycle_done", assets=len(results), results=results)

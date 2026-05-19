@@ -10,6 +10,8 @@ from dal.strategy_builder_dal import (
 from db import get_db
 from dtos.strategy_builder_dto import AutoTradingAssetRow, UpdatePositionSizingRequest
 from features.execution.auto_trading_loop import run_auto_trading_cycle
+from features.live_trading.live_engine import get_resampler
+from features.live_trading.stream_orchestrator import sync_stream_with_running_assets
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -53,6 +55,7 @@ async def start_auto_trading(
     row = next((r for r in rows if r["strategy_id"] == strategy_id), None)
     if row is None:
         raise HTTPException(status_code=500, detail="Failed to reload strategy after start")
+    await sync_stream_with_running_assets(session, get_resampler())
     return _row_to_dto(row)
 
 
@@ -78,6 +81,7 @@ async def stop_auto_trading(
     row = next((r for r in rows if r["strategy_id"] == strategy_id), None)
     if row is None:
         raise HTTPException(status_code=500, detail="Failed to reload strategy after stop")
+    await sync_stream_with_running_assets(session, get_resampler())
     return _row_to_dto(row)
 
 
@@ -86,7 +90,8 @@ async def trigger_evaluation(
     session: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     """Run a single auto-trading evaluation cycle on demand (useful for testing)."""
-    results = await run_auto_trading_cycle(session)
+    await sync_stream_with_running_assets(session, get_resampler())
+    results = await run_auto_trading_cycle(session, resampler=get_resampler())
     return results
 
 

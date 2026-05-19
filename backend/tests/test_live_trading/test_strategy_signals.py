@@ -173,6 +173,29 @@ class TestRunStrategyFull:
         assert len(timeline) == 20
         assert timeline[-1]["signal"] in ("Buy", "Sell", "Neutral")
 
+    def test_sma_cross_timeline_uses_stance(self):
+        df = _build_dataframe(_make_bars(250))
+        _, _, _, _, timeline = _run_strategy_full(
+            "sma_cross", df, include_timeline=True, timeline_bars=30,
+        )
+        signals = {p["signal"] for p in timeline}
+        assert len(timeline) == 30
+        assert len(signals) >= 2
+
+    def test_sma_cross_signal_matches_stance_when_fast_below_slow(self):
+        import numpy as np
+
+        bars = []
+        for i in range(250):
+            close = 100.0 - i * 0.2
+            bars.append(_make_bar(close=close, open_=close - 0.5, high=close + 1.0, low=close - 1.0))
+        df = _build_dataframe(bars)
+        signal, ind_val, _, _, timeline = _run_strategy_full("sma_cross", df, include_timeline=True, timeline_bars=5)
+        assert ind_val is not None
+        assert ind_val < 0
+        assert signal == "SELL"
+        assert timeline[-1]["signal"] == "Sell"
+
     def test_unknown_strategy_returns_neutral_with_no_indicator(self):
         df = _build_dataframe(_make_bars(10))
         signal, ind_val, ind_label, params, timeline = _run_strategy_full("nonexistent", df)

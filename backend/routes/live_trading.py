@@ -1,20 +1,17 @@
 """Routes for live trading: streaming, indicators, and signals."""
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal import live_trading_dal
-from dal.market_data_dal import ensure_asset_for_live_stream, get_asset_id_by_symbol, get_ohlcv
+from dal.market_data_dal import get_asset_id_by_symbol
 from db import get_db
 from features.live_trading.strategy_signals import MIN_BARS_REQUIRED
 from dtos.live_trading_dto import (
     IndicatorSnapshotResponse,
-    LiveDataUpdate,
     SignalHistoryResponse,
     StreamStartRequest,
     StreamStatusResponse,
@@ -22,30 +19,28 @@ from dtos.live_trading_dto import (
     StrategySignalsResponse,
     TradingSignalResponse,
 )
+from features.live_trading.bar_resolution import resolve_bars
 from features.live_trading.indicator_engine import compute_indicators
+from features.live_trading.live_engine import get_resampler
 from features.live_trading.strategy_signals import compute_strategy_signals
-from features.live_trading.resampler import ResamplingEngine
-from features.live_trading.signal_aggregator import (
-    AISignalInput,
-    RiskBounds,
-    aggregate_signal,
+from features.live_trading.stream_orchestrator import (
+    attach_stream_handlers,
+    ensure_resampler_timeframes,
+    sync_stream_with_running_assets,
 )
 from features.live_trading.stream_symbols import build_stream_plan
-from features.live_trading.websocket_stream import TickData, get_stream
+from features.live_trading.websocket_stream import get_stream
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter()
 
-_resampler: ResamplingEngine | None = None
 _ws_clients: list[WebSocket] = []
 
 
-def _get_resampler() -> ResamplingEngine:
-    global _resampler
-    if _resampler is None:
-        _resampler = ResamplingEngine()
-    return _resampler
+def _get_resampler():
+    """Backward-compatible alias used by scheduler and tests."""
+    return get_resampler()
 
 
 async def _await_stream_connected(
@@ -54,6 +49,8 @@ async def _await_stream_connected(
     timeout: float = 3.0,
 ) -> None:
     """Poll the stream status until connected or the timeout elapses."""
+    import asyncio
+
     elapsed = 0.0
     while elapsed < timeout and not stream.status.connected:
         await asyncio.sleep(poll_interval)
@@ -69,11 +66,15 @@ def _status_to_response(status) -> StreamStatusResponse:
         last_tick_at=status.last_tick_at,
         error=status.error,
         reconnect_count=status.reconnect_count,
+        reconnecting=status.reconnecting,
+        cooldown_until=status.cooldown_until,
     )
 
 
 async def _register_streaming_assets(session: AsyncSession, symbols: list[str]) -> None:
     """Ensure each streamed symbol has an assets row so indicators can be persisted."""
+    from dal.market_data_dal import ensure_asset_for_live_stream
+
     for symbol in symbols:
         try:
             await ensure_asset_for_live_stream(session, symbol)
@@ -86,39 +87,17 @@ async def start_stream(
     req: StreamStartRequest,
     session: AsyncSession = Depends(get_db),
 ):
+    resampler = get_resampler()
+    ensure_resampler_timeframes(req.timeframes, resampler)
+
     plan = await build_stream_plan(session, req.symbols)
     await _register_streaming_assets(session, plan.app_symbols)
 
+    attach_stream_handlers(resampler, _broadcast_ws)
     stream = get_stream()
-    resampler = _get_resampler()
+    await stream.reconcile(plan)
 
-    async def on_tick(tick: TickData) -> None:
-        await resampler.process_tick(
-            symbol=tick.symbol,
-            price=tick.price,
-            volume=tick.volume,
-            timestamp=tick.timestamp,
-            vwap=tick.vwap,
-            high=tick.high,
-            low=tick.low,
-        )
-        await _broadcast_ws({
-            "event_type": "tick",
-            "symbol": tick.symbol,
-            "data": {
-                "price": tick.price,
-                "volume": tick.volume,
-                "vwap": tick.vwap,
-            },
-            "timestamp": tick.timestamp.isoformat(),
-        })
-
-    stream.set_tick_handler(on_tick)
-    await stream.start(plan)
-    await _await_stream_connected(stream)
-
-    status = stream.status
-    return _status_to_response(status)
+    return _status_to_response(stream.status)
 
 
 @router.post("/stop", response_model=StreamStatusResponse)
@@ -157,7 +136,7 @@ async def _indicators_from_bars(
     if snapshot is None:
         return IndicatorSnapshotResponse(symbol=symbol, timeframe=timeframe, close_price=0.0)
 
-    live_close = _get_resampler().get_live_close(symbol, timeframe)
+    live_close = get_resampler().get_live_close(symbol, timeframe)
     if live_close is not None:
         snapshot.close_price = live_close
 
@@ -234,67 +213,11 @@ async def _indicators_from_db(
     )
 
 
-_WEEKLY_LOOKBACK = timedelta(weeks=104)
-_DEFAULT_LOOKBACK = timedelta(days=365)
-
-
-def _ohlcv_query_args(timeframe: str) -> dict:
-    """Return get_ohlcv kwargs; weekly resamples stored daily bars via time_bucket."""
-    if timeframe == "1w":
-        return {"timeframe": "1d", "bucket_interval": timedelta(weeks=1)}
-    return {"timeframe": timeframe}
-
-
-def _df_rows_to_bars(df) -> list:
-    """Convert a DataFrame of OHLCV rows into lightweight bar objects."""
-    bars = []
-    for idx, row in df.iterrows():
-        bar_time = row["time"] if "time" in row.index else idx
-        if hasattr(bar_time, "isoformat"):
-            bar_time = bar_time.isoformat()
-        else:
-            bar_time = str(bar_time)
-        bars.append(SimpleNamespace(
-            open=float(row["open"]),
-            high=float(row["high"]),
-            low=float(row["low"]),
-            close=float(row["close"]),
-            volume=int(row.get("volume", 0)),
-            bar_start=bar_time,
-        ))
-    return bars
-
-
-async def _fetch_bars_from_db(
-    session: AsyncSession, symbol: str, timeframe: str,
-) -> list:
-    """Load historical OHLCV bars from the database for strategy evaluation."""
-    asset_id = await get_asset_id_by_symbol(session, symbol)
-    if asset_id is None:
-        return []
-
-    now = datetime.now(timezone.utc)
-    lookback = _WEEKLY_LOOKBACK if timeframe == "1w" else _DEFAULT_LOOKBACK
-    start = now - lookback
-
-    query_args = _ohlcv_query_args(timeframe)
-    df = await get_ohlcv(session, asset_id, start=start, end=now, **query_args)
-    if df.empty:
-        return []
-    return _df_rows_to_bars(df)
-
-
 async def _resolve_live_bars(
     session: AsyncSession, symbol: str, timeframe: str,
 ) -> list:
-    """Prefer resampler bars when sufficient; otherwise use DB OHLCV (aligned with strategy-signals)."""
-    bars = _get_resampler().get_bars(symbol, timeframe)
-    if len(bars) >= MIN_BARS_REQUIRED:
-        return bars
-    db_bars = await _fetch_bars_from_db(session, symbol, timeframe)
-    if len(db_bars) >= MIN_BARS_REQUIRED:
-        return db_bars
-    return bars
+    """Merge DB history with live resampler bars."""
+    return await resolve_bars(session, symbol, timeframe, get_resampler())
 
 
 @router.get("/strategy-signals/{symbol}", response_model=StrategySignalsResponse)
@@ -404,3 +327,8 @@ def _signal_to_response(sig) -> TradingSignalResponse:
         ai_signal=sig.ai_signal,
         created_at=sig.created_at,
     )
+
+
+async def bootstrap_live_stream(session: AsyncSession) -> None:
+    """Start or reconcile stream for running auto-trading assets (app startup)."""
+    await sync_stream_with_running_assets(session, get_resampler(), _broadcast_ws)
