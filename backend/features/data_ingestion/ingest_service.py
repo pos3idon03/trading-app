@@ -20,7 +20,7 @@ from utils.time_utils import timeframe_to_timedelta, utcnow
 
 logger = get_logger(__name__)
 
-_TIINGO_5M_LOOKBACK_DAYS = 30
+_TIINGO_5M_LOOKBACK_DAYS = 90
 
 
 async def ingest_ohlcv_for_symbol(
@@ -80,12 +80,13 @@ async def ingest_fundamentals_for_symbol(
 async def ingest_tiingo_5m_for_symbol(
     session: AsyncSession,
     symbol: str,
-    asset_type: str = "stock",
+    asset_type: str | None = None,
 ) -> dict:
-    """Fetch and persist the last 30 days of 5m Tiingo bars for one symbol (incremental)."""
+    """Fetch and persist the last 90 days of 5m Tiingo bars for one symbol (incremental)."""
     symbol = symbol.upper()
+    resolved_type = asset_type or await resolve_asset_type(session, symbol)
     provider = get_provider("tiingo")
-    asset_id = await upsert_asset(session, symbol, asset_type=asset_type)
+    asset_id = await upsert_asset(session, symbol, asset_type=resolved_type)
 
     latest = await get_latest_timestamp(session, asset_id, "5m")
     if latest:
@@ -100,7 +101,7 @@ async def ingest_tiingo_5m_for_symbol(
         return {"symbol": symbol, "timeframe": "5m", "inserted": 0}
 
     records = await provider.fetch_ohlcv(
-        symbol, "5m", start, end, asset_id=asset_id, asset_type=asset_type
+        symbol, "5m", start, end, asset_id=asset_id, asset_type=resolved_type
     )
 
     if not records:

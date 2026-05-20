@@ -10,14 +10,16 @@ import {
   CartesianGrid,
   ReferenceDot,
 } from 'recharts';
-import type { TradeRecord } from '../api/types';
+import type { McBacktestExecutionEvent, TradeRecord } from '../api/types';
 
 interface BacktestEquityCurveProps {
   data: { time: string; value: number }[];
   gradientId: string;
   tradeLog?: TradeRecord[];
+  executionLog?: McBacktestExecutionEvent[];
   buyHoldData?: { time: string; value: number }[];
   compact?: boolean;
+  bare?: boolean;
   syncId?: string;
 }
 
@@ -41,6 +43,35 @@ function buildChartData(
   }));
 }
 
+/** Round equity Y-axis to nearest $100 based on strategy + buy-and-hold values. */
+export function computeEquityYDomain(values: number[]): [number, number] {
+  const numeric = values.filter((v) => Number.isFinite(v));
+  if (numeric.length === 0) return [0, 100];
+
+  const rawMin = Math.min(...numeric);
+  const rawMax = Math.max(...numeric);
+  let yMin = Math.floor(rawMin / 100) * 100;
+  let yMax = Math.ceil(rawMax / 100) * 100;
+
+  if (yMax === yMin) {
+    yMin -= 100;
+    yMax += 100;
+  }
+
+  return [yMin, yMax];
+}
+
+function collectEquityValues(
+  chartData: ChartPoint[],
+): number[] {
+  const values: number[] = [];
+  for (const point of chartData) {
+    if (point.value != null) values.push(point.value);
+    if (point.buyHold != null) values.push(point.buyHold);
+  }
+  return values;
+}
+
 function dateKeyFromTimestamp(ts: string): string {
   if (!ts || ts.length < 10) return '';
   return ts.substring(0, 10);
@@ -49,10 +80,20 @@ function dateKeyFromTimestamp(ts: string): string {
 function findEquityBarForTradeTime(
   equityCurve: { time: string; value: number }[],
   tradeTimestamp: string,
+  equityFallback?: number,
 ): { time: string; value: number } | undefined {
+  const exact = equityCurve.find((row) => row.time === tradeTimestamp);
+  if (exact) return exact;
+
   const target = dateKeyFromTimestamp(tradeTimestamp);
   if (!target) return undefined;
-  return equityCurve.find((row) => dateKeyFromTimestamp(row.time) === target);
+  const byDate = equityCurve.find((row) => dateKeyFromTimestamp(row.time) === target);
+  if (byDate) return byDate;
+
+  if (equityFallback != null) {
+    return { time: tradeTimestamp, value: equityFallback };
+  }
+  return undefined;
 }
 
 interface BuyMarkerProps {
@@ -100,22 +141,81 @@ function renderLegend() {
   );
 }
 
+function renderExecutionMarkers(
+  data: { time: string; value: number }[],
+  executionLog: McBacktestExecutionEvent[],
+): ReactNode[] {
+  return executionLog.flatMap((event, i) => {
+    const bar = findEquityBarForTradeTime(data, event.time, event.equity);
+    if (!bar) return [];
+    const Marker = event.side === 'buy' ? BuyMarker : SellMarker;
+    return [
+      <ReferenceDot
+        key={`exec-${event.side}-${i}`}
+        x={bar.time}
+        y={bar.value}
+        shape={<Marker />}
+      />,
+    ];
+  });
+}
+
+function renderTradeLogMarkers(
+  data: { time: string; value: number }[],
+  tradeLog: TradeRecord[],
+): ReactNode[] {
+  return tradeLog.flatMap((trade, i) => {
+    const entryBar = findEquityBarForTradeTime(data, trade.entry_time);
+    const exitTs = trade.exit_time?.trim();
+    const exitBar =
+      exitTs && exitTs.length >= 10
+        ? findEquityBarForTradeTime(data, exitTs)
+        : undefined;
+    const nodes: ReactNode[] = [];
+    if (entryBar) {
+      nodes.push(
+        <ReferenceDot
+          key={`buy-${i}`}
+          x={entryBar.time}
+          y={entryBar.value}
+          shape={<BuyMarker />}
+        />,
+      );
+    }
+    if (exitBar) {
+      nodes.push(
+        <ReferenceDot
+          key={`sell-${i}`}
+          x={exitBar.time}
+          y={exitBar.value}
+          shape={<SellMarker />}
+        />,
+      );
+    }
+    return nodes;
+  });
+}
+
 export default function BacktestEquityCurve({
   data,
   gradientId,
   tradeLog,
+  executionLog,
   buyHoldData,
   compact = false,
+  bare = false,
   syncId,
 }: BacktestEquityCurveProps) {
   const height = compact ? 200 : 320;
   const chartData = buildChartData(data, buyHoldData);
+  const [yMin, yMax] = computeEquityYDomain(collectEquityValues(chartData));
 
   const hasBuyHold = (buyHoldData ?? []).length > 0;
-  const hasTrades = (tradeLog ?? []).length > 0;
+  const hasExecutions = (executionLog ?? []).length > 0;
+  const hasTrades = !hasExecutions && (tradeLog ?? []).length > 0;
 
-  return (
-    <div className="card">
+  const chart = (
+    <>
       {!compact && <h2 className="text-slate-200 font-semibold mb-2">Equity Curve</h2>}
       {renderLegend()}
       <ResponsiveContainer width="100%" height={height}>
@@ -136,6 +236,7 @@ export default function BacktestEquityCurve({
           <YAxis
             stroke="#475569"
             tick={{ fontSize: 9, fill: '#64748b' }}
+            domain={[yMin, yMax]}
             tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
           />
           <Tooltip
@@ -168,39 +269,13 @@ export default function BacktestEquityCurve({
               isAnimationActive={false}
             />
           )}
-          {hasTrades &&
-            tradeLog!.flatMap((trade, i) => {
-              const entryBar = findEquityBarForTradeTime(data, trade.entry_time);
-              const exitTs = trade.exit_time?.trim();
-              const exitBar =
-                exitTs && exitTs.length >= 10
-                  ? findEquityBarForTradeTime(data, exitTs)
-                  : undefined;
-              const nodes: ReactNode[] = [];
-              if (entryBar) {
-                nodes.push(
-                  <ReferenceDot
-                    key={`buy-${i}`}
-                    x={entryBar.time}
-                    y={entryBar.value}
-                    shape={<BuyMarker />}
-                  />,
-                );
-              }
-              if (exitBar) {
-                nodes.push(
-                  <ReferenceDot
-                    key={`sell-${i}`}
-                    x={exitBar.time}
-                    y={exitBar.value}
-                    shape={<SellMarker />}
-                  />,
-                );
-              }
-              return nodes;
-            })}
+          {hasExecutions && renderExecutionMarkers(data, executionLog!)}
+          {hasTrades && renderTradeLogMarkers(data, tradeLog!)}
         </ComposedChart>
       </ResponsiveContainer>
-    </div>
+    </>
   );
+
+  if (bare) return chart;
+  return <div className="card">{chart}</div>;
 }

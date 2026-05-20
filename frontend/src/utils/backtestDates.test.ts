@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { defaultDatesForTimeframe, DEFAULT_BACKTEST_YEARS } from './backtestDates';
+import {
+  defaultCalibrationDaysForTimeframe,
+  defaultDatesForTimeframe,
+  DEFAULT_BACKTEST_YEARS,
+  isIntradayTimeframe,
+} from './backtestDates';
 
 describe('defaultDatesForTimeframe', () => {
   afterEach(() => {
@@ -43,5 +48,12 @@ describe('defaultDatesForTimeframe', () => {
 
   it('exports DEFAULT_BACKTEST_YEARS as 3', () => {
     expect(DEFAULT_BACKTEST_YEARS).toBe(3);
+  });
+
+  it('defaultCalibrationDaysForTimeframe returns day-scale windows', () => {
+    expect(defaultCalibrationDaysForTimeframe('15m')).toBe(30);
+    expect(defaultCalibrationDaysForTimeframe('1h')).toBe(60);
+    expect(isIntradayTimeframe('15m')).toBe(true);
+    expect(isIntradayTimeframe('1d')).toBe(false);
   });
 });

@@ -2,7 +2,11 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from features.execution.market_hours import is_us_equity_rth_open, should_skip_order_for_asset_type
+from features.execution.market_hours import (
+    is_us_equity_rth_open,
+    should_run_stock_stream,
+    should_skip_order_for_asset_type,
+)
 
 _NY = ZoneInfo("America/New_York")
 
@@ -27,3 +31,13 @@ class TestShouldSkipOrderForAssetType:
 
     def test_crypto_does_not(self):
         assert should_skip_order_for_asset_type("crypto") is False
+
+
+class TestShouldRunStockStream:
+    def test_follows_rth_open(self):
+        dt = datetime(2026, 5, 20, 11, 0, tzinfo=_NY)
+        assert should_run_stock_stream(dt) is True
+
+    def test_closed_off_hours(self):
+        dt = datetime(2026, 5, 20, 8, 0, tzinfo=_NY)
+        assert should_run_stock_stream(dt) is False

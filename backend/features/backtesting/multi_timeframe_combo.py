@@ -31,7 +31,7 @@ def resample_ohlcv_df(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         return df.copy()
 
     work = df.copy()
-    work["time"] = pd.to_datetime(work["time"])
+    work["time"] = pd.to_datetime(work["time"], utc=True)
     indexed = work.set_index("time")
     if len(indexed) < 2:
         return work.reset_index(drop=True)
@@ -56,9 +56,9 @@ def align_stance_to_execution(
     exec_df: pd.DataFrame,
 ) -> pd.Series:
     """Forward-fill per-leg stance onto the execution timeframe index."""
-    leg_times = pd.to_datetime(leg_df["time"].values)
+    leg_times = pd.DatetimeIndex(pd.to_datetime(leg_df["time"], utc=True))
     st = pd.Series(stance.values, index=leg_times)
-    exec_times = pd.to_datetime(exec_df["time"].values)
+    exec_times = pd.DatetimeIndex(pd.to_datetime(exec_df["time"], utc=True))
     aligned = st.reindex(exec_times, method="ffill")
     aligned.index = exec_df.index
     return aligned.fillna("Neutral").astype(str)

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
 from config import get_settings
+from features.execution.market_hours import should_run_stock_stream
 from features.live_trading.stream_symbols import StreamPlan
 from utils.logging import get_logger
 
@@ -14,7 +15,6 @@ logger = get_logger(__name__)
 
 CONNECTION_LIMIT_MARKER = "connection limit exceeded"
 CONNECT_TIMEOUT_SEC = 30.0
-STOP_DRAIN_SEC = 0.5
 
 
 @dataclass
@@ -108,6 +108,9 @@ class AlpacaWebSocketStream:
             if self._is_healthy():
                 return "noop"
 
+            if self._is_reconnect_in_progress():
+                return "reconnect_in_progress"
+
             if self._in_cooldown():
                 return "cooldown"
 
@@ -130,16 +133,35 @@ class AlpacaWebSocketStream:
         self._symbol_to_channel = {e.app_symbol: e.channel for e in plan.entries}
         self._status.subscribed_symbols = plan.app_symbols
 
+    def _symbols_for_channel(self, plan: StreamPlan, channel: str) -> list[str]:
+        if channel == "stock":
+            return plan.stock_alpaca_symbols()
+        return plan.crypto_alpaca_symbols()
+
+    def _channels_requiring_health(self, plan: StreamPlan) -> list[str]:
+        channels: list[str] = []
+        if plan.crypto_alpaca_symbols():
+            channels.append("crypto")
+        if plan.stock_alpaca_symbols() and should_run_stock_stream():
+            channels.append("stock")
+        return channels
+
+    def _unhealthy_channels(self, plan: StreamPlan) -> list[str]:
+        return [
+            ch for ch in self._channels_requiring_health(plan)
+            if not self._channel_healthy(ch, self._symbols_for_channel(plan, ch))
+        ]
+
     def _is_healthy(self) -> bool:
         plan = self._desired_plan
         if plan is None:
             return False
-        stock_ok = self._channel_healthy("stock", plan.stock_alpaca_symbols())
-        crypto_ok = self._channel_healthy("crypto", plan.crypto_alpaca_symbols())
-        return stock_ok and crypto_ok
+        return not self._unhealthy_channels(plan)
 
     def _channel_healthy(self, channel: str, symbols: list[str]) -> bool:
         if not symbols:
+            return True
+        if channel == "stock" and not should_run_stock_stream():
             return True
         task = self._stock_task if channel == "stock" else self._crypto_task
         if task is None or task.done():
@@ -161,11 +183,12 @@ class AlpacaWebSocketStream:
             return False
         return datetime.now(timezone.utc) < self._cooldown_until
 
+    def _is_reconnect_in_progress(self) -> bool:
+        return self._reconnect_task is not None and not self._reconnect_task.done()
+
     def _sync_status_flags(self) -> None:
         self._status.cooldown_until = self._cooldown_until
-        self._status.reconnecting = (
-            self._reconnect_task is not None and not self._reconnect_task.done()
-        )
+        self._status.reconnecting = self._is_reconnect_in_progress()
 
     async def _stop_all(self, preserve_callbacks: bool = False) -> None:
         await self._cancel_reconnect_task()
@@ -176,18 +199,9 @@ class AlpacaWebSocketStream:
         logger.info("stream_stopped")
 
     async def _stop_channels(self, clear_desired: bool) -> None:
-        await self._cancel_task(self._stock_task)
-        await self._cancel_task(self._crypto_task)
-        self._stock_task = None
-        self._crypto_task = None
-
-        await self._stop_stream_instance(self._stock_stream)
-        await self._stop_stream_instance(self._crypto_stream)
-        self._stock_stream = None
-        self._crypto_stream = None
-
-        await asyncio.sleep(STOP_DRAIN_SEC)
-        self._reset_channel_state()
+        await self._stop_channel("stock")
+        await self._stop_channel("crypto")
+        self._status.last_tick_at = None
 
         if clear_desired:
             self._active_plan = None
@@ -195,41 +209,70 @@ class AlpacaWebSocketStream:
             self._symbol_to_channel = {}
             self._status.subscribed_symbols = []
 
-    def _reset_channel_state(self) -> None:
-        self._stock_connected = False
-        self._crypto_connected = False
-        self._channel_authenticated = {"stock": False, "crypto": False}
-        self._channel_started_at = {"stock": None, "crypto": None}
-        self._status.connected = False
-        self._status.stock_connected = False
-        self._status.crypto_connected = False
+    async def _stop_channel(self, channel: str) -> None:
+        task = self._stock_task if channel == "stock" else self._crypto_task
+        stream = self._stock_stream if channel == "stock" else self._crypto_stream
+
+        await self._cancel_task(task)
+        if channel == "stock":
+            self._stock_task = None
+        else:
+            self._crypto_task = None
+
+        await self._stop_stream_instance(stream)
+        if channel == "stock":
+            self._stock_stream = None
+        else:
+            self._crypto_stream = None
+
+        await asyncio.sleep(self._settings.stream_stop_drain_sec)
+        self._reset_single_channel_state(channel)
+
+    def _reset_single_channel_state(self, channel: str) -> None:
+        if channel == "stock":
+            self._stock_connected = False
+            self._status.stock_connected = False
+        else:
+            self._crypto_connected = False
+            self._status.crypto_connected = False
+        self._channel_authenticated[channel] = False
+        self._channel_started_at[channel] = None
+        self._sync_connected_flag()
+
+    def _sync_connected_flag(self) -> None:
+        self._status.connected = self._stock_connected or self._crypto_connected
 
     async def _start_channels(self, plan: StreamPlan) -> None:
         self._status.error = None
         stock_syms = plan.stock_alpaca_symbols()
         crypto_syms = plan.crypto_alpaca_symbols()
 
-        if stock_syms:
-            self._channel_started_at["stock"] = datetime.now(timezone.utc)
-            self._stock_task = asyncio.create_task(
-                self._run_channel("stock", stock_syms),
-            )
+        if stock_syms and should_run_stock_stream():
+            await self._start_channel("stock", plan)
         if crypto_syms:
-            self._channel_started_at["crypto"] = datetime.now(timezone.utc)
-            self._crypto_task = asyncio.create_task(
-                self._run_channel("crypto", crypto_syms),
-            )
+            await self._start_channel("crypto", plan)
 
         logger.info(
             "stream_starting",
             app_symbols=plan.app_symbols,
-            stock=stock_syms,
+            stock=stock_syms if should_run_stock_stream() else [],
             crypto=crypto_syms,
             skipped=plan.skipped,
         )
 
+    async def _start_channel(self, channel: str, plan: StreamPlan) -> None:
+        symbols = self._symbols_for_channel(plan, channel)
+        if not symbols:
+            return
+        self._channel_started_at[channel] = datetime.now(timezone.utc)
+        task = asyncio.create_task(self._run_channel(channel, symbols))
+        if channel == "stock":
+            self._stock_task = task
+        else:
+            self._crypto_task = task
+
     def _ensure_reconnect_task(self) -> None:
-        if self._reconnect_task is not None and not self._reconnect_task.done():
+        if self._is_reconnect_in_progress():
             return
         self._status.reconnecting = True
         self._reconnect_task = asyncio.create_task(self._reconnect_loop())
@@ -257,10 +300,15 @@ class AlpacaWebSocketStream:
                 await asyncio.sleep(self._backoff_sec)
 
                 async with self._lock:
-                    if not self._desired_plan or self._is_healthy() or self._in_cooldown():
+                    plan = self._desired_plan
+                    if not plan or self._is_healthy() or self._in_cooldown():
                         continue
-                    await self._stop_channels(clear_desired=False)
-                    await self._start_channels(self._desired_plan)
+                    unhealthy = self._unhealthy_channels(plan)
+                    if not unhealthy:
+                        continue
+                    for channel in unhealthy:
+                        await self._stop_channel(channel)
+                        await self._start_channel(channel, plan)
 
                 await asyncio.sleep(2)
 
@@ -293,9 +341,6 @@ class AlpacaWebSocketStream:
         except Exception as exc:
             logger.warning("stream_stop_error", error=str(exc))
 
-    def _sync_connected_flag(self) -> None:
-        self._status.connected = self._stock_connected or self._crypto_connected
-
     def _set_channel_connected(self, channel: str, connected: bool) -> None:
         if channel == "stock":
             self._stock_connected = connected
@@ -318,7 +363,7 @@ class AlpacaWebSocketStream:
         except Exception as exc:
             self._mark_channel_down(channel, exc)
         finally:
-            if not cancelled and self._desired_plan is not None:
+            if not cancelled and self._desired_plan is not None and not self._in_cooldown():
                 self._ensure_reconnect_task()
 
     def _mark_channel_down(self, channel: str, exc: Exception) -> None:

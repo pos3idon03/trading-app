@@ -1,4 +1,4 @@
-import api from './client';
+import api, { OPTIMIZE_REQUEST_TIMEOUT_MS } from './client';
 import type {
   AgentAnalysisRequest,
   AgentAnalysisResponse,
@@ -37,6 +37,14 @@ import type {
   SignalHistoryResponse,
   SimulationRequest,
   SimulationResponse,
+  McBacktestRequest,
+  McSimulationOptimizeRequest,
+  McSimulationOptimizeResponse,
+  McBacktestOptimizeRequest,
+  McBacktestOptimizeResponse,
+  McBacktestOptimizeJobStartResponse,
+  McBacktestOptimizeJobStatusResponse,
+  McBacktestResponse,
   StrategyFullResponse,
   StrategyRecord,
   StrategySignalsResponse,
@@ -105,6 +113,26 @@ export const simulationApi = {
 
   get: (simId: number) =>
     api.get<SimulationResponse>(`/simulation/${simId}`).then((r) => r.data),
+
+  runBacktest: (req: McBacktestRequest) =>
+    api.post<McBacktestResponse>('/simulation/backtest', req).then((r) => r.data),
+
+  optimize: (req: McSimulationOptimizeRequest) =>
+    api
+      .post<McSimulationOptimizeResponse>('/simulation/optimize', req, {
+        timeout: OPTIMIZE_REQUEST_TIMEOUT_MS,
+      })
+      .then((r) => r.data),
+
+  optimizeBacktest: (req: McBacktestOptimizeRequest) =>
+    api
+      .post<McBacktestOptimizeJobStartResponse>('/simulation/backtest/optimize', req)
+      .then((r) => r.data),
+
+  getOptimizeBacktestJob: (jobId: number) =>
+    api
+      .get<McBacktestOptimizeJobStatusResponse>(`/simulation/backtest/optimize/jobs/${jobId}`)
+      .then((r) => r.data),
 };
 
 export const backtestApi = {
@@ -112,7 +140,11 @@ export const backtestApi = {
     api.post<BacktestResponse>('/backtest/run', req).then((r) => r.data),
 
   optimize: (req: OptimizationRequest) =>
-    api.post<OptimizationResponse>('/backtest/optimize', req).then((r) => r.data),
+    api
+      .post<OptimizationResponse>('/backtest/optimize', req, {
+        timeout: OPTIMIZE_REQUEST_TIMEOUT_MS,
+      })
+      .then((r) => r.data),
 
   runCombo: (req: ComboBacktestRequest) =>
     api.post<BacktestResponse>('/backtest/combo', req).then((r) => r.data),

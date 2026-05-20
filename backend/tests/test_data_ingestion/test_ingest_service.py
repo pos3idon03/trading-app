@@ -170,6 +170,52 @@ class TestIncrementalStartDate:
 
 class TestIngestTiingo5mForSymbol:
     @pytest.mark.asyncio
+    async def test_first_ingestion_uses_90_day_lookback(self):
+        """When no 5m data exists yet, fetch from now minus 90 days."""
+        captured = {}
+        fixed_now = _utc(2026, 5, 20, 12)
+
+        mock_provider = MagicMock()
+
+        async def _capture_fetch(symbol, tf, start, end, asset_id=None, asset_type=None):
+            captured["start"] = start
+            captured["end"] = end
+            return []
+
+        mock_provider.fetch_ohlcv = _capture_fetch
+
+        with (
+            patch(
+                "features.data_ingestion.ingest_service.get_provider",
+                return_value=mock_provider,
+            ),
+            patch(
+                "features.data_ingestion.ingest_service.upsert_asset",
+                new=AsyncMock(return_value=1),
+            ),
+            patch(
+                "features.data_ingestion.ingest_service.get_latest_timestamp",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "features.data_ingestion.ingest_service.bulk_insert_ohlcv",
+                new=AsyncMock(return_value=0),
+            ),
+            patch(
+                "features.data_ingestion.ingest_service.utcnow",
+                return_value=fixed_now,
+            ),
+        ):
+            await ingest_tiingo_5m_for_symbol(
+                session=_make_session(),
+                symbol="AAPL",
+                asset_type="stock",
+            )
+
+        assert captured["start"] == fixed_now - timedelta(days=90)
+        assert captured["end"] == fixed_now
+
+    @pytest.mark.asyncio
     async def test_passes_asset_type_to_provider(self):
         captured = {}
 

@@ -70,13 +70,30 @@ class TestEnsureAssetForLiveStream:
         assert "ON CONFLICT" in upper
         assert "DO NOTHING" in upper
         assert "DO UPDATE" not in upper
-        assert "AMZN" in compiled
-        assert "amzn" not in compiled
+    @pytest.mark.asyncio
+    async def test_inserts_crypto_type_for_crypto_pair(self):
+        from dal.market_data_dal import ensure_asset_for_live_stream
 
+        mock_session = AsyncMock()
+        mock_session.execute = AsyncMock(return_value=MagicMock())
+        mock_session.flush = AsyncMock()
 
-# ---------------------------------------------------------------------------
-# require_asset_id: raises ValueError when symbol not registered
-# ---------------------------------------------------------------------------
+        with (
+            patch(
+                "features.data_ingestion.asset_type_resolver.get_asset_type_by_symbol",
+                new=AsyncMock(return_value=None),
+            ),
+            patch("dal.market_data_dal.get_asset_id_by_symbol", new=AsyncMock(return_value=9)),
+        ):
+            asset_id = await ensure_asset_for_live_stream(mock_session, "BTC-USD")
+
+        assert asset_id == 9
+        compiled = str(mock_session.execute.call_args[0][0].compile(
+            compile_kwargs={"literal_binds": True},
+        ))
+        assert "crypto" in compiled.lower()
+        assert "BTC-USD" in compiled
+
 
 class TestRequireAssetId:
     @pytest.mark.asyncio

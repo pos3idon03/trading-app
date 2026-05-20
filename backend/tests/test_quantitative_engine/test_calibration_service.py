@@ -75,6 +75,21 @@ async def test_calibrated_params_last_price_is_positive(trending_prices):
     assert result.last_price > 0.0
 
 
+def test_merton_skips_ou_on_short_window():
+    """Merton-only calibration must not require OU deviation bars."""
+    from datetime import datetime, timezone
+
+    from features.quantitative_engine.calibration_service import calibrate_from_prices
+
+    prices = np.linspace(100, 105, 35)
+    now = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    result = calibrate_from_prices(
+        prices, "15m", now, now, ou_ma_window=20, model_type="merton",
+    )
+    assert result.merton is not None
+    assert result.ou_deviation is None
+
+
 @pytest.mark.asyncio
 async def test_calibrated_params_raises_on_short_series():
     """Fewer than 30 rows must raise ValueError."""

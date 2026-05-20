@@ -45,6 +45,7 @@ async def _tiingo_5m_ingest_job() -> None:
     timestamp to now, so only missing bars are inserted.
     """
     from dal.market_data_dal import list_assets
+    from features.data_ingestion.asset_type_resolver import resolve_asset_type
     from features.data_ingestion.ingest_service import ingest_tiingo_5m_for_symbol
 
     async with AsyncSessionLocal() as session:
@@ -64,7 +65,7 @@ async def _tiingo_5m_ingest_job() -> None:
                 if not asset.get("is_active", True):
                     continue
                 symbol = asset["symbol"]
-                asset_type = asset.get("asset_type") or "stock"
+                asset_type = await resolve_asset_type(session, symbol)
                 try:
                     result = await ingest_tiingo_5m_for_symbol(
                         session, symbol, asset_type=asset_type

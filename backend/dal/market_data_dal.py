@@ -160,6 +160,20 @@ async def get_ohlcv(
     return _sanitize_nan(df)
 
 
+async def get_ohlcv_with_resample(
+    session: AsyncSession,
+    asset_id: int,
+    timeframe: str,
+    start: datetime,
+    end: datetime,
+) -> pd.DataFrame:
+    """Load OHLCV for a timeframe, resampling from 5m when native rows are absent."""
+    df = await get_ohlcv(session, asset_id, timeframe, start, end)
+    if df.empty:
+        df = await resample_ohlcv(session, asset_id, timeframe, start, end)
+    return df
+
+
 def _sanitize_nan(df: pd.DataFrame) -> pd.DataFrame:
     """Replace NaN/Inf float values with Python None so they are JSON-serializable.
 
@@ -385,15 +399,17 @@ async def ensure_asset_for_live_stream(session: AsyncSession, symbol: str) -> in
 
     Live streaming only needs a stable ``asset_id`` for persisted data. Symbols
     that already exist (e.g. after full ingestion with a company name) are left
-    unchanged.
+    unchanged. New rows use resolve_asset_type so crypto pairs are not stored as stock.
     """
     from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from features.data_ingestion.asset_type_resolver import resolve_asset_type
     from models.asset import Asset
 
     sym = symbol.upper()
+    asset_type = await resolve_asset_type(session, sym)
     stmt = (
         pg_insert(Asset)
-        .values(symbol=sym, asset_type="stock", currency="USD")
+        .values(symbol=sym, asset_type=asset_type, currency="USD")
         .on_conflict_do_nothing(index_elements=["symbol"])
     )
     await session.execute(stmt)

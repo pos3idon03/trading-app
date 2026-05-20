@@ -2,6 +2,8 @@
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import numpy as np
+import pandas as pd
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -231,3 +233,123 @@ class TestJumpCIDTO:
         )
         assert params.ci_up is not None
         assert params.ci_up.mu_low == -0.1
+
+
+# ---------------------------------------------------------------------------
+# McSimulationOptimizeRequest DTO validation
+# ---------------------------------------------------------------------------
+
+class TestMcSimulationOptimizeRequestDTO:
+    def test_accepts_symbol_and_grid(self):
+        from dtos.simulation_dto import McSimulationOptimizeRequest
+
+        req = McSimulationOptimizeRequest(
+            symbol="AAPL",
+            start_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            param_grid={"num_paths": [500, 1000], "calibration_years": [5, 10]},
+        )
+        assert req.symbol == "AAPL"
+        assert req.optimize_metric == "prob_positive_return"
+
+    def test_rejects_invalid_date_order(self):
+        from dtos.simulation_dto import McSimulationOptimizeRequest
+
+        with pytest.raises(ValidationError):
+            McSimulationOptimizeRequest(
+                symbol="AAPL",
+                start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                end_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                param_grid={"num_paths": [500]},
+            )
+
+    def test_rejects_positive_drawdown_cap(self):
+        from dtos.simulation_dto import McSimulationOptimizeRequest
+
+        with pytest.raises(ValidationError):
+            McSimulationOptimizeRequest(
+                symbol="AAPL",
+                start_date=datetime(2023, 1, 1, tzinfo=timezone.utc),
+                end_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                param_grid={"num_paths": [500]},
+                max_drawdown_cap=0.25,
+            )
+
+
+# ---------------------------------------------------------------------------
+# POST /simulation/optimize route
+# ---------------------------------------------------------------------------
+
+class TestOptimizeMcSimulationRoute:
+    @pytest.mark.asyncio
+    async def test_optimize_happy_path(self):
+        from features.quantitative_engine.mc_simulation_optimizer import McSimulationOptimizationResult
+        from features.quantitative_engine.monte_carlo import SimulationStats
+        from routes.monte_carlo import optimize_mc_simulation
+        from dtos.simulation_dto import McSimulationOptimizeRequest
+
+        mock_stats = SimulationStats(
+            mean_terminal=1.1, std_terminal=0.05, p5=1.0, p25=1.05, p50=1.1,
+            p75=1.15, p95=1.2, prob_positive_return=0.65, mean_max_drawdown=-0.1,
+        )
+        mock_result = McSimulationOptimizationResult(
+            best_params={"num_paths": 1000, "calibration_years": 10},
+            best_metric=0.72,
+            best_avg_oos_max_drawdown=-0.15,
+            all_results=[{
+                "params": {"num_paths": 1000, "calibration_years": 10},
+                "avg_oos_metric": 0.72,
+                "avg_oos_max_drawdown": -0.15,
+            }],
+            n_splits=5,
+        )
+        mock_sim = MagicMock(stats=mock_stats, percentile_paths={"50": [1.0, 1.1]})
+
+        session = AsyncMock()
+        request = McSimulationOptimizeRequest(
+            symbol="AAPL",
+            start_date=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            param_grid={"num_paths": [500, 1000], "calibration_years": [10]},
+            n_splits=2,
+        )
+        df = pd.DataFrame({
+            "time": pd.date_range("2020-01-01", periods=200, freq="D", tz="UTC"),
+            "close": np.linspace(100, 150, 200),
+        })
+
+        with (
+            patch("routes.monte_carlo._resolve_asset_id", new=AsyncMock(return_value=1)),
+            patch("routes.monte_carlo.get_ohlcv", new=AsyncMock(return_value=df)),
+            patch("routes.monte_carlo.walk_forward_mc_simulation_optimize", return_value=mock_result),
+            patch("routes.monte_carlo.run_best_params_simulation", return_value=mock_sim),
+        ):
+            resp = await optimize_mc_simulation(request, session)
+
+        assert resp.status == "done"
+        assert resp.best_params == {"num_paths": 1000, "calibration_years": 10}
+        assert resp.best_run_stats is not None
+        assert resp.best_run_stats.prob_positive_return == 0.65
+
+    @pytest.mark.asyncio
+    async def test_optimize_insufficient_data_422(self):
+        from routes.monte_carlo import optimize_mc_simulation
+        from dtos.simulation_dto import McSimulationOptimizeRequest
+
+        session = AsyncMock()
+        request = McSimulationOptimizeRequest(
+            symbol="AAPL",
+            start_date=datetime(2020, 1, 1, tzinfo=timezone.utc),
+            end_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            param_grid={"num_paths": [500]},
+            n_splits=5,
+        )
+        df = pd.DataFrame({"time": [], "close": []})
+
+        with (
+            patch("routes.monte_carlo._resolve_asset_id", new=AsyncMock(return_value=1)),
+            patch("routes.monte_carlo.get_ohlcv", new=AsyncMock(return_value=df)),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await optimize_mc_simulation(request, session)
+        assert exc_info.value.status_code == 404

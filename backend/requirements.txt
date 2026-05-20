@@ -16,6 +16,7 @@ pandas>=2.1.0,<3.0
 numpy>=1.26,<3.0
 # Lower bound avoids pip backtracking to SciPy 1.11.x source builds (slim image lacks full Fortran toolchain).
 scipy>=1.13.0,<2
+scikit-learn>=1.4.0,<2
 
 # Market data providers
 yfinance>=0.2.40

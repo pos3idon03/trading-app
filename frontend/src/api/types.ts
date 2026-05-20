@@ -92,6 +92,8 @@ export interface SimulationStats {
   mean_max_drawdown: number;
 }
 
+export type McModelType = 'vasicek' | 'merton' | 'ou_deviation' | 'blended';
+
 export interface SimulationRequest {
   symbol: string;
   timeframe?: string;
@@ -100,7 +102,11 @@ export interface SimulationRequest {
   use_stored_params?: boolean;
   include_distribution?: boolean;
   calibration_years?: number;
-  model_type?: 'vasicek' | 'merton';
+  calibration_days?: number;
+  model_type?: McModelType;
+  ou_ma_window?: number;
+  adx_period?: number;
+  adx_trend_threshold?: number;
 }
 
 export interface DistributionPoint {
@@ -124,6 +130,214 @@ export interface SimulationResponse {
   percentile_paths?: Record<string, number[]>;
   duration_ms?: number;
   return_distribution?: ReturnDistribution;
+}
+
+export interface McSimulationOptimizeRequest {
+  symbol?: string;
+  asset_id?: number;
+  timeframe?: string;
+  start_date: string;
+  end_date: string;
+  model_type: McModelType;
+  horizon_steps: number;
+  param_grid: Record<string, number[]>;
+  n_splits?: number;
+  optimize_metric?: string;
+  max_drawdown_cap?: number;
+}
+
+export interface McSimulationOptimizeSummary {
+  params: Record<string, number>;
+  avg_oos_metric: number;
+  avg_oos_max_drawdown?: number | null;
+}
+
+export interface McSimulationOptimizeResponse {
+  asset_id: number;
+  symbol: string;
+  status: string;
+  optimize_metric: string;
+  n_splits: number;
+  best_params?: Record<string, number>;
+  best_metric?: number;
+  best_avg_oos_max_drawdown?: number | null;
+  all_results?: McSimulationOptimizeSummary[];
+  best_run_stats?: SimulationStats;
+  best_run_percentile_paths?: Record<string, number[]>;
+  duration_ms: number;
+  error_message?: string;
+}
+
+export interface McBacktestOptimizeRequest {
+  symbol?: string;
+  asset_id?: number;
+  timeframe?: McBacktestTimeframe;
+  start_date: string;
+  end_date: string;
+  model_type: McModelType;
+  param_grid: Record<string, number[]>;
+  n_splits?: number;
+  optimize_metric?: string;
+  initial_capital?: number;
+  max_drawdown_cap?: number;
+  calibration_days?: number;
+  min_trades?: number;
+}
+
+export interface McBacktestOptimizeSummary {
+  params: Record<string, number>;
+  avg_oos_metric: number;
+  avg_oos_max_drawdown?: number | null;
+  avg_oos_trades?: number | null;
+}
+
+export interface McBacktestOptimizeResponse {
+  asset_id: number;
+  symbol: string;
+  status: string;
+  optimize_metric: string;
+  n_splits: number;
+  best_params?: Record<string, number>;
+  best_metric?: number;
+  best_avg_oos_max_drawdown?: number | null;
+  all_results?: McBacktestOptimizeSummary[];
+  full_period_metrics?: BacktestMetrics;
+  holdout_metrics?: BacktestMetrics;
+  duration_ms: number;
+  error_message?: string;
+}
+
+export interface McBacktestOptimizeJobStartResponse {
+  job_id: number;
+  status: string;
+}
+
+export interface McBacktestOptimizeJobStatusResponse extends McBacktestOptimizeResponse {
+  job_id: number;
+  progress_pct: number;
+  progress_message?: string | null;
+  completed_steps: number;
+  total_steps?: number | null;
+}
+
+/** Preset applied from Optimize tab to Backtest tab. */
+export interface McBacktestPreset {
+  symbol: string;
+  modelType: McModelType;
+  timeframe: McBacktestTimeframe;
+  startDate: string;
+  endDate: string;
+  calibrationYears: number;
+  calibrationDays?: number;
+  numPaths: number;
+  buyPct: string;
+  sellPct: string;
+  probSmoothingBars?: number;
+  entryConfirmationBars?: number;
+  minHoldBars?: number;
+  cooldownBars?: number;
+  ouMaWindow?: number;
+  adxPeriod?: number;
+  adxTrendThreshold?: number;
+  comboEnabled?: boolean;
+  combinationMode?: CombinationMode;
+  comboThreshold?: number;
+  mcLegWeight?: number;
+  algoStrategies?: ComboStrategyEntry[];
+}
+
+export type McBacktestTimeframe = '5m' | '15m' | '30m' | '1h' | '4h' | '1d' | '1w';
+
+export interface McBacktestRequest {
+  symbol?: string;
+  asset_id?: number;
+  timeframe: McBacktestTimeframe;
+  start_date: string;
+  end_date: string;
+  model_type: McModelType;
+  calibration_years?: number;
+  calibration_days?: number;
+  num_paths: number;
+  buy_threshold: number;
+  sell_threshold: number;
+  initial_capital?: number;
+  prob_smoothing_bars?: number;
+  entry_confirmation_bars?: number;
+  min_hold_bars?: number;
+  cooldown_bars?: number;
+  ou_ma_window?: number;
+  adx_period?: number;
+  adx_trend_threshold?: number;
+  combo_enabled?: boolean;
+  combination_mode?: CombinationMode;
+  threshold?: number;
+  mc_leg_weight?: number;
+  algo_strategies?: ComboStrategyEntry[];
+  regime_timeframe?: McBacktestTimeframe | null;
+  structure_timeframe?: McBacktestTimeframe | null;
+  mtf_gate_enabled?: boolean;
+  regime_min_trend_weight?: number;
+  structure_veto_enabled?: boolean;
+  structure_max_trend_weight?: number;
+  threshold_mode?: 'static' | 'ml_dynamic' | 'suggested_percentile';
+  ml_threshold_model_path?: string | null;
+  regime_mode?: 'adx' | 'ml';
+  ml_regime_model_path?: string | null;
+  use_surrogate?: boolean;
+  ml_surrogate_model_path?: string | null;
+  surrogate_sample_pct?: number;
+}
+
+export interface McBacktestZoneStats {
+  entry_zone_pct: number;
+  exit_zone_pct: number;
+  middle_zone_pct: number;
+  bars_with_prob: number;
+  prob_min: number;
+  prob_p25: number;
+  prob_median: number;
+  prob_p75: number;
+  prob_max: number;
+  suggested_buy_threshold: number | null;
+  suggested_sell_threshold: number | null;
+}
+
+export interface McBacktestSignalPoint {
+  time: string;
+  prob_positive: number | null;
+  effective_prob?: number | null;
+  prob_trend?: number | null;
+  prob_reversion?: number | null;
+  regime_weight?: number | null;
+  regime_w_trend_htf?: number | null;
+  buy_threshold_effective?: number | null;
+  sell_threshold_effective?: number | null;
+  signal: string;
+}
+
+export interface McBacktestExecutionEvent {
+  time: string;
+  side: 'buy' | 'sell';
+  price: number;
+  equity: number;
+}
+
+export interface McBacktestResponse {
+  asset_id: number;
+  symbol: string;
+  status: string;
+  metrics?: BacktestMetrics;
+  equity_curve?: { time: string; value: number }[];
+  buy_hold_curve?: { time: string; value: number }[];
+  trade_log?: TradeRecord[];
+  execution_log?: McBacktestExecutionEvent[];
+  signal_log?: McBacktestSignalPoint[];
+  zone_stats?: McBacktestZoneStats;
+  combo_signals?: ComboStrategySignal[];
+  combined_signal_timeline?: SignalPoint[];
+  bars_evaluated: number;
+  duration_ms: number;
+  error_message?: string;
 }
 
 export interface BacktestRequest {

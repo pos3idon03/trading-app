@@ -51,6 +51,19 @@ class TestAlignStanceToExecution:
         aligned = align_stance_to_execution(stance, leg_df, exec_df)
         assert len(aligned) == len(exec_df)
 
+    def test_aligns_mixed_naive_and_utc_exec_times(self, hourly_base_df):
+        leg_df = resample_ohlcv_df(hourly_base_df, "4h")
+        exec_df = resample_ohlcv_df(hourly_base_df, "1h")
+        leg_df = leg_df.copy()
+        leg_df["time"] = pd.to_datetime(leg_df["time"], utc=True)
+        exec_df = exec_df.copy()
+        exec_df["time"] = pd.DatetimeIndex(
+            pd.to_datetime(exec_df["time"], utc=True),
+        ).tz_localize(None)
+        stance = pd.Series(["Buy"] * len(leg_df), index=leg_df.index)
+        aligned = align_stance_to_execution(stance, leg_df, exec_df)
+        assert len(aligned) == len(exec_df)
+
 
 class TestBuildMultiTfComboSignals:
     def test_produces_entry_exit_series(self, hourly_base_df):

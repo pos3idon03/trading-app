@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import BacktestEquityCurve from '../components/BacktestEquityCurve';
+import BacktestEquityCurve, { computeEquityYDomain } from '../components/BacktestEquityCurve';
 import type { TradeRecord } from '../api/types';
 
 vi.mock('recharts', () => ({
@@ -12,7 +12,9 @@ vi.mock('recharts', () => ({
     <div data-testid={`line-${dataKey}`} data-stroke={stroke} />
   ),
   XAxis: () => null,
-  YAxis: () => null,
+  YAxis: ({ domain }: { domain?: [number, number] }) => (
+    <div data-testid="y-axis" data-domain={domain?.join(',') ?? ''} />
+  ),
   Tooltip: () => null,
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   CartesianGrid: () => null,
@@ -139,5 +141,54 @@ describe('BacktestEquityCurve', () => {
       <BacktestEquityCurve data={equityCurve} gradientId="grad-1" compact />,
     );
     expect(container).toBeInTheDocument();
+  });
+
+  it('renders reference dots from executionLog when provided', () => {
+    render(
+      <BacktestEquityCurve
+        data={equityCurve}
+        gradientId="grad-1"
+        executionLog={[
+          { time: '2022-01-03 00:00:00', side: 'buy', price: 100, equity: 100000 },
+          { time: '2022-01-05 00:00:00', side: 'sell', price: 102, equity: 102000 },
+        ]}
+      />,
+    );
+    const dots = screen.getAllByTestId('reference-dot');
+    expect(dots.length).toBe(2);
+  });
+
+  it('skips outer card wrapper when bare is true', () => {
+    const { container } = render(
+      <BacktestEquityCurve data={equityCurve} gradientId="grad-1" bare />,
+    );
+    expect(container.querySelector('.card')).not.toBeInTheDocument();
+  });
+
+  it('sets y-axis domain rounded to nearest $100 from equity data', () => {
+    render(
+      <BacktestEquityCurve
+        data={[
+          { time: '2024-01-01', value: 1034 },
+          { time: '2024-01-02', value: 1187 },
+        ]}
+        gradientId="grad-domain"
+      />,
+    );
+    expect(screen.getByTestId('y-axis').getAttribute('data-domain')).toBe('1000,1200');
+  });
+});
+
+describe('computeEquityYDomain', () => {
+  it('rounds min down and max up to nearest $100', () => {
+    expect(computeEquityYDomain([1034, 1187])).toEqual([1000, 1200]);
+  });
+
+  it('pads flat lines by ±$100', () => {
+    expect(computeEquityYDomain([1000, 1000])).toEqual([900, 1100]);
+  });
+
+  it('includes buy-and-hold values in domain', () => {
+    expect(computeEquityYDomain([1050, 1100, 980])).toEqual([900, 1200]);
   });
 });

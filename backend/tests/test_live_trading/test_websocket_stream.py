@@ -32,13 +32,34 @@ def stream() -> AlpacaWebSocketStream:
             stream_reconnect_base_delay_sec=0.01,
             stream_reconnect_max_delay_sec=0.05,
             stream_connection_limit_cooldown_sec=1.0,
+            stream_stop_drain_sec=0.01,
         )
         return AlpacaWebSocketStream()
 
 
+@pytest.fixture()
+def rth_open():
+    with patch(
+        "features.live_trading.websocket_stream.should_run_stock_stream",
+        return_value=True,
+    ):
+        yield
+
+
+@pytest.fixture()
+def rth_closed():
+    with patch(
+        "features.live_trading.websocket_stream.should_run_stock_stream",
+        return_value=False,
+    ):
+        yield
+
+
 class TestStreamReconcile:
     @pytest.mark.asyncio
-    async def test_reconcile_creates_stock_task(self, stream: AlpacaWebSocketStream):
+    async def test_reconcile_creates_stock_task(
+        self, stream: AlpacaWebSocketStream, rth_open,
+    ):
         with patch.object(stream, "_run_channel", new=AsyncMock()):
             action = await stream.reconcile(_plan(("AAPL", "AAPL", "stock")))
             assert action == "restarted"
@@ -52,7 +73,9 @@ class TestStreamReconcile:
                     pass
 
     @pytest.mark.asyncio
-    async def test_reconcile_creates_both_channel_tasks(self, stream: AlpacaWebSocketStream):
+    async def test_reconcile_creates_both_channel_tasks(
+        self, stream: AlpacaWebSocketStream, rth_open,
+    ):
         with patch.object(stream, "_run_channel", new=AsyncMock()):
             plan = _plan(
                 ("AAPL", "AAPL", "stock"),
@@ -72,7 +95,9 @@ class TestStreamReconcile:
                         pass
 
     @pytest.mark.asyncio
-    async def test_reconcile_noop_when_same_plan_healthy(self, stream: AlpacaWebSocketStream):
+    async def test_reconcile_noop_when_same_plan_healthy(
+        self, stream: AlpacaWebSocketStream, rth_open,
+    ):
         plan = _plan(("AAPL", "AAPL", "stock"))
         stream._desired_plan = plan
         stream._active_plan = plan
@@ -109,7 +134,9 @@ class TestStreamReconcile:
             await stream._stock_task
 
     @pytest.mark.asyncio
-    async def test_reconcile_schedules_reconnect_when_unhealthy(self, stream: AlpacaWebSocketStream):
+    async def test_reconcile_schedules_reconnect_when_unhealthy(
+        self, stream: AlpacaWebSocketStream, rth_open,
+    ):
         plan = _plan(("AAPL", "AAPL", "stock"))
         stream._desired_plan = plan
         stream._active_plan = plan
@@ -120,7 +147,26 @@ class TestStreamReconcile:
             mock_reconnect.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_reconcile_returns_cooldown_when_in_cooldown(self, stream: AlpacaWebSocketStream):
+    async def test_reconcile_returns_reconnect_in_progress(
+        self, stream: AlpacaWebSocketStream, rth_open,
+    ):
+        plan = _plan(("AAPL", "AAPL", "stock"))
+        stream._desired_plan = plan
+        stream._reconnect_task = asyncio.create_task(asyncio.sleep(3600))
+
+        with patch.object(stream, "_ensure_reconnect_task") as mock_ensure:
+            action = await stream.reconcile(plan)
+            assert action == "reconnect_in_progress"
+            mock_ensure.assert_not_called()
+
+        stream._reconnect_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stream._reconnect_task
+
+    @pytest.mark.asyncio
+    async def test_reconcile_returns_cooldown_when_in_cooldown(
+        self, stream: AlpacaWebSocketStream, rth_open,
+    ):
         plan = _plan(("AAPL", "AAPL", "stock"))
         stream._desired_plan = plan
         stream._cooldown_until = datetime.now(timezone.utc).replace(year=2099)
@@ -238,7 +284,7 @@ class TestRunChannel:
         with patch.object(
             stream,
             "_run_stock_once",
-            new=AsyncMock(side_effect=ValueError("connection limit exceeded")),
+            new=AsyncMock(side_effect=ValueError("socket closed")),
         ) as mock_run:
             with patch.object(stream, "_ensure_reconnect_task") as mock_reconnect:
                 await stream._run_channel("stock", ["AAPL"])
@@ -265,3 +311,94 @@ class TestRunChannel:
                 await stream._run_stock_once(["AAPL"])
                 mock_thread.assert_awaited_once_with(mock_alpaca.run)
         assert stream.status.stock_connected is False
+
+
+class TestOffHoursStockStream:
+    @pytest.mark.asyncio
+    async def test_off_hours_skips_stock_task(
+        self, stream: AlpacaWebSocketStream, rth_closed,
+    ):
+        plan = _plan(
+            ("AAPL", "AAPL", "stock"),
+            ("BTC-USD", "BTC/USD", "crypto"),
+        )
+        with patch.object(stream, "_run_channel", new=AsyncMock()):
+            await stream.reconcile(plan)
+            assert stream._stock_task is None
+            assert stream._crypto_task is not None
+            if stream._crypto_task and not stream._crypto_task.done():
+                stream._crypto_task.cancel()
+                try:
+                    await stream._crypto_task
+                except asyncio.CancelledError:
+                    pass
+
+    @pytest.mark.asyncio
+    async def test_off_hours_healthy_with_crypto_connected(
+        self, stream: AlpacaWebSocketStream, rth_closed,
+    ):
+        plan = _plan(
+            ("AAPL", "AAPL", "stock"),
+            ("BTC-USD", "BTC/USD", "crypto"),
+        )
+        stream._desired_plan = plan
+        stream._crypto_connected = True
+        stream._crypto_task = asyncio.create_task(asyncio.sleep(3600))
+        assert stream._is_healthy() is True
+        stream._crypto_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stream._crypto_task
+
+    @pytest.mark.asyncio
+    async def test_rth_open_requires_stock_channel(
+        self, stream: AlpacaWebSocketStream, rth_open,
+    ):
+        plan = _plan(("AAPL", "AAPL", "stock"))
+        stream._desired_plan = plan
+        assert stream._is_healthy() is False
+
+
+class TestPartialReconnect:
+    @pytest.mark.asyncio
+    async def test_unhealthy_channels_excludes_healthy_crypto(
+        self, stream: AlpacaWebSocketStream, rth_open,
+    ):
+        plan = _plan(
+            ("AAPL", "AAPL", "stock"),
+            ("BTC-USD", "BTC/USD", "crypto"),
+        )
+        stream._crypto_connected = True
+        stream._crypto_task = asyncio.create_task(asyncio.sleep(3600))
+        assert stream._unhealthy_channels(plan) == ["stock"]
+        stream._crypto_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await stream._crypto_task
+
+    @pytest.mark.asyncio
+    async def test_partial_stop_preserves_last_tick_at(self, stream: AlpacaWebSocketStream):
+        stream._status.last_tick_at = datetime(2026, 5, 20, 9, 0, tzinfo=timezone.utc)
+        with patch("asyncio.sleep", new=AsyncMock()):
+            await stream._stop_channel("stock")
+        assert stream._status.last_tick_at is not None
+
+    @pytest.mark.asyncio
+    async def test_full_stop_clears_last_tick_at(self, stream: AlpacaWebSocketStream):
+        stream._status.last_tick_at = datetime(2026, 5, 20, 9, 0, tzinfo=timezone.utc)
+        with patch.object(stream, "_stop_channel", new=AsyncMock()):
+            await stream._stop_channels(clear_desired=False)
+        assert stream._status.last_tick_at is None
+
+    @pytest.mark.asyncio
+    async def test_run_channel_skips_reconnect_during_cooldown(
+        self, stream: AlpacaWebSocketStream,
+    ):
+        stream._desired_plan = _plan(("AAPL", "AAPL", "stock"))
+        stream._cooldown_until = datetime.now(timezone.utc).replace(year=2099)
+        with patch.object(
+            stream,
+            "_run_stock_once",
+            new=AsyncMock(side_effect=ValueError("connection limit exceeded")),
+        ):
+            with patch.object(stream, "_ensure_reconnect_task") as mock_reconnect:
+                await stream._run_channel("stock", ["AAPL"])
+                mock_reconnect.assert_not_called()

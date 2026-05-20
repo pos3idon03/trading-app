@@ -24,6 +24,11 @@ def is_us_equity_rth_open(now: datetime | None = None) -> bool:
     return _RTH_OPEN <= minutes < _RTH_CLOSE
 
 
+def should_run_stock_stream(now: datetime | None = None) -> bool:
+    """Return True when the Alpaca stock WebSocket should be active."""
+    return is_us_equity_rth_open(now)
+
+
 def should_skip_order_for_asset_type(asset_type: str) -> bool:
     """Stocks/ETFs only trade in RTH; crypto is 24/7."""
     return asset_type in ("stock", "equity", "etf")

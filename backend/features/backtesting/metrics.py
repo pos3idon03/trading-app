@@ -85,6 +85,7 @@ def compile_all_metrics(
     equity: pd.Series,
     trades: list[dict],
     rf: float = 0.0,
+    periods_per_year: int = TRADING_DAYS,
 ) -> dict:
     """Compute and return all performance metrics as a dict.
 
@@ -92,12 +93,12 @@ def compile_all_metrics(
     result is always JSON-serializable.
     """
     return {
-        "sharpe_ratio": calculate_sharpe(returns, rf),
-        "sortino_ratio": calculate_sortino(returns, rf),
+        "sharpe_ratio": calculate_sharpe(returns, rf, periods_per_year),
+        "sortino_ratio": calculate_sortino(returns, rf, periods_per_year),
         "max_drawdown": calculate_max_drawdown(equity),
         "win_rate": calculate_win_rate(trades),
         "profit_factor": calculate_profit_factor(trades),
         "total_return": _safe_total_return(equity),
-        "annualized_return": calculate_annualized_return(equity),
+        "annualized_return": calculate_annualized_return(equity, periods_per_year),
         "num_trades": len(trades),
     }

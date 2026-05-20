@@ -160,12 +160,15 @@ async def sync_stream_with_running_assets(
     stream = get_stream()
     action = await stream.reconcile(plan)
 
-    logger.info(
-        "stream_reconciled",
-        action=action,
-        symbols=plan.app_symbols,
-        timeframes=config.timeframes,
-        connected=stream.status.connected,
-        reconnecting=stream.status.reconnecting,
-    )
+    log_kwargs = {
+        "action": action,
+        "symbols": plan.app_symbols,
+        "timeframes": config.timeframes,
+        "connected": stream.status.connected,
+        "reconnecting": stream.status.reconnecting,
+    }
+    if action in ("reconnect_in_progress", "cooldown", "noop"):
+        logger.debug("stream_reconciled", **log_kwargs)
+    else:
+        logger.info("stream_reconciled", **log_kwargs)
     return config
