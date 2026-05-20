@@ -84,25 +84,34 @@ export function buildCriteriaEvaluations(
 
 // ---------------------------------------------------------------------------
 // Combine individual signals using the configured combination mode.
-// Algo strategy signals are treated as one vote each (same weight as criteria).
+// Votes: criteria + standalone algos + one vote per combo (not per combo leg).
 // ---------------------------------------------------------------------------
 
-export function combineSignals(
+/** Build vote list for combined signal (matches server auto-trading). */
+export function buildCombinedVotes(
   criteria: CriterionEvaluation[],
   algoSignals: AttachedAlgoSignal[],
+  comboSignals: ComboGroupSignal[],
+): CriteriaSignal[] {
+  const standalone = algoSignals
+    .filter((a) => !a.comboGroup)
+    .map((a) => a.signal as CriteriaSignal);
+  const comboVotes = comboSignals.map((c) => c.signal);
+  return [...criteria.map((c) => c.signal), ...standalone, ...comboVotes];
+}
+
+export function combineSignalsFromVotes(
+  votes: CriteriaSignal[],
   mode: 'all' | 'majority' | 'any',
 ): CriteriaSignal {
-  const allSignals: CriteriaSignal[] = [
-    ...criteria.map((c) => c.signal),
-    ...algoSignals.map((a) => a.signal as CriteriaSignal),
-  ];
+  const total = votes.length;
+  if (total === 0) return 'NEUTRAL';
 
-  const active = allSignals.filter((s) => s !== 'NEUTRAL');
+  const active = votes.filter((s) => s !== 'NEUTRAL');
   if (active.length === 0) return 'NEUTRAL';
 
   const buys = active.filter((s) => s === 'BUY').length;
   const sells = active.filter((s) => s === 'SELL').length;
-  const total = allSignals.length;
 
   if (mode === 'all') {
     if (buys === total) return 'BUY';
@@ -116,10 +125,22 @@ export function combineSignals(
     return 'NEUTRAL';
   }
 
-  // 'any'
-  if (buys > 0) return 'BUY';
+  // 'or' / 'any' — sell-first on conflict
   if (sells > 0) return 'SELL';
+  if (buys > 0) return 'BUY';
   return 'NEUTRAL';
+}
+
+export function combineSignals(
+  criteria: CriterionEvaluation[],
+  algoSignals: AttachedAlgoSignal[],
+  comboSignals: ComboGroupSignal[],
+  mode: 'all' | 'majority' | 'any',
+): CriteriaSignal {
+  return combineSignalsFromVotes(
+    buildCombinedVotes(criteria, algoSignals, comboSignals),
+    mode,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +149,52 @@ export function combineSignals(
 
 interface ComboParams {
   combination_mode: string;
-  strategies: { strategy_name: string }[];
+  strategies: { strategy_name: string; timeframe?: string }[];
+}
+
+/** Collect unique signal timeframes from attached algo summaries. */
+export function collectUniqueAlgoTimeframes(
+  summaries: AlgoStrategySummary[],
+  fallback: string = '1d',
+): string[] {
+  const set = new Set<string>();
+  for (const summary of summaries) {
+    set.add(summary.timeframe || fallback);
+    if (summary.strategy_name.startsWith('combo:')) {
+      const combo = parseComboParams(summary.params);
+      if (combo) {
+        for (const leg of combo.strategies) {
+          if (leg.timeframe) set.add(leg.timeframe);
+        }
+      }
+    }
+  }
+  if (set.size === 0) set.add(fallback);
+  return [...set];
+}
+
+/** Strategy names attached to a given signal timeframe (standalone + combo legs). */
+export function strategyNamesForTimeframe(
+  summaries: AlgoStrategySummary[],
+  tf: string,
+  fallback = '1d',
+): string[] {
+  const names: string[] = [];
+  for (const summary of summaries) {
+    if (!summary.strategy_name.startsWith('combo:')) {
+      if ((summary.timeframe || fallback) === tf) {
+        names.push(summary.strategy_name);
+      }
+      continue;
+    }
+    const combo = parseComboParams(summary.params);
+    if (!combo) continue;
+    for (const leg of combo.strategies) {
+      const legTf = leg.timeframe ?? summary.timeframe ?? fallback;
+      if (legTf === tf) names.push(leg.strategy_name);
+    }
+  }
+  return names;
 }
 
 function parseComboParams(params: Record<string, unknown> | null): ComboParams | null {
@@ -166,6 +232,7 @@ export function expandAlgoSignals(
             strategy: s.strategy_name,
             label: s.strategy_name,
             signal: live?.signal ?? 'NEUTRAL',
+            signalTimeframe: s.timeframe ?? summary.timeframe,
             comboGroup: summary.strategy_name,
             indicatorValue: live?.indicator_value ?? null,
             indicatorLabel: live?.indicator_label ?? null,
@@ -198,6 +265,7 @@ export function expandAlgoSignals(
         strategy: summary.strategy_name,
         label: summary.strategy_name,
         signal: live?.signal ?? 'NEUTRAL',
+        signalTimeframe: summary.timeframe,
         indicatorValue: live?.indicator_value ?? null,
         indicatorLabel: live?.indicator_label ?? null,
         params: live?.params ?? null,
@@ -235,9 +303,12 @@ function computeComboModeSignal(
     return 'NEUTRAL';
   }
 
-  // 'any' / 'or' / weighted fallback
-  if (buys > 0) return 'BUY';
-  if (sells > 0) return 'SELL';
+  if (mode === 'or' || mode === 'any') {
+    if (sells > 0) return 'SELL';
+    if (buys > 0) return 'BUY';
+    return 'NEUTRAL';
+  }
+
   return 'NEUTRAL';
 }
 
@@ -252,6 +323,7 @@ const TIMEFRAME_MS: Record<string, number> = {
   '30m': 1_800_000,
   '1h': 3_600_000,
   '3h': 10_800_000,
+  '4h': 14_400_000,
   '1d': 86_400_000,
   '1w': 604_800_000,
 };

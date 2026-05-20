@@ -21,11 +21,15 @@ import type {
   OrderItem,
 } from '../api/types';
 import {
+  buildCombinedVotes,
   buildCriteriaEvaluations,
-  combineSignals,
+  collectUniqueAlgoTimeframes,
+  combineSignalsFromVotes,
   expandAlgoSignals,
+  strategyNamesForTimeframe,
   timeframeToMs,
 } from '../utils/executionSignals';
+import { finestTimeframe } from '../utils/timelineAlignment';
 
 const ASSET_LIST_INTERVAL_MS = 30_000;
 const ORDER_INTERVAL_MS = 30_000;
@@ -71,7 +75,8 @@ function buildMonitor(
 ): ExecutionAssetMonitor {
   const criteria = buildCriteriaEvaluations(asset);
   const { algoSignals, comboSignals } = expandAlgoSignals(algoSummaries, liveByStrategy);
-  const overallSignal = combineSignals(criteria, algoSignals, asset.combination_mode);
+  const votes = buildCombinedVotes(criteria, algoSignals, comboSignals);
+  const overallSignal = combineSignalsFromVotes(votes, asset.combination_mode);
 
   return {
     strategyId: asset.strategy_id,
@@ -82,6 +87,7 @@ function buildMonitor(
     algoTimeframe: asset.algo_timeframe,
     criteria,
     overallSignal,
+    combinedVoteCount: votes.length,
     algoSignals,
     comboSignals,
     latestPrice,
@@ -118,8 +124,10 @@ export function useExecutionMonitor(options: ExecutionMonitorOptions = {}) {
   const orderPageByStrategyRef = useRef<Map<number, number>>(new Map());
   const assetsRef = useRef<AutoTradingAssetRow[]>([]);
 
-  // Interval handles keyed by strategy_id
-  const liveIntervalsRef = useRef<Map<number, ReturnType<typeof setInterval>>>(new Map());
+  // Per-asset, per-timeframe poll intervals (key __indicators__ for price/indicator snapshot)
+  const liveIntervalsRef = useRef<
+    Map<number, Map<string, ReturnType<typeof setInterval>>>
+  >(new Map());
   const orderIntervalsRef = useRef<Map<number, ReturnType<typeof setInterval>>>(new Map());
   const assetListIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -159,18 +167,10 @@ export function useExecutionMonitor(options: ExecutionMonitorOptions = {}) {
   // Per-asset live poll (indicators + strategy signals)
   // ---------------------------------------------------------------------------
 
-  const pollLiveData = useCallback(async (asset: AutoTradingAssetRow) => {
-    try {
-      const [indicators, strategySignals] = await Promise.allSettled([
-        liveApi.getIndicators(asset.symbol, asset.algo_timeframe),
-        liveApi.getStrategySignals(asset.symbol, asset.algo_timeframe, {
-          includeTimeline: true,
-          timelineBars: 120,
-        }),
-      ]);
-
-      if (indicators.status === 'fulfilled') {
-        const ind = indicators.value;
+  const pollIndicators = useCallback(
+    async (asset: AutoTradingAssetRow, finestTf: string) => {
+      try {
+        const ind = await liveApi.getIndicators(asset.symbol, finestTf);
         priceRef.current.set(asset.strategy_id, {
           price: ind.close_price ?? null,
           at: ind.created_at ?? null,
@@ -187,23 +187,58 @@ export function useExecutionMonitor(options: ExecutionMonitorOptions = {}) {
           vwap: ind.vwap ?? null,
           bb_percent: ind.bb_percent ?? null,
         });
+        publishMonitors();
+      } catch {
+        // keep stale indicators
       }
+    },
+    [publishMonitors],
+  );
 
-      if (strategySignals.status === 'fulfilled') {
-        // Store full signal item (includes indicator_value, indicator_label, params)
-        const map = new Map<string, LiveStrategySignalItem>();
-        for (const s of strategySignals.value.strategies) {
-          map.set(s.strategy, s);
+  const pollSignalsForTimeframe = useCallback(
+    async (asset: AutoTradingAssetRow, tf: string) => {
+      try {
+        const summaries = algoSummariesRef.current.get(asset.strategy_id) ?? [];
+        const names = strategyNamesForTimeframe(
+          summaries,
+          tf,
+          asset.algo_timeframe,
+        );
+        if (names.length === 0) return;
+
+        const resp = await liveApi.getStrategySignals(asset.symbol, tf, {
+          includeTimeline: true,
+          timelineBars: 120,
+          strategyNames: names,
+        });
+
+        const existing =
+          liveByStrategyRef.current.get(asset.strategy_id) ?? new Map();
+        for (const s of resp.strategies) {
+          existing.set(s.strategy, s);
         }
-        liveByStrategyRef.current.set(asset.strategy_id, map);
+        liveByStrategyRef.current.set(asset.strategy_id, existing);
+        lastLivePollAtRef.current.set(asset.strategy_id, new Date().toISOString());
+        publishMonitors();
+      } catch {
+        // keep stale signals
       }
+    },
+    [publishMonitors],
+  );
 
-      lastLivePollAtRef.current.set(asset.strategy_id, new Date().toISOString());
-      publishMonitors();
-    } catch {
-      // Silently ignore individual poll failures; stale data stays visible
-    }
-  }, [publishMonitors]);
+  const pollLiveData = useCallback(
+    async (asset: AutoTradingAssetRow) => {
+      const summaries = algoSummariesRef.current.get(asset.strategy_id) ?? [];
+      const timeframes = collectUniqueAlgoTimeframes(summaries, asset.algo_timeframe);
+      const finestTf = finestTimeframe(timeframes);
+      await Promise.allSettled([
+        pollIndicators(asset, finestTf),
+        ...timeframes.map((tf) => pollSignalsForTimeframe(asset, tf)),
+      ]);
+    },
+    [pollIndicators, pollSignalsForTimeframe],
+  );
 
   // ---------------------------------------------------------------------------
   // Per-asset order poll
@@ -244,13 +279,39 @@ export function useExecutionMonitor(options: ExecutionMonitorOptions = {}) {
   // Start monitoring a newly detected asset
   // ---------------------------------------------------------------------------
 
+  const clearLiveIntervals = useCallback((strategyId: number) => {
+    const tfIntervals = liveIntervalsRef.current.get(strategyId);
+    if (tfIntervals) {
+      for (const handle of tfIntervals.values()) clearInterval(handle);
+      liveIntervalsRef.current.delete(strategyId);
+    }
+  }, []);
+
   const scheduleLivePoll = useCallback(
     (asset: AutoTradingAssetRow) => {
-      const liveMs = resolveLivePollMs(asset.algo_timeframe, livePollMaxIntervalMs);
-      const liveInterval = setInterval(() => pollLiveData(asset), liveMs);
-      liveIntervalsRef.current.set(asset.strategy_id, liveInterval);
+      clearLiveIntervals(asset.strategy_id);
+      const summaries = algoSummariesRef.current.get(asset.strategy_id) ?? [];
+      const timeframes = collectUniqueAlgoTimeframes(summaries, asset.algo_timeframe);
+      const finestTf = finestTimeframe(timeframes);
+      const tfIntervals = new Map<string, ReturnType<typeof setInterval>>();
+
+      const indMs = resolveLivePollMs(finestTf, livePollMaxIntervalMs);
+      tfIntervals.set(
+        '__indicators__',
+        setInterval(() => pollIndicators(asset, finestTf), indMs),
+      );
+
+      for (const tf of timeframes) {
+        const ms = resolveLivePollMs(tf, livePollMaxIntervalMs);
+        tfIntervals.set(
+          tf,
+          setInterval(() => pollSignalsForTimeframe(asset, tf), ms),
+        );
+      }
+
+      liveIntervalsRef.current.set(asset.strategy_id, tfIntervals);
     },
-    [livePollMaxIntervalMs, pollLiveData],
+    [clearLiveIntervals, livePollMaxIntervalMs, pollIndicators, pollSignalsForTimeframe],
   );
 
   const refreshLiveData = useCallback(async () => {
@@ -288,8 +349,7 @@ export function useExecutionMonitor(options: ExecutionMonitorOptions = {}) {
   // ---------------------------------------------------------------------------
 
   const stopAssetMonitoring = useCallback((strategyId: number) => {
-    const li = liveIntervalsRef.current.get(strategyId);
-    if (li) { clearInterval(li); liveIntervalsRef.current.delete(strategyId); }
+    clearLiveIntervals(strategyId);
     const oi = orderIntervalsRef.current.get(strategyId);
     if (oi) { clearInterval(oi); orderIntervalsRef.current.delete(strategyId); }
     algoSummariesRef.current.delete(strategyId);
@@ -300,7 +360,7 @@ export function useExecutionMonitor(options: ExecutionMonitorOptions = {}) {
     ordersRef.current.delete(strategyId);
     ordersTotalByStrategyRef.current.delete(strategyId);
     orderPageByStrategyRef.current.delete(strategyId);
-  }, []);
+  }, [clearLiveIntervals]);
 
   // ---------------------------------------------------------------------------
   // Reconcile asset list: start monitoring new assets, stop removed ones
@@ -355,7 +415,9 @@ export function useExecutionMonitor(options: ExecutionMonitorOptions = {}) {
 
     return () => {
       if (assetListIntervalRef.current) clearInterval(assetListIntervalRef.current);
-      for (const id of liveIntervalsRef.current.values()) clearInterval(id);
+      for (const strategyId of [...liveIntervalsRef.current.keys()]) {
+        clearLiveIntervals(strategyId);
+      }
       for (const id of orderIntervalsRef.current.values()) clearInterval(id);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

@@ -153,12 +153,14 @@ export interface OptimizationRequest {
   max_drawdown_cap?: number;
 }
 
-export type CombinationMode = 'and' | 'majority' | 'weighted';
+export type CombinationMode = 'and' | 'or' | 'majority' | 'weighted';
 
 export interface ComboStrategyEntry {
   strategy_name: string;
   strategy_params: Record<string, unknown>;
   weight?: number;
+  /** Signal evaluation timeframe for this combo leg */
+  timeframe?: string;
 }
 
 export interface ComboBacktestRequest {
@@ -578,7 +580,10 @@ export interface BacktestResponse {
 // Strategy Builder
 // ---------------------------------------------------------------------------
 
-export type AlgoTimeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '3h' | '1d' | '1w';
+export type AlgoTimeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '3h' | '4h' | '1d' | '1w';
+
+/** Canonical signal timeframes used when attaching from backtest */
+export type SignalTimeframe = '5m' | '15m' | '30m' | '1h' | '4h' | '1d' | '1w';
 
 export interface StrategyRecord {
   id: number;
@@ -704,6 +709,7 @@ export interface AlgoStrategySummary {
   algo_attachment_id: number;
   strategy_name: string;
   params: Record<string, unknown> | null;
+  timeframe: string;
   added_at: string;
 }
 
@@ -749,6 +755,7 @@ export interface AttachAlgoRequest {
   asset_id: number;
   strategy_name: string;
   params?: Record<string, unknown> | null;
+  timeframe: string;
 }
 
 export interface DetachAlgoRequest {
@@ -772,6 +779,8 @@ export interface AttachedAlgoSignal {
   strategy: string;
   label: string;
   signal: 'BUY' | 'SELL' | 'NEUTRAL';
+  /** Signal evaluation timeframe for this leg */
+  signalTimeframe?: string;
   /** Set when this signal belongs to a combo backtest group */
   comboGroup?: string;
   indicatorValue?: number | null;
@@ -813,6 +822,8 @@ export interface ExecutionAssetMonitor {
   criteria: CriterionEvaluation[];
   // Overall combined signal
   overallSignal: CriteriaSignal;
+  /** Number of votes in combined signal (criteria + standalone algos + combos). */
+  combinedVoteCount: number;
   // Attached algo strategy signals (expanded: individual strategies within combos are listed)
   algoSignals: AttachedAlgoSignal[];
   // Per-combo combined signal (one entry per attached combo backtest)

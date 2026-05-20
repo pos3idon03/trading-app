@@ -9,10 +9,17 @@ import {
   Legend,
 } from 'recharts';
 import type { AttachedAlgoSignal, ComboStrategySignal, SignalPoint } from '../api/types';
+import {
+  buildAlignedTimelineData,
+  buildRawTimelineData,
+  type TimelinePoint,
+} from '../utils/timelineAlignment';
 
 interface ComboSignalTimelineProps {
   strategies: ComboStrategySignal[];
   syncId?: string;
+  /** Finest leg TF grid for aligning mismatched leg timelines (e.g. 15m + 1h). */
+  alignmentTimeframe?: string;
   /** Shorter chart for execution monitor cards */
   compact?: boolean;
   /** Use time-of-day x-axis labels for intraday timeframes */
@@ -112,28 +119,6 @@ function signalClass(v: number): string {
   return 'text-red-400';
 }
 
-interface TimelinePoint {
-  time: string;
-  [strategyKey: string]: number | string;
-}
-
-function buildTimelineData(strategies: ComboStrategySignal[]): TimelinePoint[] {
-  if (strategies.length === 0) return [];
-
-  const timeMap = new Map<string, TimelinePoint>();
-
-  strategies.forEach((strategy) => {
-    strategy.signal_timeline.forEach(({ time, signal }) => {
-      if (!timeMap.has(time)) {
-        timeMap.set(time, { time });
-      }
-      timeMap.get(time)![strategy.strategy_name] = signalToValue(signal);
-    });
-  });
-
-  return Array.from(timeMap.values()).sort((a, b) => a.time.localeCompare(b.time));
-}
-
 function formatXTick(value: string, intraday: boolean): string {
   if (!value) return '';
   const d = new Date(value);
@@ -220,13 +205,17 @@ function SignalAgreementBanner({
 export function ComboSignalTimeline({
   strategies,
   syncId,
+  alignmentTimeframe,
   compact = false,
   intraday = false,
   hideHeader = false,
 }: ComboSignalTimelineProps) {
   if (strategies.length === 0) return null;
 
-  const data = buildTimelineData(strategies);
+  const data =
+    strategies.length === 1
+      ? buildRawTimelineData(strategies[0])
+      : buildAlignedTimelineData(strategies, alignmentTimeframe);
   const chartHeight = compact ? 120 : 180;
 
   return (
@@ -280,6 +269,7 @@ export function ComboSignalTimeline({
                 stroke={STRATEGY_COLORS[idx % STRATEGY_COLORS.length]}
                 strokeWidth={2}
                 dot={false}
+                connectNulls
                 isAnimationActive={false}
               />
             ))}

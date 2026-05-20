@@ -226,16 +226,26 @@ async def get_strategy_signals(
     timeframe: str = Query("1h", description="Timeframe for strategy evaluation"),
     include_timeline: bool = Query(False, description="Include per-bar signal timeline"),
     timeline_bars: int = Query(120, ge=30, le=250, description="Bars in timeline when enabled"),
+    strategies: str | None = Query(
+        None,
+        description="Comma-separated strategy names to evaluate (attached algos only)",
+    ),
     session: AsyncSession = Depends(get_db),
 ):
     symbol = symbol.upper()
     bars = await _resolve_live_bars(session, symbol, timeframe)
+    strategy_filter = (
+        [s.strip() for s in strategies.split(",") if s.strip()]
+        if strategies
+        else None
+    )
 
-    strategies = compute_strategy_signals(
+    signal_results = compute_strategy_signals(
         bars,
         symbol,
         include_timeline=include_timeline,
         timeline_bars=timeline_bars,
+        strategy_names=strategy_filter,
     )
     return StrategySignalsResponse(
         symbol=symbol,
@@ -252,7 +262,7 @@ async def get_strategy_signals(
                 params=s.params,
                 signal_timeline=s.signal_timeline,
             )
-            for s in strategies
+            for s in signal_results
         ],
     )
 

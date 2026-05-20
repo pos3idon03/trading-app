@@ -11,7 +11,14 @@ import IndicatorChart from './IndicatorChart';
 
 interface BacktestResultCardProps {
   result: BacktestResponse;
-  onAddToStrategy?: (strategyName: string, params: Record<string, unknown>, assetId: number) => Promise<void>;
+  onAddToStrategy?: (
+    strategyName: string,
+    params: Record<string, unknown>,
+    assetId: number,
+    timeframe: string,
+  ) => Promise<void>;
+  /** Timeframe to persist when using + Strategy (from backtest Price Frequency or combo leg). */
+  attachTimeframe?: string;
   syncId?: string;
 }
 
@@ -39,19 +46,26 @@ function AddToStrategyButton({
   strategyName,
   params,
   assetId,
+  timeframe,
   onAdd,
 }: {
   strategyName: string;
   params: Record<string, unknown>;
   assetId: number;
-  onAdd: (strategyName: string, params: Record<string, unknown>, assetId: number) => Promise<void>;
+  timeframe: string;
+  onAdd: (
+    strategyName: string,
+    params: Record<string, unknown>,
+    assetId: number,
+    timeframe: string,
+  ) => Promise<void>;
 }) {
   const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
 
   const handleClick = async () => {
     setState('loading');
     try {
-      await onAdd(strategyName, params, assetId);
+      await onAdd(strategyName, params, assetId, timeframe);
       setState('done');
     } catch {
       setState('error');
@@ -81,7 +95,12 @@ function AddToStrategyButton({
   );
 }
 
-export default function BacktestResultCard({ result, onAddToStrategy, syncId }: BacktestResultCardProps) {
+export default function BacktestResultCard({
+  result,
+  onAddToStrategy,
+  syncId,
+  attachTimeframe = '1d',
+}: BacktestResultCardProps) {
   const gradientId = `equityGrad-${result.strategy_name}`;
   const hasEquity = (result.equity_curve ?? []).length > 0;
   const hasIndicators = (result.indicator_series ?? []).length > 0;
@@ -99,6 +118,7 @@ export default function BacktestResultCard({ result, onAddToStrategy, syncId }: 
               strategyName={result.strategy_name}
               params={result.strategy_params ?? {}}
               assetId={result.asset_id}
+              timeframe={attachTimeframe}
               onAdd={onAddToStrategy}
             />
           )}

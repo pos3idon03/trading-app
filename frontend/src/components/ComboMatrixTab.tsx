@@ -36,6 +36,12 @@ const COMBINATION_MODES: { value: CombinationMode; label: string; description: s
     description: 'Enter when every leg is Buy; exit when every leg is Sell.',
   },
   {
+    value: 'or',
+    label: 'OR (Any)',
+    description:
+      'Enter when any leg is Buy; exit when any leg is Sell. Sell wins if legs disagree.',
+  },
+  {
     value: 'majority',
     label: 'Majority Vote',
     description: 'More Buy than Sell votes wins (Neutral abstains).',

@@ -49,6 +49,50 @@ def _calc_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 1
     return tr.ewm(span=period, adjust=False).mean()
 
 
+def _compute_atr_trailing_stop_state(
+    close: pd.Series,
+    atr: pd.Series,
+    trend: pd.Series,
+    atr_multiplier: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bar-by-bar ATR trailing stop with upward-only stop ratcheting."""
+    n = len(close)
+    close_vals = close.to_numpy(dtype=float, copy=False)
+    atr_vals = atr.to_numpy(dtype=float, copy=False)
+    above_trend = (close > trend).to_numpy(dtype=bool, copy=False)
+
+    entries = np.zeros(n, dtype=bool)
+    exits = np.zeros(n, dtype=bool)
+    stop_levels = np.full(n, np.nan, dtype=float)
+
+    in_position = False
+    trailing_stop = np.nan
+
+    for i in range(1, n):
+        if not in_position:
+            if above_trend[i] and not above_trend[i - 1]:
+                candidate = close_vals[i] - atr_multiplier * atr_vals[i]
+                if not np.isfinite(candidate):
+                    continue
+                in_position = True
+                trailing_stop = candidate
+                entries[i] = True
+                stop_levels[i] = trailing_stop
+            continue
+
+        candidate = close_vals[i] - atr_multiplier * atr_vals[i]
+        if np.isfinite(candidate):
+            trailing_stop = max(trailing_stop, candidate)
+        stop_levels[i] = trailing_stop
+
+        if close_vals[i] < trailing_stop:
+            exits[i] = True
+            in_position = False
+            trailing_stop = np.nan
+
+    return entries, exits, stop_levels
+
+
 def _calc_adx(
     high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14
 ) -> pd.Series:

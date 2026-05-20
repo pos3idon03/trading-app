@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dal.execution_dal import create_order, update_order_status
+from dal.execution_dal import create_order, has_open_order_for_symbol, update_order_status
+from features.execution.market_hours import is_us_equity_rth_open, should_skip_order_for_asset_type
 from dal.strategy_builder_dal import get_linked_algos, list_auto_trading_assets
 from features.execution.broker_client import has_position
 from features.execution.order_sync import parse_filled_at, wait_for_order_terminal
@@ -26,8 +27,9 @@ from features.live_trading.resampler import ResamplingEngine
 from features.live_trading.signal_aggregator import AggregatedSignal
 from features.live_trading.strategy_signals import (
     MIN_BARS_REQUIRED,
-    compute_strategy_signals,
+    compute_strategy_signal,
 )
+from utils.timeframes import normalize_timeframe
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -103,11 +105,11 @@ def combine_signals(
             return "SELL"
         return "NEUTRAL"
 
-    # 'any'
-    if buys > 0:
-        return "BUY"
+    # 'any' / 'or' — sell-first on conflict
     if sells > 0:
         return "SELL"
+    if buys > 0:
+        return "BUY"
     return "NEUTRAL"
 
 
@@ -129,10 +131,30 @@ async def _get_bars_for_asset(
 # Algo signal extraction from live strategy signals
 # ---------------------------------------------------------------------------
 
+async def _signal_for_strategy(
+    session: AsyncSession,
+    symbol: str,
+    strategy_name: str,
+    params: dict | None,
+    timeframe: str,
+    resampler: ResamplingEngine | None,
+    bars_cache: dict[str, list],
+) -> str:
+    """Evaluate one strategy on bars for its signal timeframe."""
+    tf = normalize_timeframe(timeframe)
+    if tf not in bars_cache:
+        bars_cache[tf] = await _get_bars_for_asset(session, symbol, tf, resampler)
+    bars = bars_cache[tf]
+    if len(bars) < MIN_BARS_REQUIRED:
+        return "NEUTRAL"
+    signal = compute_strategy_signal(bars, strategy_name, symbol, params)
+    return signal or "NEUTRAL"
+
+
 async def _get_algo_signals(
     session: AsyncSession,
     symbol: str,
-    timeframe: str,
+    fallback_timeframe: str,
     strategy_id: int,
     resampler: ResamplingEngine | None,
 ) -> list[str]:
@@ -141,27 +163,44 @@ async def _get_algo_signals(
     if not linked:
         return []
 
-    bars = await _get_bars_for_asset(session, symbol, timeframe, resampler)
-    if len(bars) < MIN_BARS_REQUIRED:
-        return []
-
-    all_results = compute_strategy_signals(bars, symbol)
-    signal_map = {r.strategy: r.signal for r in all_results}
-
+    bars_cache: dict[str, list] = {}
     algo_signals: list[str] = []
+
     for row in linked:
         name = row["strategy_name"]
+        row_tf = row.get("timeframe") or fallback_timeframe
         if name.startswith("combo:"):
             params = row.get("params") or {}
             sub_strategies = params.get("strategies", [])
-            child_signals = [
-                signal_map.get(s["strategy_name"], "NEUTRAL")
-                for s in sub_strategies
-            ]
+            child_signals = []
+            for sub in sub_strategies:
+                leg_tf = sub.get("timeframe") or row_tf
+                leg_params = sub.get("strategy_params") or sub.get("params")
+                child_signals.append(
+                    await _signal_for_strategy(
+                        session,
+                        symbol,
+                        sub["strategy_name"],
+                        leg_params,
+                        leg_tf,
+                        resampler,
+                        bars_cache,
+                    )
+                )
             combo_mode = params.get("combination_mode", "majority")
             algo_signals.append(combine_signals(child_signals, combo_mode))
         else:
-            algo_signals.append(signal_map.get(name, "NEUTRAL"))
+            algo_signals.append(
+                await _signal_for_strategy(
+                    session,
+                    symbol,
+                    name,
+                    row.get("params"),
+                    row_tf,
+                    resampler,
+                    bars_cache,
+                )
+            )
 
     return algo_signals
 
@@ -224,6 +263,25 @@ async def _execute_for_asset(
 
     currently_holding = has_position(alpaca_symbol)
 
+    asset_type = asset.get("asset_type", "stock")
+
+    if should_skip_order_for_asset_type(asset_type) and not is_us_equity_rth_open():
+        logger.info(
+            "order_skipped_market_closed",
+            symbol=yf_symbol,
+            asset_type=asset_type,
+        )
+        return
+
+    order_side = "buy" if combined_signal == "BUY" else "sell"
+    if await has_open_order_for_symbol(session, yf_symbol, side=order_side):
+        logger.info(
+            "order_skipped_open_order_exists",
+            symbol=yf_symbol,
+            side=order_side,
+        )
+        return
+
     if combined_signal == "BUY" and currently_holding:
         logger.info(
             "order_skipped_already_in_position",
@@ -255,7 +313,6 @@ async def _execute_for_asset(
     )
 
     portfolio = sync_portfolio()
-    asset_type = asset.get("asset_type") or "stock"
     decimals = qty_decimals_for_asset_type(asset_type)
     if asset_type != "crypto" and _looks_like_yfinance_crypto_pair(yf_symbol):
         decimals = qty_decimals_for_asset_type("crypto")

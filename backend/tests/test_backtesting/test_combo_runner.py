@@ -116,6 +116,40 @@ class TestCombineSignals:
         assert not bool(e.iloc[0])
         assert not bool(x.iloc[0])
 
+    def test_or_mode_exits_on_any_sell(self, index_10):
+        stances = [
+            _stance_series(["Buy", "Buy"], index_10[:2]),
+            _stance_series(["Buy", "Sell"], index_10[:2]),
+        ]
+        e, x = combine_signals(stances, mode="or", weights=[1.0, 1.0])
+        assert bool(e.iloc[0])
+        assert bool(x.iloc[1])
+
+    def test_or_mode_enters_on_any_buy(self, index_10):
+        stances = [
+            _stance_series(["Sell", "Buy"], index_10[:2]),
+            _stance_series(["Sell", "Neutral"], index_10[:2]),
+        ]
+        e, _ = combine_signals(stances, mode="or", weights=[1.0, 1.0])
+        assert bool(e.iloc[1])
+
+    def test_or_mode_holds_when_all_neutral(self, index_10):
+        stances = [
+            _stance_series(["Neutral", "Neutral"], index_10[:2]),
+            _stance_series(["Neutral", "Neutral"], index_10[:2]),
+        ]
+        e, x = combine_signals(stances, mode="or", weights=[1.0, 1.0])
+        assert not bool(e.iloc[0])
+        assert not bool(x.iloc[0])
+
+    def test_or_mode_accepts_any_alias(self, index_10):
+        stances = [
+            _stance_series(["Buy", "Buy"], index_10[:2]),
+            _stance_series(["Buy", "Sell"], index_10[:2]),
+        ]
+        _, x = combine_signals(stances, mode="any", weights=[1.0, 1.0])
+        assert bool(x.iloc[1])
+
     def test_invalid_mode_raises(self, index_10):
         with pytest.raises(ValueError, match="Unknown combination mode"):
             combine_signals(
@@ -180,6 +214,15 @@ class TestRunComboBacktest:
             ohlcv_df, configs, combination_mode="weighted", threshold=0.5
         )
         assert result.equity_curve is not None
+
+    def test_or_mode(self, ohlcv_df):
+        configs = [
+            ComboStrategyConfig("ma_crossover", {}),
+            ComboStrategyConfig("rsi", {}),
+        ]
+        result = run_combo_backtest(ohlcv_df, configs, combination_mode="or")
+        assert result.equity_curve is not None
+        assert len(result.equity_curve) > 0
 
 
 # ---------------------------------------------------------------------------

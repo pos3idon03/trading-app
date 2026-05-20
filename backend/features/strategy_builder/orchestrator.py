@@ -113,6 +113,7 @@ async def _fetch_algo_strategies(
             algo_attachment_id=r["algo_attachment_id"],
             strategy_name=r["strategy_name"],
             params=r.get("params"),
+            timeframe=r.get("timeframe") or "1d",
             added_at=r["added_at"],
         )
         for r in rows

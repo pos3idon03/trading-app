@@ -19,6 +19,7 @@ const stockMonitor: ExecutionAssetMonitor = {
   algoTimeframe: '5m',
   criteria: [],
   overallSignal: 'NEUTRAL',
+  combinedVoteCount: 0,
   algoSignals: [],
   comboSignals: [],
   latestPrice: 100,

@@ -21,6 +21,7 @@ from features.backtesting.strategies.helpers import (
     _calc_stoch_rsi,
     _calc_stochastic,
     _calc_vwap,
+    _compute_atr_trailing_stop_state,
     _extract_ohlcv,
 )
 
@@ -106,9 +107,19 @@ def _momentum_rotation_indicators(df: pd.DataFrame, p: dict) -> pd.DataFrame:
 
 def _atr_trailing_stop_indicators(df: pd.DataFrame, p: dict) -> pd.DataFrame:
     _, high, low, close, _ = _extract_ohlcv(df)
-    atr = _calc_atr(high, low, close, p.get("atr_period", 14))
-    trend = close.rolling(p.get("trend_ma", 50)).mean()
-    return pd.DataFrame({"atr": atr, "trend_ma": trend})
+    atr_period = p.get("atr_period", 14)
+    atr_multiplier = p.get("atr_multiplier", 3.0)
+    trend_ma = p.get("trend_ma", 50)
+    atr = _calc_atr(high, low, close, atr_period)
+    trend = close.rolling(trend_ma).mean()
+    _, _, stop_levels = _compute_atr_trailing_stop_state(
+        close, atr, trend, atr_multiplier
+    )
+    return pd.DataFrame({
+        "atr": atr,
+        "trend_ma": trend,
+        "trailing_stop": stop_levels,
+    })
 
 
 def _vwap_cross_indicators(df: pd.DataFrame, p: dict) -> pd.DataFrame:

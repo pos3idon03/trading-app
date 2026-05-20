@@ -73,8 +73,14 @@ describe('ComboTab', () => {
 
   it('renders MA Crossover and RSI as default strategies', () => {
     render(<ComboTab assets={ASSETS} />);
-    expect(screen.getByText('MA Crossover')).toBeInTheDocument();
-    expect(screen.getByText(/RSI/i)).toBeInTheDocument();
+    expect(screen.getAllByText('MA Crossover').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/RSI/i).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('shows read-only finest signal timeframe alignment hint', () => {
+    render(<ComboTab assets={ASSETS} />);
+    expect(screen.getByText(/Combined backtest aligns on/i)).toBeInTheDocument();
+    expect(screen.getByText('1d')).toBeInTheDocument();
   });
 
   it('displays the combination mode selector', () => {
@@ -82,12 +88,27 @@ describe('ComboTab', () => {
     expect(screen.getByRole('combobox', { name: /combination mode/i })).toBeInTheDocument();
   });
 
-  it('shows AND, Majority, Weighted mode options', () => {
+  it('shows AND, OR, Majority, Weighted mode options', () => {
     render(<ComboTab assets={ASSETS} />);
     const modeSelect = screen.getByRole('combobox', { name: /combination mode/i });
     expect(modeSelect).toContainHTML('AND');
+    expect(modeSelect).toContainHTML('OR');
     expect(modeSelect).toContainHTML('Majority');
     expect(modeSelect).toContainHTML('Weighted');
+  });
+
+  it('sends combination_mode or when OR mode is selected and run', async () => {
+    const comboSpy = vi.spyOn(endpoints.backtestApi, 'runCombo').mockResolvedValue({
+      ...MOCK_RESULT,
+      strategy_name: 'combo:or',
+    });
+    vi.spyOn(endpoints.backtestApi, 'getComboSignals').mockResolvedValue(MOCK_SIGNALS);
+    render(<ComboTab assets={ASSETS} />);
+    const modeSelect = screen.getByRole('combobox', { name: /combination mode/i });
+    fireEvent.change(modeSelect, { target: { value: 'or' } });
+    fireEvent.click(screen.getByRole('button', { name: /run combo/i }));
+    await waitFor(() => expect(comboSpy).toHaveBeenCalledOnce());
+    expect(comboSpy.mock.calls[0][0].combination_mode).toBe('or');
   });
 
   it('does NOT show threshold input in majority mode', () => {
@@ -117,16 +138,16 @@ describe('ComboTab', () => {
     // Try removing one — should be blocked since we already have only 2
     fireEvent.click(removeButtons[0]);
     // Still 2 strategies shown (MA Crossover + RSI)
-    expect(screen.getByText('MA Crossover')).toBeInTheDocument();
-    expect(screen.getByText(/RSI/i)).toBeInTheDocument();
+    expect(screen.getAllByText('MA Crossover').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(/RSI/i).length).toBeGreaterThanOrEqual(1);
   });
 
   it('adds a strategy via the Add dropdown', () => {
     render(<ComboTab assets={ASSETS} />);
-    const addSelect = screen.getByRole('combobox', { name: '' });
+    const addSelect = screen.getByRole('combobox', { name: /add strategy/i });
     fireEvent.change(addSelect, { target: { value: 'macd' } });
     fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
-    expect(screen.getByText('MACD')).toBeInTheDocument();
+    expect(screen.getAllByText('MACD').length).toBeGreaterThanOrEqual(1);
   });
 
   it('disables Run button when fewer than 2 strategies are selected', () => {
@@ -146,6 +167,7 @@ describe('ComboTab', () => {
     expect(req.symbol).toBe('AAPL');
     expect(req.strategies.length).toBeGreaterThanOrEqual(2);
     expect(req.combination_mode).toBe('majority');
+    expect(req.strategies[0]).toHaveProperty('timeframe');
   });
 
   it('displays BacktestResultCard after a successful run', async () => {

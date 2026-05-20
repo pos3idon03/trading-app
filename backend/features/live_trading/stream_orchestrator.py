@@ -7,7 +7,10 @@ from typing import Awaitable, Callable
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal.market_data_dal import ensure_asset_for_live_stream, get_asset_type_by_symbol
-from dal.strategy_builder_dal import list_auto_trading_assets
+from dal.strategy_builder_dal import (
+    get_attachment_timeframes_for_strategy,
+    list_auto_trading_assets,
+)
 from features.data_ingestion.ingest_service import ingest_tiingo_5m_for_symbol
 from features.live_trading.bar_persistence import set_persist_timeframes
 from features.live_trading.bar_resolution import count_db_bars
@@ -34,7 +37,16 @@ async def collect_running_stream_config(session: AsyncSession) -> StreamConfig:
     rows = await list_auto_trading_assets(session)
     running = [r for r in rows if r.get("auto_trading_started")]
     symbols = sorted({str(r["symbol"]).upper() for r in running})
-    timeframes = sorted({r.get("algo_timeframe", "1d") for r in running})
+    timeframe_set: set[str] = set()
+    for row in running:
+        leg_tfs = await get_attachment_timeframes_for_strategy(
+            session, row["strategy_id"],
+        )
+        if leg_tfs:
+            timeframe_set.update(leg_tfs)
+        else:
+            timeframe_set.add(row.get("algo_timeframe", "1d"))
+    timeframes = sorted(timeframe_set)
     return StreamConfig(symbols=symbols, timeframes=timeframes)
 
 

@@ -422,13 +422,17 @@ class ChartOverlayResponse(BaseModel):
 # Combo backtest DTOs
 # ---------------------------------------------------------------------------
 
-CombinationMode = Literal["and", "majority", "weighted"]
+CombinationMode = Literal["and", "or", "majority", "weighted"]
 
 
 class ComboStrategyEntry(BaseModel):
     strategy_name: str = Field(..., description=_STRATEGY_DESCRIPTIONS)
     strategy_params: dict = Field(default_factory=dict)
     weight: float = Field(default=1.0, ge=0.0, le=1.0)
+    timeframe: BacktestTimeframe = Field(
+        default="1d",
+        description="Signal evaluation timeframe for this combo leg",
+    )
 
     @field_validator("strategy_name")
     @classmethod
@@ -450,7 +454,10 @@ class ComboBacktestRequest(BaseModel):
         le=1.0,
         description="Signal fires when weighted sum exceeds this (weighted mode only)",
     )
-    timeframe: BacktestTimeframe = "1d"
+    timeframe: BacktestTimeframe = Field(
+        default="1d",
+        description="Execution / alignment timeframe for combined combo signals and portfolio",
+    )
     start_date: datetime
     end_date: datetime
     initial_capital: float = Field(default=100_000.0, ge=1000.0)

@@ -38,6 +38,7 @@ class ComboStrategyConfig:
     strategy_name: str
     strategy_params: dict
     weight: float = 1.0
+    timeframe: str = "1d"
 
 
 # ---------------------------------------------------------------------------
@@ -82,12 +83,28 @@ def combine_signals(
 # Orchestration
 # ---------------------------------------------------------------------------
 
+def _needs_multi_timeframe(
+    strategies: list[ComboStrategyConfig],
+    execution_timeframe: str,
+) -> bool:
+    exec_tf = execution_timeframe
+    return any((cfg.timeframe or exec_tf) != exec_tf for cfg in strategies)
+
+
 def _build_combo_signals(
     df: pd.DataFrame,
     strategies: list[ComboStrategyConfig],
     mode: str,
     threshold: float,
+    execution_timeframe: str = "1d",
 ) -> tuple[pd.Series, pd.Series]:
+    if _needs_multi_timeframe(strategies, execution_timeframe):
+        from features.backtesting.multi_timeframe_combo import build_multi_tf_combo_signals
+
+        return build_multi_tf_combo_signals(
+            df, strategies, execution_timeframe, mode, threshold
+        )
+
     stance_list = [
         compute_strategy_stance(df, cfg.strategy_name, cfg.strategy_params)
         for cfg in strategies
@@ -162,9 +179,17 @@ def run_combo_backtest(
     """Execute a combination backtest using vectorbt."""
     t0 = time.perf_counter()
 
-    entries, exits = _build_combo_signals(df, strategies, combination_mode, threshold)
+    entries, exits = _build_combo_signals(
+        df, strategies, combination_mode, threshold, timeframe,
+    )
+    exec_df = df
+    if _needs_multi_timeframe(strategies, timeframe):
+        from features.backtesting.multi_timeframe_combo import resample_ohlcv_df
+
+        exec_df = resample_ohlcv_df(df, timeframe)
+
     run_result = run_portfolio_from_signals(
-        df,
+        exec_df,
         entries,
         exits,
         initial_capital=initial_capital,
@@ -223,17 +248,22 @@ def run_per_strategy_backtests(
 ) -> list[StrategySignalResult]:
     """Run individual backtests for each combo leg and return per-strategy results."""
     results: list[StrategySignalResult] = []
+    from features.backtesting.multi_timeframe_combo import resample_ohlcv_df
+
     for cfg in strategies:
+        leg_tf = cfg.timeframe or timeframe
+        leg_df = resample_ohlcv_df(df, leg_tf)
+
         result = run_backtest(
-            df,
+            leg_df,
             strategy=cfg.strategy_name,
             params=cfg.strategy_params,
             initial_capital=initial_capital,
-            timeframe=timeframe,
+            timeframe=leg_tf,
             evaluation_start=evaluation_start,
         )
-        stance = compute_strategy_stance(df, cfg.strategy_name, cfg.strategy_params)
-        timeline = build_signal_timeline_from_stance(df, stance)
+        stance = compute_strategy_stance(leg_df, cfg.strategy_name, cfg.strategy_params)
+        timeline = build_signal_timeline_from_stance(leg_df, stance)
         if evaluation_start is not None:
             timeline = slice_time_series_rows(timeline, evaluation_start)
         results.append(

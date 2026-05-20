@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { backtestApi, strategyBuilderApi } from '../api/endpoints';
 import type { AssetItem, BacktestResponse, CombinationMode, ComboStrategySignal } from '../api/types';
 import { STRATEGIES, DEFAULT_PARAMS_MAP } from '../constants/strategies';
@@ -10,14 +10,14 @@ import StrategyParamsEditor from './StrategyParamsEditor';
 import { formatAssetOptionLabel } from '../utils/assetDisplay';
 import { defaultDatesForTimeframe } from '../utils/backtestDates';
 import type { BacktestTimeframe } from '../utils/backtestDates';
+import { finestTimeframe } from '../utils/timelineAlignment';
+import { isIntradayTimeframe } from './ComboSignalTimeline';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 type ComboTimeframe = BacktestTimeframe;
-
-const INTRADAY_TIMEFRAMES: Set<ComboTimeframe> = new Set(['5m', '15m', '30m', '1h', '4h']);
 
 const TIMEFRAME_OPTIONS: { value: ComboTimeframe; label: string }[] = [
   { value: '5m',  label: '5 Min' },
@@ -33,6 +33,7 @@ interface ComboEntry {
   id: string;
   strategy_name: string;
   weight: number;
+  timeframe: ComboTimeframe;
 }
 
 const COMBINATION_MODES: { value: CombinationMode; label: string; description: string }[] = [
@@ -41,6 +42,12 @@ const COMBINATION_MODES: { value: CombinationMode; label: string; description: s
     label: 'AND (Unanimous)',
     description:
       'Enter when every leg is Buy; exit when every leg is Sell. Mixed or Neutral legs hold the current position.',
+  },
+  {
+    value: 'or',
+    label: 'OR (Any)',
+    description:
+      'Enter when any leg is Buy; exit when any leg is Sell. If one leg is Sell and another Buy on the same bar, exit (Sell wins).',
   },
   {
     value: 'majority',
@@ -74,8 +81,12 @@ function ModeSelector({
 
   return (
     <div className="space-y-1">
-      <label className="metric-label block mb-1">Combination Mode</label>
+      <label htmlFor="combo-combination-mode" className="metric-label block mb-1">
+        Combination Mode
+      </label>
       <select
+        id="combo-combination-mode"
+        aria-label="Combination Mode"
         className={selectCls}
         value={value}
         onChange={(e) => onChange(e.target.value as CombinationMode)}
@@ -104,11 +115,12 @@ function ThresholdInput({
     'bg-surface-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-brand-500 w-24';
   return (
     <div>
-      <label className="metric-label block mb-1">
+      <label htmlFor="combo-threshold" className="metric-label block mb-1">
         Threshold
         <span className="text-slate-500 font-normal ml-1">(0–1)</span>
       </label>
       <input
+        id="combo-threshold"
         type="number"
         min={0}
         max={1}
@@ -128,19 +140,37 @@ function StrategyRow({
   entry,
   isWeighted,
   onWeightChange,
+  onTimeframeChange,
   onRemove,
 }: {
   entry: ComboEntry;
   isWeighted: boolean;
   onWeightChange: (id: string, w: number) => void;
+  onTimeframeChange: (id: string, tf: ComboTimeframe) => void;
   onRemove: (id: string) => void;
 }) {
   const label =
     STRATEGIES.find((s) => s.value === entry.strategy_name)?.label ?? entry.strategy_name;
 
   return (
-    <div className="flex items-center gap-3 py-2 border-b border-slate-700 last:border-0">
-      <span className="text-sm text-slate-200 flex-1 min-w-0 truncate">{label}</span>
+    <div className="flex items-center gap-3 py-2 border-b border-slate-700 last:border-0 flex-wrap">
+      <span className="text-sm text-slate-200 flex-1 min-w-[120px] truncate">{label}</span>
+
+      <div className="flex items-center gap-2 shrink-0">
+        <label className="text-xs text-slate-400 whitespace-nowrap">Signal TF</label>
+        <select
+          className="bg-surface-900 border border-slate-600 rounded px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-brand-500"
+          value={entry.timeframe}
+          onChange={(e) => onTimeframeChange(entry.id, e.target.value as ComboTimeframe)}
+          aria-label={`Signal timeframe for ${label}`}
+        >
+          {TIMEFRAME_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
 
       {isWeighted && (
         <div className="flex items-center gap-2 shrink-0">
@@ -150,6 +180,7 @@ function StrategyRow({
             min={0}
             max={1}
             step={0.1}
+            aria-label={`Weight for ${label}`}
             className="bg-surface-900 border border-slate-600 rounded px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-brand-500 w-16"
             value={entry.weight}
             onChange={(e) => {
@@ -194,6 +225,7 @@ function AddStrategySelect({
   return (
     <div className="flex items-center gap-2 mt-3">
       <select
+        aria-label="Add strategy"
         className={selectCls}
         value={selected}
         onChange={(e) => setSelected(e.target.value)}
@@ -249,10 +281,9 @@ export default function ComboTab({ assets }: ComboTabProps) {
   const comboDailyDefaults = defaultDatesForTimeframe('1d');
   const [startDate, setStartDate] = useState(comboDailyDefaults.start);
   const [endDate, setEndDate] = useState(comboDailyDefaults.end);
-  const [timeframe, setTimeframe] = useState<ComboTimeframe>('1d');
   const [entries, setEntries] = useState<ComboEntry[]>([
-    { id: makeId(), strategy_name: 'ma_crossover', weight: 1.0 },
-    { id: makeId(), strategy_name: 'rsi', weight: 1.0 },
+    { id: makeId(), strategy_name: 'ma_crossover', weight: 1.0, timeframe: '1d' },
+    { id: makeId(), strategy_name: 'rsi', weight: 1.0, timeframe: '1d' },
   ]);
   const [paramsMap, setParamsMap] = useState<Record<string, Record<string, number>>>(
     buildParamsMap(
@@ -270,19 +301,32 @@ export default function ComboTab({ assets }: ComboTabProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const executionTimeframe = useMemo(
+    () => finestTimeframe(entries.map((e) => e.timeframe)),
+    [entries],
+  );
+
   useEffect(() => {
     if (assets.length > 0 && !symbol) setSymbol(assets[0].symbol);
   }, [assets, symbol]);
 
-  const handleTimeframeChange = (tf: ComboTimeframe) => {
-    setTimeframe(tf);
-    const dates = defaultDatesForTimeframe(tf);
+  useEffect(() => {
+    const dates = defaultDatesForTimeframe(executionTimeframe as ComboTimeframe);
     setStartDate(dates.start);
     setEndDate(dates.end);
+  }, [executionTimeframe]);
+
+  const handleLegTimeframeChange = (id: string, tf: ComboTimeframe) => {
+    setEntries((prev) => prev.map((e) => (e.id === id ? { ...e, timeframe: tf } : e)));
   };
 
   const handleAddStrategy = (strategyValue: string) => {
-    const newEntry: ComboEntry = { id: makeId(), strategy_name: strategyValue, weight: 1.0 };
+    const newEntry: ComboEntry = {
+      id: makeId(),
+      strategy_name: strategyValue,
+      weight: 1.0,
+      timeframe: '1d',
+    };
     const next = [...entries, newEntry];
     setEntries(next);
     setParamsMap((prev) => buildParamsMap(next, prev));
@@ -312,10 +356,11 @@ export default function ComboTab({ assets }: ComboTabProps) {
         strategy_name: e.strategy_name,
         strategy_params: paramsMap[e.strategy_name] ?? DEFAULT_PARAMS_MAP[e.strategy_name] ?? {},
         weight: e.weight,
+        timeframe: e.timeframe,
       })),
       combination_mode: mode,
       threshold,
-      timeframe,
+      timeframe: executionTimeframe,
       start_date: new Date(startDate).toISOString(),
       end_date: new Date(endDate).toISOString(),
       initial_capital: 100_000,
@@ -350,8 +395,10 @@ export default function ComboTab({ assets }: ComboTabProps) {
         {/* Ticker / dates / timeframe */}
         <div className="flex flex-wrap gap-4 items-start mb-6">
           <div>
-            <label className="metric-label block mb-1">Ticker</label>
+            <label htmlFor="combo-ticker" className="metric-label block mb-1">Ticker</label>
             <select
+              id="combo-ticker"
+              aria-label="Ticker"
               className={inputCls}
               value={symbol}
               onChange={(e) => setSymbol(e.target.value)}
@@ -383,26 +430,13 @@ export default function ComboTab({ assets }: ComboTabProps) {
               onChange={(e) => setEndDate(e.target.value)}
             />
           </div>
-          <div>
-            <label className="metric-label block mb-1">Price Frequency</label>
-            <select
-              className={inputCls}
-              value={timeframe}
-              onChange={(e) => handleTimeframeChange(e.target.value as ComboTimeframe)}
-            >
-              {TIMEFRAME_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-            {INTRADAY_TIMEFRAMES.has(timeframe) && (
-              <p className="text-slate-500 text-xs mt-1">
-                Aggregated from 5m bars. Date range auto-adjusted.
-              </p>
-            )}
-          </div>
         </div>
+        <p className="text-slate-500 text-xs mb-4">
+          Combined backtest aligns on{' '}
+          <span className="text-slate-300 font-mono">{executionTimeframe}</span>
+          {' '}(finest signal timeframe).
+          {isIntradayTimeframe(executionTimeframe) && ' Intraday bars are aggregated from 5m data.'}
+        </p>
 
         {/* Combination mode + threshold */}
         <div className="flex flex-wrap gap-6 items-start mb-6">
@@ -426,6 +460,7 @@ export default function ComboTab({ assets }: ComboTabProps) {
                 entry={entry}
                 isWeighted={mode === 'weighted'}
                 onWeightChange={handleWeightChange}
+                onTimeframeChange={handleLegTimeframeChange}
                 onRemove={handleRemoveStrategy}
               />
             ))}
@@ -463,23 +498,61 @@ export default function ComboTab({ assets }: ComboTabProps) {
             <BacktestResultCard
               result={result}
               syncId="combo-sync"
-              onAddToStrategy={async (strategyName, params, assetId) => {
-                await strategyBuilderApi.attachAlgo({ asset_id: assetId, strategy_name: strategyName, params });
+              attachTimeframe={executionTimeframe}
+              onAddToStrategy={async (strategyName, params, assetId, tf) => {
+                const entry = entries.find((e) => e.strategy_name === strategyName);
+                const legTf = entry?.timeframe ?? tf;
+                const attachParams =
+                  strategyName.startsWith('combo:')
+                    ? {
+                        ...params,
+                        strategies: (params.strategies as Array<Record<string, unknown>> | undefined)?.map(
+                          (leg) => {
+                            const legEntry = entries.find(
+                              (e) => e.strategy_name === leg.strategy_name,
+                            );
+                            return { ...leg, timeframe: legEntry?.timeframe ?? leg.timeframe ?? legTf };
+                          },
+                        ) ?? params.strategies,
+                      }
+                    : params;
+                await strategyBuilderApi.attachAlgo({
+                  asset_id: assetId,
+                  strategy_name: strategyName,
+                  params: attachParams,
+                  timeframe: strategyName.startsWith('combo:') ? executionTimeframe : legTf,
+                });
               }}
             />
           </div>
 
           {comboSignals && comboSignals.length > 0 && (
             <div className="space-y-6">
-              <ComboSignalTimeline strategies={comboSignals} syncId="combo-sync" />
+              <ComboSignalTimeline
+                strategies={comboSignals}
+                syncId="combo-sync"
+                alignmentTimeframe={executionTimeframe}
+                intraday={isIntradayTimeframe(executionTimeframe)}
+              />
 
               <div>
                 <h3 className="text-slate-300 text-sm font-semibold mb-3">Individual Strategy Results</h3>
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                  {comboSignals.map((s) => (
+                  {comboSignals.map((s) => {
+                    const legEntry = entries.find((e) => e.strategy_name === s.strategy_name);
+                    return (
                     <BacktestResultCard
                       key={s.strategy_name}
                       syncId="combo-sync"
+                      attachTimeframe={legEntry?.timeframe ?? '1d'}
+                      onAddToStrategy={async (strategyName, params, assetId, legTf) => {
+                        await strategyBuilderApi.attachAlgo({
+                          asset_id: assetId,
+                          strategy_name: strategyName,
+                          params,
+                          timeframe: legTf,
+                        });
+                      }}
                       result={{
                         asset_id: result.asset_id,
                         strategy_name: s.strategy_name,
@@ -490,7 +563,8 @@ export default function ComboTab({ assets }: ComboTabProps) {
                         indicator_series: s.indicator_series,
                       }}
                     />
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>

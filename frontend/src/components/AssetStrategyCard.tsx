@@ -3,7 +3,6 @@ import { strategyBuilderApi } from '../api/endpoints';
 import type {
   AIAgentSummary,
   AlgoStrategySummary,
-  AlgoTimeframe,
   FinancialsSummary,
   MonteCarloSummary,
   StrategyFullResponse,
@@ -299,6 +298,8 @@ function FinancialsSection({ data, error }: { data: FinancialsSummary | null; er
 
 const COMBO_MODE_LABELS: Record<string, string> = {
   and: 'AND (Unanimous)',
+  or: 'OR (Any)',
+  any: 'OR (Any)',
   majority: 'Majority Vote',
   weighted: 'Weighted',
 };
@@ -307,6 +308,7 @@ interface ComboSubStrategy {
   strategy_name: string;
   strategy_params: Record<string, number>;
   weight: number;
+  timeframe?: string;
 }
 
 interface ComboParams {
@@ -381,8 +383,9 @@ function ComboAlgoRow({
               STRATEGIES.find((s) => s.value === sub.strategy_name)?.label ?? sub.strategy_name;
             return (
               <div key={sub.strategy_name} className="pl-2 border-l-2 border-slate-600">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-slate-300 text-xs font-medium">{subLabel}</span>
+                  {sub.timeframe && <TimeframeBadge tf={sub.timeframe} />}
                   {isWeighted && (
                     <span className="text-xs text-slate-500">weight: {sub.weight}</span>
                   )}
@@ -399,6 +402,14 @@ function ComboAlgoRow({
   );
 }
 
+function TimeframeBadge({ tf }: { tf: string }) {
+  return (
+    <span className="bg-slate-800 text-slate-400 text-xs px-2 py-0.5 rounded font-mono">
+      {tf}
+    </span>
+  );
+}
+
 function AlgoRow({
   item,
   onDetach,
@@ -412,7 +423,10 @@ function AlgoRow({
   return (
     <div className="bg-surface-900 rounded-lg p-3 border border-slate-700 flex items-start justify-between gap-2">
       <div className="flex-1 min-w-0 space-y-1">
-        <p className="text-slate-200 text-sm font-medium truncate">{label}</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-slate-200 text-sm font-medium truncate">{label}</p>
+          <TimeframeBadge tf={item.timeframe} />
+        </div>
         <AlgoAddedAt item={item} />
         {params && Object.keys(params).length > 0 && <ParamChips params={params} />}
       </div>
@@ -427,39 +441,21 @@ function AlgoRow({
   );
 }
 
-const ALGO_TIMEFRAMES: AlgoTimeframe[] = ['1m', '5m', '15m', '30m', '1h', '3h', '1d', '1w'];
-
 function AlgoStrategiesSection({
   items,
   strategyId,
-  timeframe,
-  onTimeframeChange,
   onDetached,
 }: {
   items: AlgoStrategySummary[];
   strategyId: number;
-  timeframe: AlgoTimeframe;
-  onTimeframeChange: (v: AlgoTimeframe) => void;
   onDetached: (algoAttachmentId: number) => void;
 }) {
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3">
-        <label className="text-slate-400 text-xs w-36 shrink-0">Trading Timeframe</label>
-        <select
-          value={timeframe}
-          onChange={(e) => onTimeframeChange(e.target.value as AlgoTimeframe)}
-          className="bg-surface-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-slate-100 focus:outline-none focus:border-brand-500"
-        >
-          {ALGO_TIMEFRAMES.map((tf) => (
-            <option key={tf} value={tf}>{tf}</option>
-          ))}
-        </select>
-      </div>
-
       {items.length === 0 ? (
         <p className="text-slate-500 text-sm">
-          No algo strategies yet. Use the "Add to Strategy" button on a backtest result.
+          No algo strategies yet. Use &quot;+ Strategy&quot; on a backtest result to attach
+          strategies with their signal timeframes.
         </p>
       ) : (
         <div className="space-y-2">
@@ -548,7 +544,6 @@ export default function AssetStrategyCard({ strategy, onRemove, onUpdated }: Pro
 
   // Signal configuration
   const [comboMode, setComboMode] = useState<'all' | 'majority' | 'any'>(strategy.combination_mode);
-  const [algoTimeframe, setAlgoTimeframe] = useState<AlgoTimeframe>(strategy.algo_timeframe);
 
   // Auto-trading toggle
   const [autoEnabled, setAutoEnabled] = useState(strategy.auto_trading_enabled);
@@ -571,7 +566,6 @@ export default function AssetStrategyCard({ strategy, onRemove, onUpdated }: Pro
         setAiBuyMacro(numToStr(d.ai_buy_macro));
         setAiSellMacro(numToStr(d.ai_sell_macro));
         setComboMode(d.combination_mode);
-        setAlgoTimeframe(d.algo_timeframe);
         setAutoEnabled(d.auto_trading_enabled);
       })
       .catch(() => setLoadError('Failed to load strategy data'))
@@ -620,7 +614,6 @@ export default function AssetStrategyCard({ strategy, onRemove, onUpdated }: Pro
         ai_buy_macro: strToNum(aiBuyMacro),
         ai_sell_macro: strToNum(aiSellMacro),
         combination_mode: comboMode,
-        algo_timeframe: algoTimeframe,
         auto_trading_enabled: autoEnabled,
       };
       const updated = await strategyBuilderApi.updateThresholds(strategy.id, req);
@@ -765,8 +758,6 @@ export default function AssetStrategyCard({ strategy, onRemove, onUpdated }: Pro
             <AlgoStrategiesSection
               items={data.algo_strategies}
               strategyId={strategy.id}
-              timeframe={algoTimeframe}
-              onTimeframeChange={setAlgoTimeframe}
               onDetached={handleDetach}
             />
           </Section>

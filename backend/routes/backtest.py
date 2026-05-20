@@ -138,7 +138,7 @@ async def execute_combo_backtest(
 ) -> BacktestResponse:
     """Execute a combination backtest that merges signals from 2+ strategies.
 
-    Supports AND (unanimous), majority voting, and weighted-threshold modes.
+    Supports AND (unanimous), OR (any, sell-first), majority voting, and weighted-threshold modes.
     Results are computed on the fly and not stored in the database.
     """
     if request.simulation_id is not None:
@@ -242,6 +242,7 @@ def _compute_combo_signals(
             strategy_name=s.strategy_name,
             strategy_params=s.strategy_params,
             weight=s.weight,
+            timeframe=s.timeframe,
         )
         for s in request.strategies
     ]
@@ -491,16 +492,22 @@ async def _load_backtest_ohlcv(
     asset_id: int,
     request: ComboBacktestRequest,
 ) -> tuple:
+    from features.backtesting.multi_timeframe_combo import combo_data_load_timeframe
+
     legs = [(s.strategy_name, s.strategy_params) for s in request.strategies]
     warmup_bars = max_warmup_bars(legs)
+    load_tf = combo_data_load_timeframe(
+        request.timeframe,
+        [s.timeframe for s in request.strategies],
+    )
     df = await load_ohlcv_with_warmup(
         session,
         asset_id=asset_id,
         start=request.start_date,
         end=request.end_date,
-        timeframe=request.timeframe,
+        timeframe=load_tf,
         warmup_bars=warmup_bars,
-        query_args=_ohlcv_query_args(request.timeframe),
+        query_args=_ohlcv_query_args(load_tf),
     )
     return df, request.start_date
 
@@ -626,6 +633,7 @@ def _build_combo_params(request: ComboBacktestRequest) -> dict:
                 "strategy_name": s.strategy_name,
                 "strategy_params": s.strategy_params,
                 "weight": s.weight,
+                "timeframe": s.timeframe,
             }
             for s in request.strategies
         ],
@@ -646,6 +654,7 @@ def _compute_combo(
             strategy_name=s.strategy_name,
             strategy_params=s.strategy_params,
             weight=s.weight,
+            timeframe=s.timeframe,
         )
         for s in request.strategies
     ]

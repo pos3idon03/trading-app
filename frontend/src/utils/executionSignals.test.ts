@@ -2,11 +2,20 @@ import { describe, it, expect } from 'vitest';
 import {
   evaluateCriterion,
   buildCriteriaEvaluations,
+  collectUniqueAlgoTimeframes,
+  strategyNamesForTimeframe,
   combineSignals,
   expandAlgoSignals,
   timeframeToMs,
 } from './executionSignals';
-import type { AlgoStrategySummary, AutoTradingAssetRow, AttachedAlgoSignal, CriterionEvaluation, LiveStrategySignalItem } from '../api/types';
+import type {
+  AlgoStrategySummary,
+  AutoTradingAssetRow,
+  AttachedAlgoSignal,
+  ComboGroupSignal,
+  CriterionEvaluation,
+  LiveStrategySignalItem,
+} from '../api/types';
 
 // Helper to build a minimal LiveStrategySignalItem for tests
 const makeLiveItem = (
@@ -137,74 +146,107 @@ const makeCriteria = (signals: ('BUY' | 'SELL' | 'NEUTRAL')[]): CriterionEvaluat
   }));
 
 const noAlgos: AttachedAlgoSignal[] = [];
+const noCombos: ComboGroupSignal[] = [];
 
 describe('combineSignals – mode: all', () => {
   it('returns BUY only when all signals are BUY', () => {
     const criteria = makeCriteria(['BUY', 'BUY', 'BUY']);
-    expect(combineSignals(criteria, noAlgos, 'all')).toBe('BUY');
+    expect(combineSignals(criteria, noAlgos, noCombos, 'all')).toBe('BUY');
   });
 
   it('returns SELL only when all signals are SELL', () => {
     const criteria = makeCriteria(['SELL', 'SELL', 'SELL']);
-    expect(combineSignals(criteria, noAlgos, 'all')).toBe('SELL');
+    expect(combineSignals(criteria, noAlgos, noCombos, 'all')).toBe('SELL');
   });
 
   it('returns NEUTRAL when signals are mixed', () => {
     const criteria = makeCriteria(['BUY', 'SELL', 'NEUTRAL']);
-    expect(combineSignals(criteria, noAlgos, 'all')).toBe('NEUTRAL');
+    expect(combineSignals(criteria, noAlgos, noCombos, 'all')).toBe('NEUTRAL');
   });
 
   it('returns NEUTRAL when one BUY and rest NEUTRAL', () => {
     const criteria = makeCriteria(['BUY', 'NEUTRAL', 'NEUTRAL']);
-    expect(combineSignals(criteria, noAlgos, 'all')).toBe('NEUTRAL');
+    expect(combineSignals(criteria, noAlgos, noCombos, 'all')).toBe('NEUTRAL');
   });
 });
 
 describe('combineSignals – mode: majority', () => {
   it('returns BUY when majority are BUY', () => {
     const criteria = makeCriteria(['BUY', 'BUY', 'SELL']);
-    expect(combineSignals(criteria, noAlgos, 'majority')).toBe('BUY');
+    expect(combineSignals(criteria, noAlgos, noCombos, 'majority')).toBe('BUY');
   });
 
   it('returns SELL when majority are SELL', () => {
     const criteria = makeCriteria(['SELL', 'SELL', 'BUY']);
-    expect(combineSignals(criteria, noAlgos, 'majority')).toBe('SELL');
+    expect(combineSignals(criteria, noAlgos, noCombos, 'majority')).toBe('SELL');
   });
 
   it('returns NEUTRAL when no majority', () => {
     const criteria = makeCriteria(['BUY', 'SELL', 'NEUTRAL', 'NEUTRAL']);
-    expect(combineSignals(criteria, noAlgos, 'majority')).toBe('NEUTRAL');
+    expect(combineSignals(criteria, noAlgos, noCombos, 'majority')).toBe('NEUTRAL');
+  });
+
+  it('returns NEUTRAL when criteria split and combo vote is NEUTRAL', () => {
+    const criteria = makeCriteria(['BUY', 'SELL', 'NEUTRAL', 'NEUTRAL']);
+    const combos: ComboGroupSignal[] = [
+      { comboName: 'combo:and', combinationMode: 'and', signal: 'NEUTRAL' },
+    ];
+    expect(combineSignals(criteria, noAlgos, combos, 'majority')).toBe('NEUTRAL');
+  });
+
+  it('matches server: 3 criteria BUY + combo NEUTRAL is still majority BUY', () => {
+    const criteria = makeCriteria(['BUY', 'BUY', 'BUY', 'SELL']);
+    const combos: ComboGroupSignal[] = [
+      { comboName: 'combo:and', combinationMode: 'and', signal: 'NEUTRAL' },
+    ];
+    expect(combineSignals(criteria, noAlgos, combos, 'majority')).toBe('BUY');
   });
 });
 
 describe('combineSignals – mode: any', () => {
   it('returns BUY when at least one signal is BUY', () => {
     const criteria = makeCriteria(['NEUTRAL', 'NEUTRAL', 'BUY']);
-    expect(combineSignals(criteria, noAlgos, 'any')).toBe('BUY');
+    expect(combineSignals(criteria, noAlgos, noCombos, 'any')).toBe('BUY');
   });
 
   it('returns SELL when at least one signal is SELL (no BUY)', () => {
     const criteria = makeCriteria(['NEUTRAL', 'SELL', 'NEUTRAL']);
-    expect(combineSignals(criteria, noAlgos, 'any')).toBe('SELL');
+    expect(combineSignals(criteria, noAlgos, noCombos, 'any')).toBe('SELL');
   });
 
   it('returns NEUTRAL when all are NEUTRAL', () => {
     const criteria = makeCriteria(['NEUTRAL', 'NEUTRAL', 'NEUTRAL']);
-    expect(combineSignals(criteria, noAlgos, 'any')).toBe('NEUTRAL');
+    expect(combineSignals(criteria, noAlgos, noCombos, 'any')).toBe('NEUTRAL');
+  });
+
+  it('returns SELL when BUY and SELL conflict (sell-first)', () => {
+    const criteria = makeCriteria(['BUY', 'SELL']);
+    expect(combineSignals(criteria, noAlgos, noCombos, 'any')).toBe('SELL');
   });
 });
 
 describe('combineSignals – with algo signals', () => {
-  it('includes algo signals as votes', () => {
+  it('includes standalone algo signals as votes', () => {
     const criteria = makeCriteria(['BUY', 'BUY', 'NEUTRAL']);
     const algos: AttachedAlgoSignal[] = [
       { strategy: 'rsi', label: 'RSI', signal: 'BUY' },
       { strategy: 'macd', label: 'MACD', signal: 'NEUTRAL' },
     ];
-    // mode: all — BUY,BUY,NEUTRAL,BUY,NEUTRAL → not all BUY → NEUTRAL
-    expect(combineSignals(criteria, algos, 'all')).toBe('NEUTRAL');
-    // mode: majority — 3 BUY out of 5 > 50% → BUY
-    expect(combineSignals(criteria, algos, 'majority')).toBe('BUY');
+    expect(combineSignals(criteria, algos, noCombos, 'all')).toBe('NEUTRAL');
+    expect(combineSignals(criteria, algos, noCombos, 'majority')).toBe('BUY');
+  });
+
+  it('does not double-count combo legs when combo vote is provided', () => {
+    const criteria = makeCriteria(['BUY', 'SELL', 'NEUTRAL', 'NEUTRAL']);
+    const algos: AttachedAlgoSignal[] = [
+      { strategy: 'ema_cross', label: 'EMA', signal: 'BUY', comboGroup: 'combo:and' },
+      { strategy: 'range_breakout', label: 'Range', signal: 'BUY', comboGroup: 'combo:and' },
+    ];
+    const combos: ComboGroupSignal[] = [
+      { comboName: 'combo:and', combinationMode: 'and', signal: 'NEUTRAL' },
+    ];
+    // Legs alone would be 2 BUY; with combo NEUTRAL vote → 2 BUY / 5 → NEUTRAL
+    expect(combineSignals(criteria, algos, combos, 'majority')).toBe('NEUTRAL');
   });
 });
 
@@ -216,8 +258,55 @@ const makeAlgoSummary = (overrides: Partial<AlgoStrategySummary>): AlgoStrategyS
   algo_attachment_id: 1,
   strategy_name: 'rsi',
   params: null,
+  timeframe: '1d',
   added_at: '2026-01-01T00:00:00Z',
   ...overrides,
+});
+
+describe('strategyNamesForTimeframe', () => {
+  it('returns standalone and combo leg names for a timeframe', () => {
+    const summaries = [
+      makeAlgoSummary({ strategy_name: 'atr_trailing_stop', timeframe: '15m' }),
+      makeAlgoSummary({
+        strategy_name: 'combo:majority',
+        timeframe: '1h',
+        params: {
+          combination_mode: 'majority',
+          strategies: [
+            { strategy_name: 'rsi', timeframe: '1h' },
+            { strategy_name: 'macd', timeframe: '15m' },
+          ],
+        },
+      }),
+    ];
+    expect(strategyNamesForTimeframe(summaries, '15m').sort()).toEqual(
+      ['atr_trailing_stop', 'macd'].sort(),
+    );
+    expect(strategyNamesForTimeframe(summaries, '1h')).toEqual(['rsi']);
+  });
+});
+
+describe('collectUniqueAlgoTimeframes', () => {
+  it('collects standalone and combo leg timeframes', () => {
+    const summaries = [
+      makeAlgoSummary({ strategy_name: 'rsi', timeframe: '4h' }),
+      makeAlgoSummary({
+        strategy_name: 'combo:majority',
+        timeframe: '1h',
+        params: {
+          combination_mode: 'majority',
+          strategies: [
+            { strategy_name: 'atr_trailing_stop', timeframe: '30m' },
+            { strategy_name: 'macd' },
+          ],
+        },
+      }),
+    ];
+    const tfs = collectUniqueAlgoTimeframes(summaries);
+    expect(tfs).toContain('4h');
+    expect(tfs).toContain('1h');
+    expect(tfs).toContain('30m');
+  });
 });
 
 describe('expandAlgoSignals – standalone strategy', () => {
@@ -292,6 +381,25 @@ describe('expandAlgoSignals – combo strategy', () => {
     expect(comboSignals).toHaveLength(1);
     expect(comboSignals[0].comboName).toBe('combo:majority');
     expect(comboSignals[0].signal).toBe('BUY');
+  });
+
+  it('or mode: sell-first when legs disagree', () => {
+    const orCombo = makeAlgoSummary({
+      strategy_name: 'combo:or',
+      params: {
+        combination_mode: 'or',
+        strategies: [
+          { strategy_name: 'orb' },
+          { strategy_name: 'ema_cross' },
+        ],
+      },
+    });
+    const liveMap = new Map([
+      ['orb', makeLiveItem('orb', 'BUY')],
+      ['ema_cross', makeLiveItem('ema_cross', 'SELL')],
+    ]);
+    const { comboSignals } = expandAlgoSignals([orCombo], liveMap);
+    expect(comboSignals[0].signal).toBe('SELL');
   });
 
   it('propagates indicator data to combo children', () => {

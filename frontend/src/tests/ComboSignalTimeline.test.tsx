@@ -53,6 +53,25 @@ describe('ComboSignalTimeline', () => {
     expect(screen.getByText(/Signal Agreement Timeline/i)).toBeInTheDocument();
   });
 
+  it('renders both legs when timestamps differ across timeframes', () => {
+    const atr = makeStrategy('atr_trailing_stop', [
+      { time: '2026-04-20T10:00:00Z', signal: 'Buy' },
+      { time: '2026-04-20T10:15:00Z', signal: 'Sell' },
+    ]);
+    const rsi = makeStrategy('rsi', [
+      { time: '2026-04-20T10:00:00Z', signal: 'Neutral' },
+      { time: '2026-04-20T11:00:00Z', signal: 'Buy' },
+    ]);
+    render(
+      <ComboSignalTimeline
+        strategies={[atr, rsi]}
+        alignmentTimeframe="15m"
+      />,
+    );
+    expect(screen.getByText(/ATR Stop/i)).toBeInTheDocument();
+    expect(screen.getByText(/^RSI$/i)).toBeInTheDocument();
+  });
+
   it('shows all-Buy agreement banner when all strategies are Buy on last bar', () => {
     const allBuy: ComboStrategySignal[] = [
       makeStrategy('ma_crossover', [{ time: '2022-01-01', signal: 'Buy' }]),
@@ -105,6 +124,17 @@ describe('ComboSignalTimeline', () => {
   it('accepts syncId prop without crashing', () => {
     render(<ComboSignalTimeline strategies={TWO_STRATEGIES} syncId="test-sync" />);
     expect(screen.getByText(/Signal Agreement Timeline/i)).toBeInTheDocument();
+  });
+
+  it('single-leg directional strategy has no Neutral values in raw timeline data', async () => {
+    const { buildRawTimelineData } = await import('../utils/timelineAlignment');
+    const ema = makeStrategy('ema_cross', [
+      { time: '2026-05-15T10:00:00Z', signal: 'Sell' },
+      { time: '2026-05-15T11:00:00Z', signal: 'Sell' },
+      { time: '2026-05-16T14:00:00Z', signal: 'Buy' },
+    ]);
+    const data = buildRawTimelineData(ema);
+    expect(data.every((row) => row.ema_cross !== 0.5)).toBe(true);
   });
 
   it('attachedSignalsToTimelineStrategies maps execution monitor rows', () => {

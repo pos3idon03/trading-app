@@ -133,6 +133,10 @@ class TestCombineSignals:
         assert combine_signals(["NEUTRAL", "SELL", "NEUTRAL"], "any") == "SELL"
         assert combine_signals(["NEUTRAL", "NEUTRAL", "NEUTRAL"], "any") == "NEUTRAL"
 
+    def test_any_mode_sell_wins_on_conflict(self):
+        assert combine_signals(["BUY", "SELL"], "any") == "SELL"
+        assert combine_signals(["SELL", "BUY"], "any") == "SELL"
+
     def test_empty_list(self):
         assert combine_signals([], "majority") == "NEUTRAL"
 
@@ -169,6 +173,30 @@ class TestEvaluateAsset:
         with patch(
             "features.execution.auto_trading_loop._get_algo_signals",
             new_callable=AsyncMock, return_value=[],
+        ):
+            result = await evaluate_asset(session, asset)
+        assert result == "NEUTRAL"
+
+    @pytest.mark.asyncio
+    async def test_majority_neutral_when_criteria_split_and_combo_neutral(self):
+        asset = _make_asset(
+            combination_mode="majority",
+            mc_prob_positive=0.55,
+            mc_buy_prob_positive=0.5,
+            mc_sell_prob_positive=0.3,
+            ai_conviction=0.3,
+            ai_buy_conviction=0.5,
+            ai_sentiment=0.5,
+            ai_buy_sentiment=0.4,
+            ai_sell_sentiment=0.6,
+            ai_macro=0.3,
+            ai_buy_macro=0.5,
+        )
+        session = AsyncMock()
+        with patch(
+            "features.execution.auto_trading_loop._get_algo_signals",
+            new_callable=AsyncMock,
+            return_value=["NEUTRAL"],
         ):
             result = await evaluate_asset(session, asset)
         assert result == "NEUTRAL"
@@ -300,11 +328,42 @@ class TestExecuteForAssetPositionGuard:
     """_execute_for_asset must skip when position state doesn't match signal."""
 
     @pytest.mark.asyncio
+    async def test_buy_skips_when_open_order_exists(self):
+        asset = _make_asset(symbol="GOOG", asset_type="stock")
+        session = AsyncMock()
+
+        with patch("features.execution.auto_trading_loop.is_us_equity_rth_open", return_value=True), \
+             patch("features.execution.auto_trading_loop.has_open_order_for_symbol",
+                   new_callable=AsyncMock, return_value=True), \
+             patch("features.execution.auto_trading_loop.has_position", return_value=False), \
+             patch("features.execution.auto_trading_loop.create_order",
+                   new_callable=AsyncMock) as mock_create:
+            await _execute_for_asset(session, asset, "BUY", 150.0)
+
+        mock_create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_buy_skips_when_market_closed_for_stock(self):
+        asset = _make_asset(symbol="GOOG", asset_type="stock")
+        session = AsyncMock()
+
+        with patch("features.execution.auto_trading_loop.is_us_equity_rth_open", return_value=False), \
+             patch("features.execution.auto_trading_loop.has_open_order_for_symbol",
+                   new_callable=AsyncMock, return_value=False), \
+             patch("features.execution.auto_trading_loop.create_order",
+                   new_callable=AsyncMock) as mock_create:
+            await _execute_for_asset(session, asset, "BUY", 150.0)
+
+        mock_create.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_buy_skips_when_already_holding(self):
         asset = _make_asset(symbol="BTC-USD", asset_type="crypto")
         session = AsyncMock()
 
-        with patch("features.execution.auto_trading_loop.has_position", return_value=True), \
+        with patch("features.execution.auto_trading_loop.has_open_order_for_symbol",
+                   new_callable=AsyncMock, return_value=False), \
+             patch("features.execution.auto_trading_loop.has_position", return_value=True), \
              patch("features.execution.auto_trading_loop.create_order",
                    new_callable=AsyncMock) as mock_create:
             await _execute_for_asset(session, asset, "BUY", 60000.0)
@@ -340,7 +399,9 @@ class TestExecuteForAssetPositionGuard:
         mock_result.filled_price = 60000.0
         mock_result.filled_qty = 0.001
 
-        with patch("features.execution.auto_trading_loop.has_position", return_value=False), \
+        with patch("features.execution.auto_trading_loop.has_open_order_for_symbol",
+                   new_callable=AsyncMock, return_value=False), \
+             patch("features.execution.auto_trading_loop.has_position", return_value=False), \
              patch("features.execution.auto_trading_loop.plan_order_from_signal",
                    return_value=mock_plan), \
              patch("features.execution.auto_trading_loop.sync_portfolio",
@@ -372,7 +433,9 @@ class TestExecuteForAssetPositionGuard:
         mock_result.filled_price = 58000.0
         mock_result.filled_qty = 0.05
 
-        with patch("features.execution.auto_trading_loop.has_position", return_value=True), \
+        with patch("features.execution.auto_trading_loop.has_open_order_for_symbol",
+                   new_callable=AsyncMock, return_value=False), \
+             patch("features.execution.auto_trading_loop.has_position", return_value=True), \
              patch("features.execution.auto_trading_loop.plan_order_from_signal",
                    return_value=mock_plan), \
              patch("features.execution.auto_trading_loop.sync_portfolio",
@@ -435,7 +498,9 @@ class TestExecuteForAssetSymbolResolution:
         mock_result.filled_price = 60000.0
         mock_result.filled_qty = 0.001
 
-        with patch("features.execution.auto_trading_loop.has_position", return_value=False), \
+        with patch("features.execution.auto_trading_loop.has_open_order_for_symbol",
+                   new_callable=AsyncMock, return_value=False), \
+             patch("features.execution.auto_trading_loop.has_position", return_value=False), \
              patch("features.execution.auto_trading_loop.plan_order_from_signal",
                    return_value=mock_plan), \
              patch("features.execution.auto_trading_loop.sync_portfolio",
@@ -470,7 +535,10 @@ class TestExecuteForAssetSymbolResolution:
         mock_result.filled_price = 180.0
         mock_result.filled_qty = 1
 
-        with patch("features.execution.auto_trading_loop.has_position", return_value=False), \
+        with patch("features.execution.auto_trading_loop.is_us_equity_rth_open", return_value=True), \
+             patch("features.execution.auto_trading_loop.has_open_order_for_symbol",
+                   new_callable=AsyncMock, return_value=False), \
+             patch("features.execution.auto_trading_loop.has_position", return_value=False), \
              patch("features.execution.auto_trading_loop.plan_order_from_signal",
                    return_value=mock_plan), \
              patch("features.execution.auto_trading_loop.sync_portfolio",

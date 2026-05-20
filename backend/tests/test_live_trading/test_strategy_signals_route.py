@@ -144,6 +144,17 @@ class TestStrategySignalsDbFallback:
         assert len(rsi["signal_timeline"]) == 40
         assert rsi["signal_timeline"][-1]["signal"] in ("Buy", "Sell", "Neutral")
 
+    def test_strategies_query_filters_evaluated_names(self):
+        bars = _make_bars(60)
+        with patch("routes.live_trading.resolve_bars", new=AsyncMock(return_value=bars)):
+            response = client.get(
+                "/api/v1/live/strategy-signals/AAPL?strategies=rsi,macd",
+            )
+
+        assert response.status_code == 200
+        names = {s["strategy"] for s in response.json()["strategies"]}
+        assert names == {"rsi", "macd"}
+
     def test_default_response_has_empty_timeline(self):
         bars = _make_bars(60)
         with patch("routes.live_trading.resolve_bars", new=AsyncMock(return_value=bars)):

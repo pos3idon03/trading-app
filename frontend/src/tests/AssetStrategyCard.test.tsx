@@ -91,6 +91,7 @@ const mockFullResponse: StrategyFullResponse = {
       algo_attachment_id: 42,
       strategy_name: 'ma_crossover',
       params: null,
+      timeframe: '30m',
       added_at: '2024-01-01T00:00:00Z',
     },
   ],
@@ -207,13 +208,13 @@ describe('AssetStrategyCard', () => {
     });
   });
 
-  it('renders algo timeframe selector', async () => {
+  it('renders read-only signal timeframe on algo rows', async () => {
     render(<AssetStrategyCard strategy={mockStrategy} onRemove={onRemove} onUpdated={onUpdated} />);
     await expandCardAfterLoad();
     expandSection('Algo Strategies');
     await waitFor(() => {
-      expect(screen.getByText('Trading Timeframe')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('1d')).toBeInTheDocument();
+      expect(screen.getByText('30m')).toBeInTheDocument();
+      expect(screen.queryByText('Trading Timeframe')).not.toBeInTheDocument();
     });
   });
 

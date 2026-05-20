@@ -165,7 +165,11 @@ export const liveApi = {
   getStrategySignals: (
     symbol: string,
     timeframe = '1h',
-    options?: { includeTimeline?: boolean; timelineBars?: number },
+    options?: {
+      includeTimeline?: boolean;
+      timelineBars?: number;
+      strategyNames?: string[];
+    },
   ) =>
     api
       .get<StrategySignalsResponse>(`/live/strategy-signals/${symbol}`, {
@@ -173,6 +177,9 @@ export const liveApi = {
           timeframe,
           ...(options?.includeTimeline ? { include_timeline: true } : {}),
           ...(options?.timelineBars != null ? { timeline_bars: options.timelineBars } : {}),
+          ...(options?.strategyNames?.length
+            ? { strategies: options.strategyNames.join(',') }
+            : {}),
         },
       })
       .then((r) => r.data),

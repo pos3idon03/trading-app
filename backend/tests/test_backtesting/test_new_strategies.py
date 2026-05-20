@@ -251,6 +251,41 @@ class TestATRTrailingStopSignals:
         entries, _ = atr_trailing_stop_signals(ohlcv_df, trend_ma=50)
         assert not entries.iloc[0]
 
+    def test_exits_on_steep_drawdown(self):
+        """Locked-in trailing stop must fire when price capitulates."""
+        n = 120
+        dates = pd.date_range("2023-01-01", periods=n, freq="D")
+        close_vals = (
+            list(np.linspace(100, 150, 60))
+            + list(np.linspace(150, 90, 10))
+            + [90.0] * (n - 70)
+        )
+        close = pd.Series(close_vals)
+        high = close * 1.01
+        low = close * 0.99
+        df = pd.DataFrame(
+            {
+                "open": close.shift(1).fillna(close.iloc[0]),
+                "high": high,
+                "low": low,
+                "close": close,
+                "volume": 1_000_000.0,
+                "time": dates,
+            }
+        )
+
+        entries, exits = atr_trailing_stop_signals(
+            df, atr_period=14, atr_multiplier=3.0, trend_ma=20
+        )
+
+        assert entries.sum() >= 1
+        assert exits.sum() >= 1
+        assert not (entries & exits).any()
+
+    def test_produces_multiple_round_trips_on_trending_data(self, ohlcv_df):
+        entries, exits = atr_trailing_stop_signals(ohlcv_df, trend_ma=20)
+        assert exits.sum() >= 1
+
 
 # ---------------------------------------------------------------------------
 # VWAP Cross

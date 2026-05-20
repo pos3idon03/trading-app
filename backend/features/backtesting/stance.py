@@ -256,6 +256,15 @@ def _vote_majority(stances: list[str]) -> str | None:
     return None
 
 
+def _vote_or(stances: list[str]) -> str | None:
+    """OR / Any: any Sell exits; any Buy enters; Sell wins on mixed bars."""
+    if any(s == STANCE_SELL for s in stances):
+        return "flat"
+    if any(s == STANCE_BUY for s in stances):
+        return "long"
+    return None
+
+
 def _vote_weighted(
     stances: list[str], weights: list[float], threshold: float
 ) -> str | None:
@@ -284,6 +293,8 @@ def _decide_bar_target(
 ) -> str | None:
     if mode == "and":
         return _vote_and(stances)
+    if mode in ("or", "any"):
+        return _vote_or(stances)
     if mode == "majority":
         return _vote_majority(stances)
     if mode == "weighted":

@@ -52,6 +52,7 @@ const baseMonitor: ExecutionAssetMonitor = {
     { label: 'AI Macro', value: 0.3, buyThreshold: 0.1, sellThreshold: -0.2, signal: 'BUY' },
   ],
   overallSignal: 'BUY',
+  combinedVoteCount: 6,
   // Standalone (non-combo) strategy signals — card resolves label from STRATEGIES constant
   algoSignals: [
     { strategy: 'rsi', label: 'RSI (Relative Strength Index)', signal: 'BUY' },

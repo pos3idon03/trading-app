@@ -10,6 +10,30 @@ from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+OPEN_ORDER_STATUSES = frozenset({
+    "pending",
+    "pending_new",
+    "accepted",
+    "new",
+    "partially_filled",
+})
+
+
+async def has_open_order_for_symbol(
+    session: AsyncSession,
+    symbol: str,
+    side: str | None = None,
+) -> bool:
+    """True if a non-terminal order exists for symbol (optionally matching side)."""
+    stmt = select(Order.id).where(
+        Order.symbol == symbol,
+        Order.status.in_(OPEN_ORDER_STATUSES),
+    )
+    if side is not None:
+        stmt = stmt.where(Order.side == side.lower())
+    result = await session.execute(stmt.limit(1))
+    return result.scalar_one_or_none() is not None
+
 
 async def create_order(
     session: AsyncSession,

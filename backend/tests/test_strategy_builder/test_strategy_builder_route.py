@@ -137,9 +137,16 @@ class TestAttachAlgo:
 
         with patch("routes.strategy_builder.get_or_create_strategy", new=AsyncMock(return_value=strategy)), \
              patch("routes.strategy_builder.attach_algo", new=AsyncMock()), \
+             patch("routes.strategy_builder.sync_algo_timeframe_from_attachments", new=AsyncMock()), \
              patch("routes.strategy_builder._get_asset_info", new=AsyncMock(return_value=_make_asset_info())):
             result = await attach_algo_to_strategy(
-                AttachAlgoRequest(asset_id=10, strategy_name="ma_crossover", params={}), session
+                AttachAlgoRequest(
+                    asset_id=10,
+                    strategy_name="ma_crossover",
+                    params={},
+                    timeframe="30m",
+                ),
+                session,
             )
 
         assert result.id == 1

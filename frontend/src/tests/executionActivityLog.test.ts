@@ -27,6 +27,7 @@ function baseMonitor(overrides: Partial<ExecutionAssetMonitor> = {}): ExecutionA
       },
     ],
     overallSignal: 'NEUTRAL',
+    combinedVoteCount: 2,
     algoSignals: [
       {
         strategy: 'ma_crossover',

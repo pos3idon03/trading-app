@@ -59,4 +59,5 @@ class StrategyBacktest(Base):
     )
     strategy_name: Mapped[str] = mapped_column(Text, nullable=False)
     params: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    timeframe: Mapped[str] = mapped_column(String(10), nullable=False, default="1d")
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

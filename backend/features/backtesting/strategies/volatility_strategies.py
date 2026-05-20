@@ -5,6 +5,7 @@ import pandas as pd
 from features.backtesting.strategies.helpers import (
     _calc_atr,
     _calc_vwap,
+    _compute_atr_trailing_stop_state,
     _extract_ohlcv,
     _reindex_to_df,
 )
@@ -22,16 +23,16 @@ def atr_trailing_stop_signals(
     Exit when price closes below the ATR trailing stop level
     (close minus atr_multiplier * ATR).
     """
-    _, _, _, close, _ = _extract_ohlcv(df)
-    _, high, low, _, _ = _extract_ohlcv(df)
+    _, high, low, close, _ = _extract_ohlcv(df)
     atr = _calc_atr(high, low, close, atr_period)
     trend = close.rolling(trend_ma).mean()
-    above_trend = close > trend
-    prev_above = above_trend.shift(1).infer_objects(copy=False).fillna(False)
-    entries = above_trend & ~prev_above
-    trailing_stop = close - atr_multiplier * atr
-    exits = close < trailing_stop
-    return _reindex_to_df(entries, df), _reindex_to_df(exits, df)
+    entries, exits, _ = _compute_atr_trailing_stop_state(
+        close, atr, trend, atr_multiplier
+    )
+    return (
+        _reindex_to_df(pd.Series(entries, index=close.index), df),
+        _reindex_to_df(pd.Series(exits, index=close.index), df),
+    )
 
 
 def vwap_cross_signals(

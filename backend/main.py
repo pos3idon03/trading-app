@@ -41,7 +41,14 @@ async def lifespan(app: FastAPI):
         from features.data_ingestion.scheduler import stop_scheduler
         stop_scheduler()
 
+    from features.live_trading.bar_persistence import flush_bar_persist_queue
     from features.live_trading.websocket_stream import get_stream
+
+    try:
+        await flush_bar_persist_queue(timeout=3.0)
+    except Exception as exc:
+        logger.warning("bar_persist_flush_on_shutdown_failed", error=str(exc))
+
     await get_stream().stop()
     logger.info("shutdown")
 

@@ -2,7 +2,9 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from utils.timeframes import validate_signal_timeframe
 
 
 # ---------------------------------------------------------------------------
@@ -17,6 +19,15 @@ class AttachAlgoRequest(BaseModel):
     asset_id: int = Field(..., description="Asset ID — strategy card is auto-created if absent")
     strategy_name: str = Field(..., description="Strategy name (e.g. 'ma_crossover' or 'combo:majority')")
     params: Optional[dict] = Field(default=None, description="Strategy parameters used in the backtest run")
+    timeframe: str = Field(
+        default="1d",
+        description="Signal evaluation timeframe set from the backtest run",
+    )
+
+    @field_validator("timeframe")
+    @classmethod
+    def validate_timeframe(cls, v: str) -> str:
+        return validate_signal_timeframe(v)
 
 
 class DetachAlgoRequest(BaseModel):
@@ -195,6 +206,7 @@ class AlgoStrategySummary(BaseModel):
     algo_attachment_id: int
     strategy_name: str
     params: Optional[dict] = None
+    timeframe: str = "1d"
     added_at: datetime
 
 

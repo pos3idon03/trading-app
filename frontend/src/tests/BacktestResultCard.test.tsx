@@ -107,7 +107,12 @@ describe('BacktestResultCard', () => {
     render(<BacktestResultCard result={doneResult} onAddToStrategy={onAdd} />);
     fireEvent.click(screen.getByText(/\+ Strategy/));
     await waitFor(() =>
-      expect(onAdd).toHaveBeenCalledWith('ma_crossover', { fast_window: 10, slow_window: 50 }, 1),
+      expect(onAdd).toHaveBeenCalledWith(
+        'ma_crossover',
+        { fast_window: 10, slow_window: 50 },
+        1,
+        '1d',
+      ),
     );
   });
 

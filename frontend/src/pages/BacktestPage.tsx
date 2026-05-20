@@ -163,16 +163,24 @@ async function handleAddToStrategy(
   strategyName: string,
   params: Record<string, unknown>,
   assetId: number,
+  timeframe: string,
 ): Promise<void> {
-  await strategyBuilderApi.attachAlgo({ asset_id: assetId, strategy_name: strategyName, params });
+  await strategyBuilderApi.attachAlgo({
+    asset_id: assetId,
+    strategy_name: strategyName,
+    params,
+    timeframe,
+  });
 }
 
 function BacktestResultsGrid({
   results,
   pending,
+  attachTimeframe,
 }: {
   results: BacktestResponse[];
   pending: string[];
+  attachTimeframe: string;
 }) {
   if (results.length === 0 && pending.length === 0) return null;
 
@@ -182,6 +190,7 @@ function BacktestResultsGrid({
         <BacktestResultCard
           key={r.strategy_name}
           result={r}
+          attachTimeframe={attachTimeframe}
           onAddToStrategy={handleAddToStrategy}
         />
       ))}
@@ -325,7 +334,11 @@ function BacktestTab({ assets }: { assets: AssetItem[] }) {
         </button>
       </div>
 
-      <BacktestResultsGrid results={btResults} pending={pendingStrategies} />
+      <BacktestResultsGrid
+        results={btResults}
+        pending={pendingStrategies}
+        attachTimeframe={timeframe}
+      />
     </div>
   );
 }

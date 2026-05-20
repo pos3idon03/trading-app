@@ -24,6 +24,7 @@ from dtos.strategy_builder_dto import (
     UpdateThresholdsRequest,
 )
 from features.strategy_builder.orchestrator import build_full_strategy_response
+from features.strategy_builder.timeframe_sync import sync_algo_timeframe_from_attachments
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -100,7 +101,15 @@ async def attach_algo_to_strategy(
 ) -> StrategyRecord:
     """Attach an algo strategy definition to a strategy card. Auto-creates the card if absent."""
     strategy = await get_or_create_strategy(session, request.asset_id)
-    await attach_algo(session, strategy.id, request.strategy_name, request.params)
+    await attach_algo(
+        session,
+        strategy.id,
+        request.strategy_name,
+        request.params,
+        request.timeframe,
+    )
+    await sync_algo_timeframe_from_attachments(session, strategy.id)
+    await session.refresh(strategy)
 
     asset_info = await _get_asset_info(session, request.asset_id)
     return _to_strategy_record(strategy, asset_info)
@@ -115,6 +124,7 @@ async def detach_algo_from_strategy(
     removed = await detach_algo(session, request.strategy_id, request.algo_attachment_id)
     if not removed:
         raise HTTPException(status_code=404, detail="Algo attachment not found")
+    await sync_algo_timeframe_from_attachments(session, request.strategy_id)
     return {"removed": True}
 
 

@@ -32,6 +32,7 @@ const monitorV1: ExecutionAssetMonitor = {
     },
   ],
   overallSignal: 'NEUTRAL',
+  combinedVoteCount: 0,
   algoSignals: [],
   comboSignals: [],
   latestPrice: 100,

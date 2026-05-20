@@ -362,33 +362,49 @@ def _run_strategy_full(
     name: str,
     df: pd.DataFrame,
     *,
+    params: Optional[dict] = None,
     include_timeline: bool = False,
     timeline_bars: int = 120,
 ) -> tuple[str, Optional[float], Optional[str], dict, list[dict]]:
     """Run one strategy; returns signal, indicator, params, and optional timeline."""
     handler = _STRATEGY_MAP.get(name)
-    params = _DEFAULT_PARAMS.get(name, {})
+    base = _DEFAULT_PARAMS.get(name, {})
+    merged = {**base, **(params or {})}
     if handler is None:
-        return "NEUTRAL", None, None, params, []
+        return "NEUTRAL", None, None, merged, []
     try:
-        entries, exits = handler(df, params)
+        entries, exits = handler(df, merged)
         if name in _STANCE_MAP:
-            signal = _signal_from_stance(df, name, params)
+            signal = _signal_from_stance(df, name, merged)
         else:
             signal = _determine_signal(entries, exits)
         if include_timeline:
             if name in _STANCE_MAP:
-                timeline = _build_stance_timeline(df, name, params, timeline_bars)
+                timeline = _build_stance_timeline(df, name, merged, timeline_bars)
             else:
                 timeline = _build_signal_timeline(df, entries, exits, timeline_bars)
         else:
             timeline = []
     except Exception as exc:
         logger.warning("strategy_signal_error", strategy=name, error=str(exc))
-        return "NEUTRAL", None, None, params, []
+        return "NEUTRAL", None, None, merged, []
 
-    indicator_value, indicator_label = _compute_key_indicator(name, df, params)
-    return signal, indicator_value, indicator_label, params, timeline
+    indicator_value, indicator_label = _compute_key_indicator(name, df, merged)
+    return signal, indicator_value, indicator_label, merged, timeline
+
+
+def compute_strategy_signal(
+    bars: list,
+    strategy_name: str,
+    symbol: str = "",
+    params: Optional[dict] = None,
+) -> Optional[str]:
+    """Return latest BUY/SELL/NEUTRAL for one strategy on the given bars."""
+    if len(bars) < MIN_BARS_REQUIRED:
+        return None
+    df = _build_dataframe(bars)
+    signal, _, _, _, _ = _run_strategy_full(strategy_name, df, params=params)
+    return signal
 
 
 def compute_strategy_signals(
@@ -397,9 +413,11 @@ def compute_strategy_signals(
     *,
     include_timeline: bool = False,
     timeline_bars: int = 120,
+    strategy_names: list[str] | None = None,
 ) -> list[StrategySignalResult]:
-    """Run all backtest strategies on live OHLCV bars and return the latest signal per strategy.
+    """Run backtest strategies on live OHLCV bars and return the latest signal per strategy.
 
+    When strategy_names is set, only those strategies are evaluated.
     Returns an empty list when there are insufficient bars.
     """
     if len(bars) < MIN_BARS_REQUIRED:
@@ -413,8 +431,11 @@ def compute_strategy_signals(
 
     df = _build_dataframe(bars)
     results: list[StrategySignalResult] = []
+    names = strategy_names if strategy_names else list(_STRATEGY_MAP.keys())
 
-    for name in _STRATEGY_MAP:
+    for name in names:
+        if name not in _STRATEGY_MAP:
+            continue
         meta = _STRATEGY_META.get(name, {"label": name, "group": "Other"})
         signal, indicator_value, indicator_label, params, timeline = _run_strategy_full(
             name, df, include_timeline=include_timeline, timeline_bars=timeline_bars,

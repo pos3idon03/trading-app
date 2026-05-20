@@ -6,6 +6,7 @@ import pytest
 
 from features.live_trading.bar_persistence import (
     bar_to_record,
+    flush_bar_persist_queue,
     persist_completed_bar,
     set_persist_timeframes,
 )
@@ -70,6 +71,7 @@ class TestPersistCompletedBar:
             new=AsyncMock(return_value=1),
         ) as mock_insert:
             await persist_completed_bar(_sample_bar("5m"))
+            await flush_bar_persist_queue()
 
         mock_insert.assert_awaited_once()
         session.commit.assert_awaited_once()

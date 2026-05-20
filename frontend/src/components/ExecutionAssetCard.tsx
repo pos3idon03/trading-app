@@ -6,6 +6,7 @@ import {
   ComboSignalTimeline,
   isIntradayTimeframe,
 } from './ComboSignalTimeline';
+import { finestTimeframe } from '../utils/timelineAlignment';
 import { STRATEGIES } from '../constants/strategies';
 
 function resolveStrategyLabel(strategyName: string): string {
@@ -123,7 +124,15 @@ function SignalBadge({ signal }: { signal: 'BUY' | 'SELL' | 'NEUTRAL' }) {
 // Overall signal display
 // ---------------------------------------------------------------------------
 
-function OverallSignalBanner({ signal }: { signal: CriteriaSignal }) {
+function OverallSignalBanner({
+  signal,
+  combinationMode,
+  voteCount,
+}: {
+  signal: CriteriaSignal;
+  combinationMode: string;
+  voteCount: number;
+}) {
   const styles: Record<CriteriaSignal, string> = {
     BUY: 'bg-green-500/10 border-green-500/30 text-green-300',
     SELL: 'bg-red-500/10 border-red-500/30 text-red-300',
@@ -134,11 +143,24 @@ function OverallSignalBanner({ signal }: { signal: CriteriaSignal }) {
     SELL: '▼',
     NEUTRAL: '◆',
   };
+  const modeLabel: Record<string, string> = {
+    all: 'All',
+    and: 'Unanimous',
+    or: 'Any',
+    any: 'Any',
+    majority: 'Majority',
+  };
+  const mode = modeLabel[combinationMode] ?? combinationMode;
   return (
-    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${styles[signal]}`}>
-      <span className="text-xs font-bold uppercase tracking-widest">Combined Signal</span>
-      <span className="text-sm font-bold ml-auto">
-        {icons[signal]} {signal}
+    <div className={`flex flex-col gap-1 px-3 py-2 rounded-lg border ${styles[signal]}`}>
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-bold uppercase tracking-widest">Combined Signal</span>
+        <span className="text-sm font-bold ml-auto">
+          {icons[signal]} {signal}
+        </span>
+      </div>
+      <span className="text-xs text-slate-500">
+        {mode} over {voteCount} vote{voteCount === 1 ? '' : 's'} (criteria + algos; combo counts once)
       </span>
     </div>
   );
@@ -225,8 +247,11 @@ function AlgoStrategiesPanel({
 
   return (
     <div>
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-0.5">
         Algo Strategies ({timeframe})
+      </p>
+      <p className="text-slate-600 text-xs mb-2">
+        Leg timeframes may differ from the asset default.
       </p>
       <div className="space-y-3">
         {/* Standalone (non-combo) strategies */}
@@ -289,7 +314,11 @@ function ComboGroup({
   timeframe: string;
 }) {
   const comboTimeline = attachedSignalsToTimelineStrategies(childSignals);
-  const intraday = isIntradayTimeframe(timeframe);
+  const legTfs = childSignals
+    .map((s) => s.signalTimeframe ?? timeframe)
+    .filter(Boolean);
+  const alignmentTf = finestTimeframe(legTfs.length ? legTfs : [timeframe]);
+  const intraday = isIntradayTimeframe(alignmentTf);
   return (
     <div className="rounded-lg border border-slate-700 overflow-hidden">
       {/* Combo header */}
@@ -302,22 +331,31 @@ function ComboGroup({
           <ComboSignalTimeline
             strategies={comboTimeline}
             syncId={`combo-${label}`}
+            alignmentTimeframe={alignmentTf}
             compact
             intraday={intraday}
           />
         </div>
       )}
       <div className="divide-y divide-slate-800">
-        {childSignals.map((s) => (
+        {childSignals.map((s) => {
+          const chartTf = s.signalTimeframe ?? timeframe;
+          return (
           <div key={s.strategy} className="bg-surface-900 px-3 py-2">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <span className="text-slate-300 text-xs truncate">{resolveStrategyLabel(s.strategy)}</span>
-              <SignalBadge signal={s.signal} />
+              <div className="flex items-center gap-2 shrink-0">
+                {s.signalTimeframe && (
+                  <span className="text-slate-500 text-xs font-mono">{s.signalTimeframe}</span>
+                )}
+                <SignalBadge signal={s.signal} />
+              </div>
             </div>
             <IndicatorHint signal={s} />
-            <StrategyTimelineChart signal={s} timeframe={timeframe} />
+            <StrategyTimelineChart signal={s} timeframe={chartTf} />
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -340,14 +378,20 @@ function IndicatorHint({ signal: s }: { signal: AttachedAlgoSignal }) {
 }
 
 function AlgoSignalRow({ signal: s, timeframe }: { signal: AttachedAlgoSignal; timeframe: string }) {
+  const chartTf = s.signalTimeframe ?? timeframe;
   return (
     <div className="bg-surface-900 rounded-lg px-3 py-2 border border-slate-700">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <span className="text-slate-300 text-xs truncate">{resolveStrategyLabel(s.strategy)}</span>
-        <SignalBadge signal={s.signal} />
+        <div className="flex items-center gap-2 shrink-0">
+          {s.signalTimeframe && (
+            <span className="text-slate-500 text-xs font-mono">{s.signalTimeframe}</span>
+          )}
+          <SignalBadge signal={s.signal} />
+        </div>
       </div>
       <IndicatorHint signal={s} />
-      <StrategyTimelineChart signal={s} timeframe={timeframe} />
+      <StrategyTimelineChart signal={s} timeframe={chartTf} />
     </div>
   );
 }
@@ -515,7 +559,13 @@ function CardHeader({
   onToggle: () => void;
   bodyId: string;
 }) {
-  const modeLabel: Record<string, string> = { all: 'All', majority: 'Majority', any: 'Any' };
+  const modeLabel: Record<string, string> = {
+    all: 'All',
+    and: 'Unanimous',
+    or: 'Any',
+    any: 'Any',
+    majority: 'Majority',
+  };
 
   return (
     <div className="flex items-center gap-3 flex-wrap">
@@ -595,7 +645,11 @@ export default function ExecutionAssetCard({ monitor, onOrdersPageChange }: Prop
         <PriceDisplay price={monitor.latestPrice} updatedAt={monitor.priceUpdatedAt} />
       </div>
 
-      <OverallSignalBanner signal={monitor.overallSignal} />
+      <OverallSignalBanner
+        signal={monitor.overallSignal}
+        combinationMode={monitor.combinationMode}
+        voteCount={monitor.combinedVoteCount}
+      />
 
       {expanded && (
         <div id={bodyId} className="space-y-4">

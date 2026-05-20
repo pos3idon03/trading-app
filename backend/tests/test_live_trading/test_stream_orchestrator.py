@@ -17,13 +17,26 @@ class TestCollectRunningStreamConfig:
     async def test_returns_symbols_and_timeframes_from_running_assets(self):
         session = AsyncMock()
         rows = [
-            {"symbol": "AAPL", "auto_trading_started": True, "algo_timeframe": "5m"},
-            {"symbol": "BTC/USD", "auto_trading_started": True, "algo_timeframe": "1h"},
+            {
+                "symbol": "AAPL",
+                "strategy_id": 1,
+                "auto_trading_started": True,
+                "algo_timeframe": "5m",
+            },
+            {
+                "symbol": "BTC/USD",
+                "strategy_id": 2,
+                "auto_trading_started": True,
+                "algo_timeframe": "1h",
+            },
             {"symbol": "MSFT", "auto_trading_started": False, "algo_timeframe": "1d"},
         ]
         with patch(
             "features.live_trading.stream_orchestrator.list_auto_trading_assets",
             new=AsyncMock(return_value=rows),
+        ), patch(
+            "features.live_trading.stream_orchestrator.get_attachment_timeframes_for_strategy",
+            new=AsyncMock(return_value=[]),
         ):
             config = await collect_running_stream_config(session)
 

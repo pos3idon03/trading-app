@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.strategy_builder import StrategyBacktest, TradingStrategy
 from utils.logging import get_logger
+from utils.timeframes import validate_signal_timeframe
 
 logger = get_logger(__name__)
 
@@ -199,15 +200,25 @@ async def attach_algo(
     strategy_id: int,
     strategy_name: str,
     params: Optional[dict],
+    timeframe: str = "1d",
 ) -> StrategyBacktest:
     """Attach an algo strategy definition to a strategy card.
 
     Replaces an existing entry for the same strategy_name (upsert on conflict).
     """
+    tf = validate_signal_timeframe(timeframe)
     stmt = (
         pg_insert(StrategyBacktest)
-        .values(strategy_id=strategy_id, strategy_name=strategy_name, params=params)
-        .on_conflict_do_nothing(constraint="strategy_backtests_strategy_id_strategy_name_key")
+        .values(
+            strategy_id=strategy_id,
+            strategy_name=strategy_name,
+            params=params,
+            timeframe=tf,
+        )
+        .on_conflict_do_update(
+            constraint="strategy_backtests_strategy_id_strategy_name_key",
+            set_={"params": params, "timeframe": tf},
+        )
     )
     await session.execute(stmt)
     await session.flush()
@@ -229,6 +240,22 @@ async def detach_algo(
     return True
 
 
+async def get_attachment_timeframes_for_strategy(
+    session: AsyncSession,
+    strategy_id: int,
+) -> list[str]:
+    """Return distinct timeframes for all attachments on a strategy card."""
+    query = text("""
+        SELECT sb.timeframe, sb.strategy_name, sb.params
+        FROM strategy_backtests sb
+        WHERE sb.strategy_id = :strategy_id
+    """)
+    result = await session.execute(query, {"strategy_id": strategy_id})
+    from features.strategy_builder.timeframe_sync import collect_attachment_timeframes
+
+    return collect_attachment_timeframes([dict(r) for r in result.mappings().all()])
+
+
 async def get_linked_algos(session: AsyncSession, strategy_id: int) -> list[dict]:
     """Return algo strategy definitions linked to this strategy card."""
     query = text("""
@@ -236,7 +263,8 @@ async def get_linked_algos(session: AsyncSession, strategy_id: int) -> list[dict
             sb.id            AS algo_attachment_id,
             sb.added_at,
             sb.strategy_name,
-            sb.params
+            sb.params,
+            sb.timeframe
         FROM strategy_backtests sb
         WHERE sb.strategy_id = :strategy_id
         ORDER BY sb.added_at DESC
