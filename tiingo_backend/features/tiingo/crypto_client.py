@@ -3,13 +3,14 @@ from datetime import datetime
 import httpx
 
 from dtos.market_data_dto import OHLCVRecord
+from features.market_data.bar_aggregate import aggregate_ohlcv_bars
 from features.tiingo.common import get_token, parse_timestamp, resample_freq, symbol_to_crypto_ticker
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 _CRYPTO_URL = "https://api.tiingo.com/tiingo/crypto/prices"
-_SUPPORTED = {"1m", "5m", "15m", "30m", "1h"}
+_SUPPORTED = {"1m", "5m", "15m", "30m", "1h", "4h", "1d"}
 
 
 def _extract_rows(payload: list, ticker: str) -> list[dict]:
@@ -29,13 +30,18 @@ async def fetch_crypto_bars(
     if timeframe not in _SUPPORTED:
         raise ValueError(f"Crypto unsupported timeframe: {timeframe}")
 
+    if timeframe == "4h":
+        hourly = await fetch_crypto_bars(symbol, instrument_id, "1h", start, end)
+        return aggregate_ohlcv_bars(hourly, "4h")
+
+    fetch_timeframe = timeframe
     ticker = symbol_to_crypto_ticker(symbol)
     token = get_token()
     params = {
         "tickers": ticker,
         "startDate": start.strftime("%Y-%m-%d"),
         "endDate": end.strftime("%Y-%m-%d"),
-        "resampleFreq": resample_freq(timeframe),
+        "resampleFreq": resample_freq(fetch_timeframe),
         "token": token,
     }
     async with httpx.AsyncClient(timeout=30.0) as client:

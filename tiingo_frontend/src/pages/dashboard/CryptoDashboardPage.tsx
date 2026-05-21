@@ -4,10 +4,10 @@ export default function CryptoDashboardPage() {
   return (
     <OhlcvDashboardView
       title="Crypto Dashboard"
-      description="Select a cryptocurrency to view its OHLCV timeline chart."
+      description="Select an ingested cryptocurrency from your watchlist to view its OHLCV timeline chart."
       basePath="/dashboard/crypto"
       assetTypeFilter={['crypto']}
-      searchPlaceholder="Search crypto (e.g. Bitcoin, ETHUSD)"
+      searchPlaceholder="Search ingested crypto in watchlist"
     />
   );
 }

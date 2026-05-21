@@ -2,7 +2,6 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import get_settings
 from dal import instrument_dal, ohlcv_dal
 from dtos.market_data_dto import OHLCVBackfillRequest
 from features.tiingo import crypto_client, eod_client, iex_client
@@ -10,6 +9,13 @@ from utils.logging import get_logger
 from utils.rate_limiter import RateLimitExceeded, check_and_increment
 
 logger = get_logger(__name__)
+
+
+def _effective_sources(asset_type: str, sources: list[str]) -> list[str]:
+    effective = list(sources)
+    if asset_type == "crypto" and "tiingo_crypto" not in effective:
+        effective.append("tiingo_crypto")
+    return effective
 
 
 async def _resolve_start(
@@ -31,6 +37,25 @@ async def _resolve_start(
     return datetime.now(timezone.utc) - timedelta(days=365 * max(years, 1))
 
 
+async def _backfill_crypto(
+    session: AsyncSession,
+    symbol: str,
+    iid: int,
+    ticker: str,
+    timeframe: str,
+    request: OHLCVBackfillRequest,
+    end: datetime,
+) -> int:
+    years = 30 if timeframe == "1d" else 0
+    days = 90 if timeframe != "1d" else 0
+    start = await _resolve_start(
+        session, iid, timeframe, "tiingo_crypto", request.start_date, years=years, days=days
+    )
+    await check_and_increment(session)
+    recs = await crypto_client.fetch_crypto_bars(ticker, iid, timeframe, start, end)
+    return await ohlcv_dal.bulk_insert_ohlcv(session, recs)
+
+
 async def _backfill_one(
     session: AsyncSession,
     symbol: str,
@@ -45,20 +70,22 @@ async def _backfill_one(
     end = datetime.now(timezone.utc)
     inserted = 0
     asset_type = inst["asset_type"]
+    sources = _effective_sources(asset_type, request.sources)
+    use_crypto = asset_type == "crypto" and "tiingo_crypto" in sources
 
-    if "tiingo_eod" in request.sources and "1d" in request.timeframes:
-        start = await _resolve_start(session, iid, "1d", "tiingo_eod", request.start_date, years=30)
-        await check_and_increment(session)
-        recs = await eod_client.fetch_eod_bars(ticker, iid, start, end)
-        inserted += await ohlcv_dal.bulk_insert_ohlcv(session, recs)
+    if "1d" in request.timeframes:
+        if use_crypto:
+            inserted += await _backfill_crypto(session, symbol, iid, ticker, "1d", request, end)
+        elif "tiingo_eod" in sources:
+            start = await _resolve_start(session, iid, "1d", "tiingo_eod", request.start_date, years=30)
+            await check_and_increment(session)
+            recs = await eod_client.fetch_eod_bars(ticker, iid, start, end)
+            inserted += await ohlcv_dal.bulk_insert_ohlcv(session, recs)
 
     for tf in [t for t in request.timeframes if t != "1d"]:
-        if asset_type == "crypto" and "tiingo_crypto" in request.sources:
-            start = await _resolve_start(session, iid, tf, "tiingo_crypto", request.start_date, days=90)
-            await check_and_increment(session)
-            recs = await crypto_client.fetch_crypto_bars(ticker, iid, tf, start, end)
-            inserted += await ohlcv_dal.bulk_insert_ohlcv(session, recs)
-        elif "tiingo_iex" in request.sources:
+        if use_crypto:
+            inserted += await _backfill_crypto(session, symbol, iid, ticker, tf, request, end)
+        elif "tiingo_iex" in sources:
             start = await _resolve_start(session, iid, tf, "tiingo_iex", request.start_date, days=90)
             await check_and_increment(session)
             recs = await iex_client.fetch_iex_bars(ticker, iid, tf, start, end)

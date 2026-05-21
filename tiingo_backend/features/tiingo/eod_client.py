@@ -10,6 +10,21 @@ logger = get_logger(__name__)
 
 _EOD_BASE = "https://api.tiingo.com/tiingo/daily"
 
+_ADJUSTED_FIELDS = {
+    "open": "adjOpen",
+    "high": "adjHigh",
+    "low": "adjLow",
+    "close": "adjClose",
+}
+
+
+def _pick_adjusted_price(row: dict, field: str) -> float:
+    adj_key = _ADJUSTED_FIELDS[field]
+    adjusted = row.get(adj_key)
+    if adjusted is not None:
+        return float(adjusted)
+    return float(row[field])
+
 
 async def fetch_eod_bars(
     symbol: str,
@@ -35,10 +50,10 @@ async def fetch_eod_bars(
             time=parse_timestamp(row["date"]),
             instrument_id=instrument_id,
             timeframe="1d",
-            open=float(row["open"]),
-            high=float(row["high"]),
-            low=float(row["low"]),
-            close=float(row["close"]),
+            open=_pick_adjusted_price(row, "open"),
+            high=_pick_adjusted_price(row, "high"),
+            low=_pick_adjusted_price(row, "low"),
+            close=_pick_adjusted_price(row, "close"),
             volume=int(row.get("volume") or 0),
             source="tiingo_eod",
         ))

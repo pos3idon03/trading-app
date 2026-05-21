@@ -4,34 +4,9 @@ import {
   ColorType,
   type IChartApi,
   type ISeriesApi,
-  type UTCTimestamp,
 } from 'lightweight-charts';
 import type { OHLCVBar } from '../../api/types';
-
-const INTRADAY_TIMEFRAMES = new Set(['5m', '1m', '1h']);
-
-type ChartBar = {
-  time: string | UTCTimestamp;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-};
-
-function buildCandleData(records: OHLCVBar[], timeframe: string): ChartBar[] {
-  const isIntraday = INTRADAY_TIMEFRAMES.has(timeframe);
-  return records
-    .map((r) => ({
-      time: isIntraday
-        ? (Math.floor(new Date(r.time).getTime() / 1000) as UTCTimestamp)
-        : r.time.split('T')[0],
-      open: r.open,
-      high: r.high,
-      low: r.low,
-      close: r.close,
-    }))
-    .sort((a, b) => (a.time > b.time ? 1 : -1));
-}
+import { buildCandleData } from '../../utils/ohlcvChartData';
 
 interface OhlcvTimelineChartProps {
   records: OHLCVBar[];

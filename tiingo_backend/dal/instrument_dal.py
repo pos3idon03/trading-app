@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.tiingo.common import normalize_crypto_symbol
 from models.instrument import Instrument
 
 _table = Instrument.__table__
@@ -26,12 +27,41 @@ async def get_by_symbol(session: AsyncSession, symbol: str) -> dict | None:
     return _to_dict(row) if row else None
 
 
+async def search_instruments(
+    session: AsyncSession,
+    query: str,
+    *,
+    asset_types: list[str] | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    pattern = f"%{query.strip()}%"
+    q = (
+        select(Instrument)
+        .where(
+            or_(
+                Instrument.symbol.ilike(pattern),
+                Instrument.name.ilike(pattern),
+            )
+        )
+        .order_by(Instrument.symbol)
+        .limit(limit)
+    )
+    if asset_types:
+        q = q.where(Instrument.asset_type.in_(asset_types))
+    rows = await session.execute(q)
+    return [_to_dict(r) for r in rows.scalars().all()]
+
+
 async def upsert_instrument(session: AsyncSession, data: dict) -> dict:
     now = datetime.now(timezone.utc)
+    asset_type = data.get("asset_type", "stock")
     symbol = data["symbol"].upper()
+    if asset_type == "crypto":
+        symbol = normalize_crypto_symbol(data["symbol"])
+    tiingo_ticker = data.get("tiingo_ticker") or symbol
     row = {
         _table.c.symbol: symbol,
-        _table.c.tiingo_ticker: data.get("tiingo_ticker") or symbol,
+        _table.c.tiingo_ticker: tiingo_ticker,
         _table.c.name: data.get("name"),
         _table.c.asset_type: data.get("asset_type", "stock"),
         _table.c.exchange: data.get("exchange"),

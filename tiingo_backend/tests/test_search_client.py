@@ -39,6 +39,18 @@ class TestParseItem:
     def test_missing_ticker(self):
         assert _parse_item({"name": "Foo"}) is None
 
+    def test_crypto_btcusd(self):
+        row = _parse_item({
+            "ticker": "btcusd",
+            "name": "Bitcoin USD",
+            "assetType": "Crypto",
+            "exchange": "GDAX",
+        })
+        assert row is not None
+        assert row.symbol == "BTC-USD"
+        assert row.asset_type == "crypto"
+        assert row.tiingo_ticker == "btcusd"
+
 
 @pytest.mark.asyncio
 async def test_search_tickers_success():

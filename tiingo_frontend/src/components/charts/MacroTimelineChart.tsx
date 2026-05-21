@@ -1,5 +1,6 @@
 import {
   CartesianGrid,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -8,24 +9,29 @@ import {
   YAxis,
 } from 'recharts';
 import type { MacroObservation } from '../../api/types';
+import { mergeMacroSeries, type MacroCompareSeries } from '../../utils/macroChartData';
 
 interface MacroTimelineChartProps {
   observations: MacroObservation[];
   seriesId: string;
+  seriesTitle?: string;
+  compareSeries?: MacroCompareSeries | null;
   height?: number;
 }
 
 export default function MacroTimelineChart({
   observations,
   seriesId,
+  seriesTitle,
+  compareSeries,
   height = 420,
 }: MacroTimelineChartProps) {
-  const data = [...observations]
-    .sort((a, b) => a.obs_date.localeCompare(b.obs_date))
-    .map((o) => ({
-      date: o.obs_date,
-      value: o.value,
-    }));
+  const isCompareMode = Boolean(compareSeries);
+  const data = mergeMacroSeries(observations, compareSeries?.observations);
+  const primaryLabel = seriesTitle ? `${seriesId} — ${seriesTitle}` : seriesId;
+  const compareLabel = compareSeries
+    ? `${compareSeries.seriesId} — ${compareSeries.title}`
+    : undefined;
 
   if (!data.length) {
     return (
@@ -42,10 +48,23 @@ export default function MacroTimelineChart({
           <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
           <XAxis
             dataKey="date"
+            domain={['dataMin', 'dataMax']}
             tick={{ fill: '#64748b', fontSize: 11 }}
             tickFormatter={(v: string) => v.slice(0, 7)}
           />
-          <YAxis tick={{ fill: '#64748b', fontSize: 11 }} width={60} />
+          <YAxis
+            yAxisId="left"
+            tick={{ fill: '#64748b', fontSize: 11 }}
+            width={60}
+          />
+          {compareSeries && (
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              tick={{ fill: '#64748b', fontSize: 11 }}
+              width={60}
+            />
+          )}
           <Tooltip
             contentStyle={{
               backgroundColor: '#1e293b',
@@ -53,15 +72,33 @@ export default function MacroTimelineChart({
               borderRadius: '8px',
             }}
             labelStyle={{ color: '#94a3b8' }}
+            formatter={(value: number, name: string) =>
+              value == null ? ['—', name] : [value, name]
+            }
           />
+          {compareSeries && <Legend />}
           <Line
             type="monotone"
-            dataKey="value"
+            dataKey="primary"
+            yAxisId="left"
             stroke="#22c55e"
             dot={false}
             strokeWidth={2}
-            name={seriesId}
+            name={primaryLabel}
+            connectNulls={isCompareMode}
           />
+          {compareSeries && (
+            <Line
+              type="monotone"
+              dataKey="compare"
+              yAxisId="right"
+              stroke={compareSeries.color}
+              dot={false}
+              strokeWidth={2}
+              name={compareLabel}
+              connectNulls
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
     </div>

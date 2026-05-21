@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ingestionApi } from '../../api/endpoints';
 import type { Instrument, TickerSearchResult } from '../../api/types';
+import ConfirmModal from '../../components/ConfirmModal';
 import TiingoTickerSearch from '../../components/TiingoTickerSearch';
 import Spinner from '../../components/Spinner';
 import ErrorAlert from '../../components/ErrorAlert';
+import Toast from '../../components/Toast';
+import {
+  backfillStartedMessage,
+  deleteConfirmMessage,
+  deleteSuccessMessage,
+} from '../../utils/watchlistMessages';
+
+type ToastState = { message: string; variant: 'success' | 'error' };
 
 export default function WatchlistTab() {
   const [instruments, setInstruments] = useState<Instrument[]>([]);
@@ -11,6 +20,8 @@ export default function WatchlistTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Instrument | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -47,19 +58,48 @@ export default function WatchlistTab() {
 
   const toggleActive = async (inst: Instrument) => {
     setBusy(inst.symbol);
-    await ingestionApi.patchInstrument(inst.symbol, { is_active: !inst.is_active });
-    await load();
-    setBusy(null);
+    try {
+      await ingestionApi.patchInstrument(inst.symbol, { is_active: !inst.is_active });
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
   };
 
   const handleBackfill = async (sym: string) => {
     setBusy(`bf-${sym}`);
-    await ingestionApi.backfillOhlcv({
-      symbols: [sym],
-      timeframes: ['1d', '5m'],
-      sources: ['tiingo_eod', 'tiingo_iex', 'tiingo_crypto'],
-    });
-    setBusy(null);
+    setError(null);
+    try {
+      await ingestionApi.backfillOhlcv({
+        symbols: [sym],
+        timeframes: ['1d', '5m', '1m', '15m', '30m', '1h'],
+        sources: ['tiingo_eod', 'tiingo_iex', 'tiingo_crypto'],
+      });
+      setToast({ message: backfillStartedMessage(sym), variant: 'success' });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!confirmDelete) return;
+    const sym = confirmDelete.symbol;
+    setBusy(`del-${sym}`);
+    setError(null);
+    try {
+      await ingestionApi.deleteInstrument(sym);
+      setConfirmDelete(null);
+      await load();
+      setToast({ message: deleteSuccessMessage(sym), variant: 'success' });
+    } catch (e) {
+      setToast({ message: (e as Error).message, variant: 'error' });
+    } finally {
+      setBusy(null);
+    }
   };
 
   if (loading) return <div className="flex justify-center py-12"><Spinner /></div>;
@@ -69,6 +109,23 @@ export default function WatchlistTab() {
   return (
     <div className="space-y-4">
       {error && <ErrorAlert message={error} />}
+      {toast && (
+        <Toast
+          message={toast.message}
+          variant={toast.variant}
+          onDismiss={() => setToast(null)}
+        />
+      )}
+      <ConfirmModal
+        open={confirmDelete !== null}
+        title="Delete instrument?"
+        message={confirmDelete ? deleteConfirmMessage(confirmDelete.symbol) : ''}
+        confirmLabel="Yes"
+        cancelLabel="No"
+        busy={confirmDelete !== null && busy === `del-${confirmDelete.symbol}`}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setConfirmDelete(null)}
+      />
       <div className="flex flex-wrap gap-2 items-end">
         <TiingoTickerSearch
           selected={selected}
@@ -110,14 +167,24 @@ export default function WatchlistTab() {
                 </button>
               </td>
               <td className="p-3">
-                <button
-                  type="button"
-                  onClick={() => handleBackfill(i.symbol)}
-                  disabled={!!busy}
-                  className="text-xs text-slate-300 hover:text-white underline"
-                >
-                  Backfill
-                </button>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleBackfill(i.symbol)}
+                    disabled={!!busy}
+                    className="text-xs text-slate-300 hover:text-white underline disabled:opacity-50"
+                  >
+                    Backfill
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(i)}
+                    disabled={!!busy}
+                    className="text-xs text-red-400 hover:text-red-300 underline disabled:opacity-50"
+                  >
+                    Delete
+                  </button>
+                </div>
               </td>
             </tr>
           ))}

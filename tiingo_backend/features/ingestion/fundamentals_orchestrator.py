@@ -33,6 +33,7 @@ async def run_fundamentals_ingest(
             continue
         try:
             await check_and_increment(session)
+            await fundamentals_dal.delete_fundamentals_for_instrument(session, inst["id"])
             metrics = await fundamentals_client.fetch_fundamentals_statements(sym)
             rows = [{**m, "instrument_id": inst["id"]} for m in metrics]
             inserted += await fundamentals_dal.bulk_insert_fundamentals(session, rows)

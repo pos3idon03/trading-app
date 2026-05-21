@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 from uuid import UUID
 
@@ -61,6 +61,35 @@ class FundamentalsRunRequest(BaseModel):
     symbols: list[str] = Field(default_factory=list)
 
 
+class FundamentalsCoverageItemDTO(BaseModel):
+    symbol: str
+    name: Optional[str] = None
+    metric_count: int
+    first_report_date: datetime
+    latest_report_date: datetime
+    last_ingested_at: datetime
+
+
+class FundamentalsCoverageResponseDTO(BaseModel):
+    items: list[FundamentalsCoverageItemDTO]
+    count: int
+
+
+class FundamentalMetricDTO(BaseModel):
+    time: datetime
+    metric_name: str
+    value: float
+    period: Optional[str] = None
+    statement_type: Optional[str] = None
+
+
+class FundamentalsMetricsResponseDTO(BaseModel):
+    symbol: str
+    period_type: str
+    metrics: list[FundamentalMetricDTO]
+    count: int
+
+
 class MacroBackfillRequest(BaseModel):
     series_ids: list[str] = Field(default_factory=list)
 
@@ -71,6 +100,17 @@ class MacroSeriesDTO(BaseModel):
     frequency: Optional[str] = None
     category: str = "general"
     is_enabled: bool = False
+
+
+class MacroObservationDTO(BaseModel):
+    obs_date: date
+    value: Optional[float] = None
+
+
+class MacroObservationsResponseDTO(BaseModel):
+    series_id: str
+    observations: list[MacroObservationDTO]
+    count: int
 
 
 class JobDTO(BaseModel):

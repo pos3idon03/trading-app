@@ -27,7 +27,7 @@ export default function MarketDataTab() {
     try {
       const r = await ingestionApi.backfillOhlcv({
         symbols: [],
-        timeframes: ['1d', '5m', '1m'],
+        timeframes: ['1d', '5m', '1m', '15m', '30m', '1h'],
         sources: ['tiingo_eod', 'tiingo_iex', 'tiingo_crypto'],
       });
       setMsg(`Backfill job queued: ${r.job_id}`);
@@ -47,6 +47,9 @@ export default function MarketDataTab() {
       >
         Backfill All Active (EOD + IEX)
       </button>
+      <p className="text-xs text-slate-500">
+        Daily EOD bars use split-adjusted prices. Re-run backfill after upgrading to refresh historical charts.
+      </p>
       <div className="flex flex-wrap gap-2 items-end">
         <TiingoTickerSearch selected={selected} onSelect={setSelected} />
         <button

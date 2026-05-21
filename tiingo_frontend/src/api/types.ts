@@ -80,10 +80,51 @@ export interface OHLCVQueryResponse {
 
 export interface MacroObservation {
   obs_date: string;
-  value: number;
+  value: number | null;
 }
 
 export interface MacroObservationsResponse {
   series_id: string;
   observations: MacroObservation[];
+  count: number;
+}
+
+export interface FundamentalsCoverageItem {
+  symbol: string;
+  name?: string;
+  metric_count: number;
+  first_report_date: string;
+  latest_report_date: string;
+  last_ingested_at: string;
+}
+
+export interface FundamentalsCoverageResponse {
+  items: FundamentalsCoverageItem[];
+  count: number;
+}
+
+export interface FundamentalMetric {
+  time: string;
+  metric_name: string;
+  value: number;
+  period?: string | null;
+  statement_type?: string | null;
+}
+
+export interface FundamentalsMetricsResponse {
+  symbol: string;
+  period_type: string;
+  metrics: FundamentalMetric[];
+  count: number;
+}
+
+export type FundamentalsPeriodType = 'quarterly' | 'annual';
+
+export type SeriesSource = 'macro' | 'instrument';
+
+export interface DashboardSeriesRef {
+  source: SeriesSource;
+  id: string;
+  label: string;
+  assetType?: string;
 }

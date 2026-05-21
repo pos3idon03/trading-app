@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ingestionApi } from '../api/endpoints';
 import type { MacroSeries } from '../api/types';
 
-const DEBOUNCE_MS = 200;
+const DEBOUNCE_MS = 300;
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -27,20 +27,19 @@ interface MacroSeriesSearchProps {
 export default function MacroSeriesSearch({
   selected,
   onSelect,
-  placeholder = 'Search FRED series (e.g. GDP, CPI)',
+  placeholder = 'Search ingested FRED series (e.g. GDP, CPI)',
   className = '',
 }: MacroSeriesSearchProps) {
-  const [catalog, setCatalog] = useState<MacroSeries[]>([]);
+  const [results, setResults] = useState<MacroSeries[]>([]);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debouncedQuery = useDebounce(query, DEBOUNCE_MS);
-
-  useEffect(() => {
-    ingestionApi.listMacroSeries().then(setCatalog).catch(() => setCatalog([]));
-  }, []);
 
   useEffect(() => {
     if (selected) {
@@ -48,15 +47,45 @@ export default function MacroSeriesSearch({
     }
   }, [selected]);
 
-  const filtered = catalog.filter((s) => {
-    if (!debouncedQuery.trim() || selected) return true;
-    const q = debouncedQuery.toLowerCase();
-    return (
-      s.series_id.toLowerCase().includes(q) ||
-      s.title.toLowerCase().includes(q) ||
-      s.category.toLowerCase().includes(q)
-    );
-  });
+  useEffect(() => {
+    if (selected) {
+      setResults([]);
+      setOpen(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setSearchError(null);
+
+    ingestionApi
+      .listMacroSeries({
+        ingestedOnly: true,
+        query: debouncedQuery.trim() || undefined,
+        limit: 50,
+      })
+      .then((items) => {
+        if (cancelled) return;
+        setResults(items);
+        setHasSearched(true);
+        setOpen(true);
+        setActiveIndex(-1);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setResults([]);
+        setHasSearched(true);
+        setOpen(true);
+        setSearchError('Search failed. Check that tiingo_backend is running.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedQuery, selected]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -71,6 +100,7 @@ export default function MacroSeriesSearch({
   const pickSeries = (series: MacroSeries) => {
     onSelect(series);
     setQuery(formatLabel(series));
+    setResults([]);
     setOpen(false);
     setActiveIndex(-1);
   };
@@ -78,6 +108,7 @@ export default function MacroSeriesSearch({
   const clearSelection = () => {
     onSelect(null);
     setQuery('');
+    setResults([]);
     setOpen(false);
     inputRef.current?.focus();
   };
@@ -85,7 +116,8 @@ export default function MacroSeriesSearch({
   const handleChange = (value: string) => {
     if (selected) onSelect(null);
     setQuery(value);
-    setOpen(true);
+    setHasSearched(false);
+    setSearchError(null);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -93,16 +125,16 @@ export default function MacroSeriesSearch({
       if (e.key === 'Escape' || e.key === 'Backspace') clearSelection();
       return;
     }
-    if (!open || filtered.length === 0) return;
+    if (!open || results.length === 0) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setActiveIndex((prev) => Math.min(prev + 1, filtered.length - 1));
+      setActiveIndex((prev) => Math.min(prev + 1, results.length - 1));
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setActiveIndex((prev) => Math.max(prev - 1, 0));
     } else if (e.key === 'Enter' && activeIndex >= 0) {
       e.preventDefault();
-      pickSeries(filtered[activeIndex]);
+      pickSeries(results[activeIndex]);
     } else if (e.key === 'Escape') {
       setOpen(false);
     }
@@ -124,6 +156,11 @@ export default function MacroSeriesSearch({
         readOnly={!!selected}
         autoComplete="off"
       />
+      {loading && (
+        <span className="absolute right-2.5 top-1/2 -translate-y-1/2">
+          <span className="block w-3.5 h-3.5 border border-brand-500 border-t-transparent rounded-full animate-spin" />
+        </span>
+      )}
       {selected && (
         <button
           type="button"
@@ -135,9 +172,9 @@ export default function MacroSeriesSearch({
         </button>
       )}
 
-      {open && !selected && filtered.length > 0 && (
+      {open && !selected && results.length > 0 && (
         <ul className="absolute z-50 mt-1 w-full bg-surface-800 border border-slate-700 rounded-lg shadow-lg max-h-64 overflow-y-auto">
-          {filtered.slice(0, 50).map((series, idx) => (
+          {results.map((series, idx) => (
             <li
               key={series.series_id}
               onMouseDown={(ev) => {
@@ -160,9 +197,9 @@ export default function MacroSeriesSearch({
         </ul>
       )}
 
-      {open && !selected && debouncedQuery && filtered.length === 0 && (
+      {open && !selected && !loading && hasSearched && results.length === 0 && (
         <div className="absolute z-50 mt-1 w-full bg-surface-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-500">
-          No matching series.
+          {searchError ?? 'No ingested macro series match. Backfill from Ingestion → FRED Macro.'}
         </div>
       )}
     </div>

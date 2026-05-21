@@ -6,16 +6,28 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dtos.market_data_dto import OHLCVRecord
+from features.market_data.ohlcv_resample import (
+    compute_resample_start,
+    get_resampled_bars,
+    intraday_source_candidates,
+    is_tail_timeframe,
+    resolve_ohlcv_query,
+)
 from models.market_data import OHLCV
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 _SOURCE_PRIORITY: dict[str, list[str]] = {
-    "1d": ["tiingo_eod", "tiingo_iex"],
+    "1d": ["tiingo_crypto", "tiingo_eod", "tiingo_iex"],
     "5m": ["tiingo_iex", "tiingo_crypto"],
     "1m": ["tiingo_iex", "tiingo_crypto"],
+    "15m": ["tiingo_iex", "tiingo_crypto"],
+    "30m": ["tiingo_iex", "tiingo_crypto"],
     "1h": ["tiingo_iex", "tiingo_crypto"],
+    "4h": ["tiingo_iex", "tiingo_crypto"],
+    "1w": ["tiingo_eod", "tiingo_iex"],
+    "1mo": ["tiingo_eod", "tiingo_iex"],
 }
 
 
@@ -116,6 +128,30 @@ async def resolve_best_source(
     return coverage[0]["source"]
 
 
+def _rows_to_bars(rows) -> list[dict]:
+    return [
+        {
+            "time": r.time,
+            "open": r.open,
+            "high": r.high,
+            "low": r.low,
+            "close": r.close,
+            "volume": r.volume,
+            "source": r.source,
+        }
+        for r in rows
+    ]
+
+
+def _dedupe_daily_bars(bars: list[dict]) -> list[dict]:
+    by_day: dict = {}
+    for bar in bars:
+        t = bar["time"]
+        day = t.date() if hasattr(t, "date") else t
+        by_day[day] = bar
+    return sorted(by_day.values(), key=lambda b: b["time"])
+
+
 async def get_bars(
     session: AsyncSession,
     instrument_id: int,
@@ -125,6 +161,7 @@ async def get_bars(
     start: Optional[datetime] = None,
     end: Optional[datetime] = None,
     limit: int = 2000,
+    fetch_tail: bool = False,
 ) -> tuple[list[dict], Optional[str]]:
     resolved_source = await resolve_best_source(session, instrument_id, timeframe, source)
     if not resolved_source:
@@ -139,26 +176,111 @@ async def get_bars(
         q = q.where(OHLCV.time >= start)
     if end is not None:
         q = q.where(OHLCV.time <= end)
-    q = q.order_by(OHLCV.time.asc()).limit(limit)
+
+    if fetch_tail:
+        q = q.order_by(OHLCV.time.desc()).limit(limit)
+    else:
+        q = q.order_by(OHLCV.time.asc()).limit(limit)
 
     rows = (await session.execute(q)).scalars().all()
-    bars = [
-        {
-            "time": r.time,
-            "open": r.open,
-            "high": r.high,
-            "low": r.low,
-            "close": r.close,
-            "volume": r.volume,
-            "source": r.source,
-        }
-        for r in rows
-    ]
+    if fetch_tail:
+        rows = list(reversed(rows))
+    bars = _rows_to_bars(rows)
+    if timeframe == "1d":
+        bars = _dedupe_daily_bars(bars)
     return bars, resolved_source
+
+
+async def get_bars_with_resample(
+    session: AsyncSession,
+    instrument_id: int,
+    timeframe: str,
+    *,
+    source: Optional[str] = None,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    limit: int = 2000,
+    fetch_tail: bool = False,
+) -> tuple[list[dict], Optional[str]]:
+    tail = fetch_tail or is_tail_timeframe(timeframe)
+
+    bars, resolved_source = await get_bars(
+        session, instrument_id, timeframe,
+        source=source, start=start, end=end, limit=limit, fetch_tail=tail,
+    )
+    if bars:
+        return bars, resolved_source
+
+    plan = resolve_ohlcv_query(timeframe)
+    if plan.bucket_interval is None:
+        return [], None
+
+    effective_end = end or datetime.now(timezone.utc)
+    effective_start = compute_resample_start(
+        effective_end,
+        limit,
+        plan.bucket_interval,
+        explicit_start=start,
+    )
+
+    source_candidates = (
+        intraday_source_candidates()
+        if plan.source_timeframe in intraday_source_candidates()
+        else (plan.source_timeframe,)
+    )
+
+    for source_tf in source_candidates:
+        resolved = await resolve_best_source(session, instrument_id, source_tf, source)
+        if not resolved:
+            logger.debug(
+                "ohlcv_resample_no_source",
+                instrument_id=instrument_id,
+                source_timeframe=source_tf,
+            )
+            continue
+        try:
+            bars = await get_resampled_bars(
+                session,
+                instrument_id,
+                timeframe,
+                source_tf,
+                plan.bucket_interval,
+                source=resolved,
+                start=effective_start,
+                end=effective_end,
+                limit=limit,
+                fetch_tail=tail,
+            )
+        except Exception as exc:
+            logger.warning(
+                "ohlcv_resample_failed",
+                instrument_id=instrument_id,
+                timeframe=timeframe,
+                source_timeframe=source_tf,
+                error=str(exc),
+            )
+            continue
+        if bars:
+            logger.info(
+                "ohlcv_resample_ok",
+                instrument_id=instrument_id,
+                timeframe=timeframe,
+                source_timeframe=source_tf,
+                count=len(bars),
+            )
+            return bars, resolved
+
+    return [], None
 
 
 def default_start_for_timeframe(timeframe: str) -> datetime:
     now = datetime.now(timezone.utc)
+    if timeframe == "1mo":
+        return now - timedelta(days=365 * 10)
+    if timeframe == "1w":
+        return now - timedelta(days=365 * 5)
     if timeframe == "1d":
-        return now - timedelta(days=365)
+        return now - timedelta(days=365 * 30)
+    if timeframe in ("4h", "1h", "30m", "15m"):
+        return now - timedelta(days=90)
     return now - timedelta(days=5)

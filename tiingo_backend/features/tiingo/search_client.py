@@ -3,7 +3,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dtos.market_data_dto import TickerSearchResponseDTO, TickerSearchResultDTO
-from features.tiingo.common import get_token
+from features.tiingo.common import get_token, normalize_crypto_symbol
 from utils.logging import get_logger
 from utils.rate_limiter import check_and_increment
 
@@ -34,10 +34,14 @@ def _parse_item(item: dict) -> TickerSearchResultDTO | None:
     if not ticker:
         return None
     name = (item.get("name") or ticker).strip()
+    asset_type = map_asset_type(item.get("assetType"))
+    symbol = ticker.upper()
+    if asset_type == "crypto":
+        symbol = normalize_crypto_symbol(ticker)
     return TickerSearchResultDTO(
-        symbol=ticker.upper(),
+        symbol=symbol,
         name=name,
-        asset_type=map_asset_type(item.get("assetType")),
+        asset_type=asset_type,
         exchange=item.get("exchange"),
         tiingo_ticker=ticker,
     )

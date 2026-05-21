@@ -38,13 +38,13 @@ export default function Sidebar() {
             Dashboard
           </p>
           <div className="space-y-1">
-            <NavLink to="/dashboard/stocks" end className={subLinkClass}>
+            <NavLink to="/dashboard/stocks" className={subLinkClass}>
               Stocks
             </NavLink>
-            <NavLink to="/dashboard/crypto" end className={subLinkClass}>
+            <NavLink to="/dashboard/crypto" className={subLinkClass}>
               Crypto
             </NavLink>
-            <NavLink to="/dashboard/macro" end className={subLinkClass}>
+            <NavLink to="/dashboard/macro" className={subLinkClass}>
               Macro
             </NavLink>
           </div>

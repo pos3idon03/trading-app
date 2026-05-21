@@ -34,6 +34,11 @@ class Fundamental(Base):
     period: Mapped[str | None] = mapped_column(String)
     statement_type: Mapped[str | None] = mapped_column(String)
     raw_data: Mapped[dict | None] = mapped_column(JSONB)
+    stored_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default="now()",
+    )
 
 
 class NewsArticle(Base):

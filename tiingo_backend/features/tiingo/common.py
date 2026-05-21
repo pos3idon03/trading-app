@@ -25,11 +25,25 @@ def resample_freq(timeframe: str) -> str:
     return _RESAMPLE_MAP[timeframe]
 
 
+_CRYPTO_QUOTES = ("USDT", "USDC", "BUSD", "USD", "EUR", "GBP", "JPY", "BTC", "ETH")
+
+
+def normalize_crypto_symbol(symbol: str) -> str:
+    raw = symbol.strip().upper()
+    if "-" in raw:
+        base, quote = raw.split("-", 1)
+        return f"{base}-{quote}"
+    for quote in sorted(_CRYPTO_QUOTES, key=len, reverse=True):
+        if raw.endswith(quote) and len(raw) > len(quote):
+            return f"{raw[: -len(quote)]}-{quote}"
+    raise ValueError(f"Cannot parse crypto symbol: {symbol}")
+
+
 def symbol_to_crypto_ticker(symbol: str) -> str:
-    parts = symbol.upper().split("-", 1)
-    if len(parts) != 2:
-        raise ValueError(f"Crypto symbol must be BASE-QUOTE: {symbol}")
-    return f"{parts[0]}{parts[1]}".lower()
+    if "-" in symbol:
+        base, quote = symbol.upper().split("-", 1)
+        return f"{base}{quote}".lower()
+    return symbol.strip().lower()
 
 
 def get_token() -> str:

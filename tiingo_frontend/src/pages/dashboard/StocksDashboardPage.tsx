@@ -4,10 +4,11 @@ export default function StocksDashboardPage() {
   return (
     <OhlcvDashboardView
       title="Stocks Dashboard"
-      description="Select a stock or ETF to view its OHLCV timeline chart."
+      description="Select an ingested stock or ETF from your watchlist to view its OHLCV chart and fundamentals trends below."
       basePath="/dashboard/stocks"
       assetTypeFilter={['stock', 'etf']}
-      searchPlaceholder="Search stocks and ETFs (e.g. Apple, MSFT)"
+      searchPlaceholder="Search ingested stocks and ETFs in watchlist"
+      showFundamentals
     />
   );
 }

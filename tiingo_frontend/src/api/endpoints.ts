@@ -1,5 +1,8 @@
 import { api } from './client';
 import type {
+  FundamentalsCoverageResponse,
+  FundamentalsMetricsResponse,
+  FundamentalsPeriodType,
   IngestionStatus,
   Instrument,
   Job,
@@ -17,6 +20,12 @@ export const ingestionApi = {
   searchInstruments: (query: string, limit = 10) =>
     api
       .get<TickerSearchResponse>('/instruments/search', { params: { query, limit } })
+      .then((r) => r.data),
+  searchDbInstruments: (query: string, assetTypes?: string[], limit = 20) =>
+    api
+      .get<Instrument[]>('/instruments/db-search', {
+        params: { query, limit, asset_type: assetTypes },
+      })
       .then((r) => r.data),
   createInstrument: (body: {
     symbol: string;
@@ -41,19 +50,52 @@ export const ingestionApi = {
     api.post<{ job_id: string }>('/ingestion/fundamentals/run', body).then((r) => r.data),
   getFundamentalsEntitlement: () =>
     api.get('/ingestion/fundamentals/entitlement').then((r) => r.data),
-  getFundamentals: (symbol: string) =>
-    api.get(`/ingestion/fundamentals/${symbol}`).then((r) => r.data),
+  listFundamentalsCoverage: () =>
+    api
+      .get<FundamentalsCoverageResponse>('/ingestion/fundamentals/coverage')
+      .then((r) => r.data),
+  getFundamentals: (
+    symbol: string,
+    params?: {
+      period_type?: FundamentalsPeriodType;
+      metric_names?: string;
+      order?: 'asc' | 'desc';
+      limit?: number;
+      all?: boolean;
+    },
+  ) =>
+    api
+      .get<FundamentalsMetricsResponse>(`/ingestion/fundamentals/${symbol}`, { params })
+      .then((r) => r.data),
   streamStart: (symbols: string[]) =>
     api.post('/ingestion/stream/start', { symbols }).then((r) => r.data),
   streamStop: () => api.post('/ingestion/stream/stop').then((r) => r.data),
   streamStatus: () => api.get('/ingestion/stream/status').then((r) => r.data),
   listJobs: () => api.get<Job[]>('/ingestion/jobs').then((r) => r.data),
   getJob: (id: string) => api.get<Job>(`/ingestion/jobs/${id}`).then((r) => r.data),
-  listMacroSeries: () => api.get<MacroSeries[]>('/ingestion/macro/series').then((r) => r.data),
+  listMacroSeries: (params?: { ingestedOnly?: boolean; query?: string; limit?: number }) =>
+    api
+      .get<MacroSeries[]>('/ingestion/macro/series', {
+        params: {
+          ingested_only: params?.ingestedOnly,
+          query: params?.query,
+          limit: params?.limit,
+        },
+      })
+      .then((r) => r.data),
   macroBackfill: (seriesIds: string[]) =>
     api.post<{ job_id: string }>('/ingestion/macro/backfill', { series_ids: seriesIds }).then((r) => r.data),
   macroRefresh: () => api.post<{ job_id: string }>('/ingestion/macro/refresh').then((r) => r.data),
-  macroObservations: (seriesId: string, params?: { limit?: number; order?: 'asc' | 'desc' }) =>
+  macroObservations: (
+    seriesId: string,
+    params?: {
+      limit?: number;
+      order?: 'asc' | 'desc';
+      start?: string;
+      end?: string;
+      all?: boolean;
+    },
+  ) =>
     api
       .get<MacroObservationsResponse>(`/ingestion/macro/observations/${seriesId}`, { params })
       .then((r) => r.data),

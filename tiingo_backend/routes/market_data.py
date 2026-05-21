@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dal import instrument_dal, ohlcv_dal
 from db import get_db
 from dtos.market_data_dto import OHLCVBarDTO, OHLCVQueryResponse
+from features.market_data.ohlcv_resample import SUPPORTED_TIMEFRAMES, is_tail_timeframe
 
 router = APIRouter(prefix="/market-data", tags=["market-data"])
 
@@ -21,14 +22,26 @@ async def get_ohlcv_by_symbol(
     limit: int = Query(default=2000, ge=1, le=10000),
     session: AsyncSession = Depends(get_db),
 ) -> OHLCVQueryResponse:
+    if timeframe not in SUPPORTED_TIMEFRAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported timeframe: {timeframe}. Supported: {sorted(SUPPORTED_TIMEFRAMES)}",
+        )
+
     instrument = await instrument_dal.get_by_symbol(session, symbol)
     if not instrument:
         raise HTTPException(status_code=404, detail=f"Instrument not found: {symbol.upper()}")
 
-    effective_start = start or ohlcv_dal.default_start_for_timeframe(timeframe)
     effective_end = end or datetime.now(timezone.utc)
+    if start is not None and start > effective_end:
+        raise HTTPException(status_code=400, detail="start must be before or equal to end")
 
-    bars, resolved_source = await ohlcv_dal.get_bars(
+    fetch_tail = is_tail_timeframe(timeframe)
+    effective_start = start
+    if effective_start is None and not fetch_tail:
+        effective_start = ohlcv_dal.default_start_for_timeframe(timeframe)
+
+    bars, resolved_source = await ohlcv_dal.get_bars_with_resample(
         session,
         instrument["id"],
         timeframe,
@@ -36,6 +49,7 @@ async def get_ohlcv_by_symbol(
         start=effective_start,
         end=effective_end,
         limit=limit,
+        fetch_tail=fetch_tail,
     )
     if not bars:
         raise HTTPException(
