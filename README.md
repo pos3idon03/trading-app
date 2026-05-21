@@ -40,6 +40,25 @@ docker compose up --build
 # 6. API docs at http://localhost:8000/docs
 ```
 
+### Tiingo Ingestion Platform (Phase 1)
+
+Standalone ingestion services with a dedicated TimescaleDB:
+
+```bash
+# Starts tiingo_db (:5433), tiingo_backend (:8002), tiingo_frontend (:5174)
+# Default host port 8002 avoids conflict with other services on 8001
+docker compose up tiingo_db tiingo_backend tiingo_frontend --build
+
+# Ingestion UI: http://localhost:5174
+# Tiingo API docs: http://localhost:8002/docs
+```
+
+Configure in `.env`: `TIINGO_API_KEY`, `FRED_API_KEY`, `TIINGO_FUNDAMENTALS_TIER` (`dow30` or `addon_*`).
+
+```bash
+docker compose exec tiingo_backend pytest tests/ -v
+```
+
 ### Running Tests
 
 ```bash
