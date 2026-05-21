@@ -9,6 +9,8 @@ import type {
   MacroObservationsResponse,
   MacroSeries,
   NewsArticle,
+  AssetOverviewResponse,
+  MacroOverviewResponse,
   OHLCVQueryResponse,
   PerformanceResponse,
   StockKpisResponse,
@@ -130,4 +132,16 @@ export const marketDataApi = {
       .then((r) => r.data),
   getKpis: (symbol: string) =>
     api.get<StockKpisResponse>(`/market-data/kpis/${symbol}`).then((r) => r.data),
+  getAssetOverview: (assetType: 'stock' | 'etf' | 'crypto') =>
+    api
+      .get<AssetOverviewResponse>('/market-data/overview/assets', {
+        params: { asset_type: assetType },
+      })
+      .then((r) => r.data),
+  getMacroOverview: (category = 'all') =>
+    api
+      .get<MacroOverviewResponse>('/market-data/overview/macro', {
+        params: { category },
+      })
+      .then((r) => r.data),
 };

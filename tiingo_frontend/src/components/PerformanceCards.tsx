@@ -33,6 +33,8 @@ const DEFAULT_PERIODS: PerformancePeriod[] = [
   EMPTY_PERIOD('6M'),
   EMPTY_PERIOD('YTD'),
   EMPTY_PERIOD('1Y'),
+  EMPTY_PERIOD('2Y'),
+  EMPTY_PERIOD('5Y'),
 ];
 
 export default function PerformanceCards({ symbol }: PerformanceCardsProps) {

@@ -16,3 +16,4 @@ def test_ohlcv_backfill_request_for_symbol():
     assert req.symbols == ["AAPL"]
     assert req.timeframes == FULL_OHLCV_TIMEFRAMES
     assert req.sources == FULL_OHLCV_SOURCES
+    assert req.refresh_corporate_actions is True

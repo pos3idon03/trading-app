@@ -68,6 +68,88 @@ async def test_backfill_crypto_uses_crypto_client_not_eod():
 
 
 @pytest.mark.asyncio
+async def test_backfill_crypto_1d_initial_omits_end_date():
+    inst = {
+        "id": 1,
+        "symbol": "BTC-USD",
+        "tiingo_ticker": "btcusd",
+        "asset_type": "crypto",
+    }
+    request = OHLCVBackfillRequest(
+        symbols=["BTC-USD"],
+        timeframes=["1d"],
+        sources=["tiingo_crypto"],
+    )
+    session = AsyncMock()
+
+    with patch(
+        "features.ingestion.ohlcv_orchestrator.instrument_dal.get_by_symbol",
+        new=AsyncMock(return_value=inst),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.check_and_increment",
+        new=AsyncMock(),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.ohlcv_dal.get_latest_timestamp",
+        new=AsyncMock(return_value=None),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.crypto_client.fetch_crypto_bars",
+        new=AsyncMock(return_value=[]),
+    ) as mock_crypto, patch(
+        "features.ingestion.ohlcv_orchestrator.ohlcv_dal.bulk_insert_ohlcv",
+        new=AsyncMock(return_value=0),
+    ):
+        await _backfill_one(session, "BTC-USD", request, intraday_days=90)
+
+    mock_crypto.assert_awaited_once()
+    start = mock_crypto.await_args.args[3]
+    end = mock_crypto.await_args.args[4]
+    assert start == datetime(2010, 1, 1, tzinfo=timezone.utc)
+    assert end is None
+
+
+@pytest.mark.asyncio
+async def test_backfill_crypto_1d_incremental_includes_end_date():
+    latest = datetime(2024, 1, 15, tzinfo=timezone.utc)
+    inst = {
+        "id": 1,
+        "symbol": "BTC-USD",
+        "tiingo_ticker": "btcusd",
+        "asset_type": "crypto",
+    }
+    request = OHLCVBackfillRequest(
+        symbols=["BTC-USD"],
+        timeframes=["1d"],
+        sources=["tiingo_crypto"],
+    )
+    session = AsyncMock()
+
+    with patch(
+        "features.ingestion.ohlcv_orchestrator.instrument_dal.get_by_symbol",
+        new=AsyncMock(return_value=inst),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.check_and_increment",
+        new=AsyncMock(),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.ohlcv_dal.get_latest_timestamp",
+        new=AsyncMock(return_value=latest),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.crypto_client.fetch_crypto_bars",
+        new=AsyncMock(return_value=[]),
+    ) as mock_crypto, patch(
+        "features.ingestion.ohlcv_orchestrator.ohlcv_dal.bulk_insert_ohlcv",
+        new=AsyncMock(return_value=0),
+    ):
+        await _backfill_one(session, "BTC-USD", request, intraday_days=90)
+
+    mock_crypto.assert_awaited_once()
+    start = mock_crypto.await_args.args[3]
+    end = mock_crypto.await_args.args[4]
+    assert start == datetime(2024, 1, 16, tzinfo=timezone.utc)
+    assert end is not None
+    assert end.tzinfo == timezone.utc
+
+
+@pytest.mark.asyncio
 async def test_backfill_stock_uses_eod_and_iex():
     inst = {
         "id": 2,

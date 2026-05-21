@@ -37,7 +37,28 @@ async def test_fetch_crypto_bars_daily():
     assert records[0].timeframe == "1d"
     assert records[0].source == "tiingo_crypto"
     params = instance.get.await_args.kwargs["params"]
-    assert params["resampleFreq"] == "daily"
+    assert params["resampleFreq"] == "1Day"
+    assert params["startDate"] == "2024-01-01"
+    assert params["endDate"] == "2024-01-31"
+
+
+@pytest.mark.asyncio
+async def test_fetch_crypto_bars_historical_omits_end_date():
+    payload = [{"ticker": "btcusd", "priceData": []}]
+    with patch("features.tiingo.crypto_client.get_token", return_value="tok"), patch(
+        "features.tiingo.crypto_client.httpx.AsyncClient"
+    ) as mock_client:
+        instance = mock_client.return_value.__aenter__.return_value
+        resp = MagicMock()
+        resp.json.return_value = payload
+        instance.get = AsyncMock(return_value=resp)
+
+        start = datetime(2010, 1, 1, tzinfo=timezone.utc)
+        await fetch_crypto_bars("BTC-USD", 1, "1d", start, None)
+
+    params = instance.get.await_args.kwargs["params"]
+    assert params["startDate"] == "2010-01-01"
+    assert "endDate" not in params
 
 
 @pytest.mark.asyncio

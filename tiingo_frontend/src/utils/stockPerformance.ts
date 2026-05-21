@@ -5,6 +5,8 @@ export const PERFORMANCE_PERIOD_LABELS: Record<string, string> = {
   '6M': '6M',
   YTD: 'YTD',
   '1Y': '1Y',
+  '2Y': '2Y',
+  '5Y': '5Y',
 };
 
 const CURRENCY_LOCALE: Record<string, string> = {

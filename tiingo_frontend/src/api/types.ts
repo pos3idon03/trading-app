@@ -158,6 +158,54 @@ export interface StockKpisResponse {
   kpis: StockKpiItem[];
 }
 
+export interface MetricGrowth {
+  latest_period?: string | null;
+  yoy: number | null;
+  qoq: number | null;
+  cagr: number | null;
+}
+
+export interface AssetOverviewRow {
+  symbol: string;
+  name?: string | null;
+  as_of?: string | null;
+  pe_ratio?: number | null;
+  dividend_yield?: number | null;
+  debt_equity?: number | null;
+  current_ratio?: number | null;
+  eps_ttm?: number | null;
+  revenue_growth?: MetricGrowth | null;
+  ebitda_growth?: MetricGrowth | null;
+  ocf_growth?: MetricGrowth | null;
+  price_change_6m?: number | null;
+  performance?: Record<string, number | null> | null;
+}
+
+export interface AssetOverviewResponse {
+  asset_type: string;
+  as_of: string | null;
+  rows: AssetOverviewRow[];
+}
+
+export interface MacroOverviewRow {
+  series_id: string;
+  title: string;
+  category: string;
+  frequency?: string | null;
+  change_1m: number | null;
+  change_3m: number | null;
+  change_6m: number | null;
+  change_ytd: number | null;
+  ma50_position: string;
+  ma200_position: string;
+}
+
+export interface MacroOverviewResponse {
+  category: string;
+  as_of: string | null;
+  rows: MacroOverviewRow[];
+}
+
 export type SeriesSource = 'macro' | 'instrument';
 
 export interface DashboardSeriesRef {

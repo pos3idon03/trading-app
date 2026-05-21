@@ -83,6 +83,35 @@ async def _resolve_start(
     return datetime.now(timezone.utc) - timedelta(days=365 * max(years, 1))
 
 
+async def _resolve_crypto_start(
+    session: AsyncSession,
+    instrument_id: int,
+    timeframe: str,
+    start_override: str | None,
+    intraday_days: int,
+) -> tuple[datetime, datetime | None]:
+    latest = await ohlcv_dal.get_latest_timestamp(
+        session, instrument_id, timeframe, "tiingo_crypto"
+    )
+    if latest:
+        step = timedelta(days=1) if timeframe == "1d" else timedelta(minutes=1)
+        return latest + step, datetime.now(timezone.utc)
+
+    if start_override:
+        start = datetime.fromisoformat(start_override).replace(tzinfo=timezone.utc)
+        return start, None if timeframe == "1d" else datetime.now(timezone.utc)
+
+    if timeframe == "1d":
+        settings = get_settings()
+        start = datetime.fromisoformat(settings.crypto_history_start_date).replace(
+            tzinfo=timezone.utc
+        )
+        return start, None
+
+    start = datetime.now(timezone.utc) - timedelta(days=intraday_days)
+    return start, datetime.now(timezone.utc)
+
+
 async def _backfill_crypto(
     session: AsyncSession,
     symbol: str,
@@ -90,13 +119,10 @@ async def _backfill_crypto(
     ticker: str,
     timeframe: str,
     request: OHLCVBackfillRequest,
-    end: datetime,
     intraday_days: int,
 ) -> int:
-    years = 30 if timeframe == "1d" else 0
-    days = intraday_days if timeframe != "1d" else 0
-    start = await _resolve_start(
-        session, iid, timeframe, "tiingo_crypto", request.start_date, years=years, days=days
+    start, end = await _resolve_crypto_start(
+        session, iid, timeframe, request.start_date, intraday_days
     )
     await check_and_increment(session)
     recs = await crypto_client.fetch_crypto_bars(ticker, iid, timeframe, start, end)
@@ -120,7 +146,7 @@ async def _backfill_timeframe(
         if timeframe == "1d":
             if use_crypto:
                 inserted = await _backfill_crypto(
-                    session, symbol, iid, ticker, "1d", request, end, intraday_days
+                    session, symbol, iid, ticker, "1d", request, intraday_days
                 )
                 return inserted, None
             if "tiingo_eod" in sources:
@@ -135,7 +161,7 @@ async def _backfill_timeframe(
 
         if use_crypto:
             inserted = await _backfill_crypto(
-                session, symbol, iid, ticker, timeframe, request, end, intraday_days
+                session, symbol, iid, ticker, timeframe, request, intraday_days
             )
             return inserted, None
         if "tiingo_iex" in sources:

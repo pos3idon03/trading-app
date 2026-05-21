@@ -30,6 +30,8 @@ async def test_get_performance_success():
         _period_row("6M", 10.0),
         _period_row("YTD", 12.0),
         _period_row("1Y", 20.0),
+        _period_row("2Y", 30.0),
+        _period_row("5Y", 50.0),
     ]
     as_of = datetime(2024, 6, 1, tzinfo=timezone.utc)
 
@@ -48,7 +50,7 @@ async def test_get_performance_success():
     data = resp.json()
     assert data["symbol"] == "AAPL"
     assert data["currency"] == "USD"
-    assert len(data["periods"]) == 6
+    assert len(data["periods"]) == 8
     assert data["periods"][0]["period"] == "1W"
     assert data["periods"][0]["change_pct"] == 2.5
     assert data["periods"][0]["price_change_pct"] == 2.0

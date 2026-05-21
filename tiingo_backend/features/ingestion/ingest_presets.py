@@ -9,4 +9,5 @@ def ohlcv_backfill_request(symbols: list[str]) -> OHLCVBackfillRequest:
         symbols=symbols,
         timeframes=list(FULL_OHLCV_TIMEFRAMES),
         sources=list(FULL_OHLCV_SOURCES),
+        refresh_corporate_actions=True,
     )

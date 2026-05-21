@@ -214,3 +214,51 @@ class StockKpisResponseDTO(BaseModel):
     as_of: Optional[datetime] = None
     price: Optional[float] = None
     kpis: list[StockKpiItemDTO]
+
+
+class MetricGrowthDTO(BaseModel):
+    latest_period: Optional[str] = None
+    yoy: Optional[float] = None
+    qoq: Optional[float] = None
+    cagr: Optional[float] = None
+
+
+class AssetOverviewRowDTO(BaseModel):
+    symbol: str
+    name: Optional[str] = None
+    as_of: Optional[datetime] = None
+    pe_ratio: Optional[float] = None
+    dividend_yield: Optional[float] = None
+    debt_equity: Optional[float] = None
+    current_ratio: Optional[float] = None
+    eps_ttm: Optional[float] = None
+    revenue_growth: Optional[MetricGrowthDTO] = None
+    ebitda_growth: Optional[MetricGrowthDTO] = None
+    ocf_growth: Optional[MetricGrowthDTO] = None
+    price_change_6m: Optional[float] = None
+    performance: Optional[dict[str, Optional[float]]] = None
+
+
+class AssetOverviewResponseDTO(BaseModel):
+    asset_type: str
+    as_of: Optional[datetime] = None
+    rows: list[AssetOverviewRowDTO]
+
+
+class MacroOverviewRowDTO(BaseModel):
+    series_id: str
+    title: str
+    category: str
+    frequency: Optional[str] = None
+    change_1m: Optional[float] = None
+    change_3m: Optional[float] = None
+    change_6m: Optional[float] = None
+    change_ytd: Optional[float] = None
+    ma50_position: str = "—"
+    ma200_position: str = "—"
+
+
+class MacroOverviewResponseDTO(BaseModel):
+    category: str
+    as_of: Optional[date] = None
+    rows: list[MacroOverviewRowDTO]

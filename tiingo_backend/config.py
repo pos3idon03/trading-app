@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     arq_max_jobs: int = Field(default=4, validation_alias="ARQ_MAX_JOBS")
     auto_backfill_on_create: bool = Field(default=True, validation_alias="AUTO_BACKFILL_ON_CREATE")
     crypto_meta_cache_ttl_seconds: int = 86400
+    crypto_history_start_date: str = Field(
+        default="2010-01-01",
+        validation_alias="CRYPTO_HISTORY_START_DATE",
+    )
 
     @property
     def cors_origins_list(self) -> list[str]:

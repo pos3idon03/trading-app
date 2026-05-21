@@ -68,3 +68,13 @@ def test_reference_date_ytd():
 
     as_of = date(2024, 6, 15)
     assert _reference_date(as_of, "YTD") == date(2024, 1, 1)
+
+
+def test_compute_performance_2y_and_5y():
+    bars = [
+        _bar("2019-01-02T00:00:00", 100.0),
+        _bar("2024-06-01T00:00:00", 150.0),
+    ]
+    result = compute_performance(bars)
+    assert result["2Y"] == 50.0
+    assert result["5Y"] == 50.0

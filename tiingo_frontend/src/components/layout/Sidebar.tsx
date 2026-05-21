@@ -38,6 +38,9 @@ export default function Sidebar() {
             Dashboard
           </p>
           <div className="space-y-1">
+            <NavLink to="/dashboard/overview" className={subLinkClass}>
+              Overview
+            </NavLink>
             <NavLink to="/dashboard/stocks" className={subLinkClass}>
               Stocks
             </NavLink>

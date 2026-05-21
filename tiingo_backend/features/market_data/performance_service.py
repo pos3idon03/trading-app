@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dal import ohlcv_dal
 from features.market_data.performance import compute_performance_breakdown
 
-_PERFORMANCE_LOOKBACK_DAYS = 400
+_PERFORMANCE_LOOKBACK_DAYS = 1900
 
 
 async def load_performance(

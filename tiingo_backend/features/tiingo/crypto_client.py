@@ -4,13 +4,28 @@ import httpx
 
 from dtos.market_data_dto import OHLCVRecord
 from features.market_data.bar_aggregate import aggregate_ohlcv_bars
-from features.tiingo.common import get_token, parse_timestamp, resample_freq, symbol_to_crypto_ticker
+from features.tiingo.common import get_token, parse_timestamp, symbol_to_crypto_ticker
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 _CRYPTO_URL = "https://api.tiingo.com/tiingo/crypto/prices"
 _SUPPORTED = {"1m", "5m", "15m", "30m", "1h", "4h", "1d"}
+_CRYPTO_RESAMPLE = {
+    "1m": "1min",
+    "5m": "5min",
+    "15m": "15min",
+    "30m": "30min",
+    "1h": "60min",
+    "4h": "60min",
+    "1d": "1Day",
+}
+
+
+def _crypto_resample_freq(timeframe: str) -> str:
+    if timeframe not in _CRYPTO_RESAMPLE:
+        raise ValueError(f"Crypto unsupported timeframe: {timeframe}")
+    return _CRYPTO_RESAMPLE[timeframe]
 
 
 def _extract_rows(payload: list, ticker: str) -> list[dict]:
@@ -20,12 +35,31 @@ def _extract_rows(payload: list, ticker: str) -> list[dict]:
     return []
 
 
+def _build_crypto_params(
+    ticker: str,
+    timeframe: str,
+    start: datetime | None,
+    end: datetime | None,
+    token: str,
+) -> dict[str, str]:
+    params: dict[str, str] = {
+        "tickers": ticker,
+        "resampleFreq": _crypto_resample_freq(timeframe),
+        "token": token,
+    }
+    if start is not None:
+        params["startDate"] = start.strftime("%Y-%m-%d")
+    if end is not None:
+        params["endDate"] = end.strftime("%Y-%m-%d")
+    return params
+
+
 async def fetch_crypto_bars(
     symbol: str,
     instrument_id: int,
     timeframe: str,
-    start: datetime,
-    end: datetime,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> list[OHLCVRecord]:
     if timeframe not in _SUPPORTED:
         raise ValueError(f"Crypto unsupported timeframe: {timeframe}")
@@ -34,16 +68,9 @@ async def fetch_crypto_bars(
         hourly = await fetch_crypto_bars(symbol, instrument_id, "1h", start, end)
         return aggregate_ohlcv_bars(hourly, "4h")
 
-    fetch_timeframe = timeframe
     ticker = symbol_to_crypto_ticker(symbol)
     token = get_token()
-    params = {
-        "tickers": ticker,
-        "startDate": start.strftime("%Y-%m-%d"),
-        "endDate": end.strftime("%Y-%m-%d"),
-        "resampleFreq": resample_freq(fetch_timeframe),
-        "token": token,
-    }
+    params = _build_crypto_params(ticker, timeframe, start, end, token)
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(_CRYPTO_URL, params=params)
         resp.raise_for_status()

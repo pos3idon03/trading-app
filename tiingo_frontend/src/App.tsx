@@ -12,6 +12,7 @@ import FredMacroTab from './pages/ingestion/FredMacroTab';
 import StocksDashboardPage from './pages/dashboard/StocksDashboardPage';
 import CryptoDashboardPage from './pages/dashboard/CryptoDashboardPage';
 import MacroDashboardPage from './pages/dashboard/MacroDashboardPage';
+import OverviewPage from './pages/dashboard/OverviewPage';
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
             <Route path="fundamentals" element={<FundamentalsTab />} />
             <Route path="fred" element={<FredMacroTab />} />
           </Route>
+          <Route path="dashboard/overview" element={<OverviewPage />} />
           <Route path="dashboard/stocks" element={<StocksDashboardPage />} />
           <Route path="dashboard/stocks/:symbol" element={<StocksDashboardPage />} />
           <Route path="dashboard/crypto" element={<CryptoDashboardPage />} />

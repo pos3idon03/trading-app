@@ -29,6 +29,7 @@ export default function MarketDataTab() {
         symbols: [],
         timeframes: ['1d', '5m', '1m', '15m', '30m', '1h'],
         sources: ['tiingo_eod', 'tiingo_iex', 'tiingo_crypto'],
+        refresh_corporate_actions: true,
       });
       setMsg(`Backfill job queued: ${r.job_id}`);
     } catch (e) {
@@ -48,9 +49,8 @@ export default function MarketDataTab() {
         Backfill All Active (EOD + IEX)
       </button>
       <p className="text-xs text-slate-500">
-        Daily EOD bars use split-adjusted prices. After upgrading, run backfill with{' '}
-        <code className="text-slate-400">refresh_corporate_actions: true</code> to populate
-        dividend and split markers on existing symbols.
+        Daily EOD bars use split-adjusted prices. Each backfill also refreshes dividend and
+        split markers on existing symbols.
       </p>
       <div className="flex flex-wrap gap-2 items-end">
         <TiingoTickerSearch selected={selected} onSelect={setSelected} />

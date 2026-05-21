@@ -11,6 +11,7 @@ const INGESTION_TABS = [
 ];
 
 const DASHBOARD_ROUTES = [
+  { path: '/dashboard/overview', label: 'Overview' },
   { path: '/dashboard/stocks', label: 'Stocks' },
   { path: '/dashboard/stocks/AAPL', label: 'Stocks symbol' },
   { path: '/dashboard/crypto', label: 'Crypto' },

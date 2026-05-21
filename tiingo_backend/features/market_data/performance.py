@@ -1,7 +1,7 @@
 import calendar
 from datetime import date, datetime, timedelta
 
-PERFORMANCE_PERIODS = ("1W", "1M", "3M", "6M", "YTD", "1Y")
+PERFORMANCE_PERIODS = ("1W", "1M", "3M", "6M", "YTD", "1Y", "2Y", "5Y")
 EXAMPLE_INVESTMENT = 100.0
 
 
@@ -31,6 +31,10 @@ def _reference_date(as_of: date, period: str) -> date:
         return date(as_of.year, 1, 1)
     if period == "1Y":
         return as_of - timedelta(days=365)
+    if period == "2Y":
+        return as_of - timedelta(days=365 * 2)
+    if period == "5Y":
+        return as_of - timedelta(days=365 * 5)
     raise ValueError(f"Unknown period: {period}")
 
 
