@@ -7,11 +7,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from config import get_settings
 from db import AsyncSessionLocal
 from dtos.market_data_dto import OHLCVBackfillRequest
-from features.fred.macro_orchestrator import refresh_enabled
-from features.ingestion.fundamentals_orchestrator import run_fundamentals_ingest
-from features.ingestion.news_orchestrator import run_news_ingest
-from features.ingestion.ohlcv_orchestrator import run_ohlcv_backfill
-from features.stream import iex_stream
+from features.worker.tasks import create_and_enqueue_job
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -26,49 +22,38 @@ def get_scheduler() -> AsyncIOScheduler:
     return _scheduler
 
 
+async def _enqueue_scheduled_job(job_type: str, params: dict) -> None:
+    async with AsyncSessionLocal() as session:
+        try:
+            await create_and_enqueue_job(session, job_type, params)
+        except Exception as exc:
+            await session.rollback()
+            logger.error("scheduler_enqueue_failed", job_type=job_type, error=str(exc))
+
+
 async def _eod_job() -> None:
     req = OHLCVBackfillRequest(
         symbols=[],
         timeframes=["1d"],
         sources=["tiingo_eod"],
     )
-    async with AsyncSessionLocal() as session:
-        try:
-            await run_ohlcv_backfill(session, req)
-            await session.commit()
-        except Exception as exc:
-            await session.rollback()
-            logger.error("eod_job_error", error=str(exc))
+    await _enqueue_scheduled_job("ohlcv_backfill", req.model_dump())
 
 
 async def _news_job() -> None:
-    async with AsyncSessionLocal() as session:
-        try:
-            await run_news_ingest(session, [])
-            await session.commit()
-        except Exception as exc:
-            await session.rollback()
-            logger.error("news_job_error", error=str(exc))
+    await _enqueue_scheduled_job("news_ingest", {"symbols": [], "limit": 50})
 
 
 async def _fundamentals_job() -> None:
-    async with AsyncSessionLocal() as session:
-        try:
-            await run_fundamentals_ingest(session, [])
-            await session.commit()
-        except Exception as exc:
-            await session.rollback()
-            logger.error("fundamentals_job_error", error=str(exc))
+    await _enqueue_scheduled_job("fundamentals_ingest", {"symbols": []})
+
+
+async def _fred_seed_job() -> None:
+    await _enqueue_scheduled_job("macro_seed_catalog", {})
 
 
 async def _fred_job() -> None:
-    async with AsyncSessionLocal() as session:
-        try:
-            await refresh_enabled(session)
-            await session.commit()
-        except Exception as exc:
-            await session.rollback()
-            logger.error("fred_job_error", error=str(exc))
+    await _enqueue_scheduled_job("macro_refresh", {})
 
 
 def start_scheduler() -> None:
@@ -82,6 +67,7 @@ def start_scheduler() -> None:
     sched.add_job(_eod_job, CronTrigger(hour=22, minute=0), id="eod_incremental", replace_existing=True)
     sched.add_job(_news_job, IntervalTrigger(minutes=minutes), id="news_ingest", replace_existing=True)
     sched.add_job(_fundamentals_job, CronTrigger(hour=6, minute=0), id="fundamentals_ingest", replace_existing=True)
+    sched.add_job(_fred_seed_job, CronTrigger(hour=6, minute=30), id="fred_seed_catalog", replace_existing=True)
     sched.add_job(_fred_job, CronTrigger(hour=7, minute=0), id="fred_refresh", replace_existing=True)
     sched.start()
     logger.info("tiingo_scheduler_started")

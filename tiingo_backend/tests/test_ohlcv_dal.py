@@ -62,7 +62,24 @@ async def test_get_bars_returns_empty_when_no_source():
 
 
 @pytest.mark.asyncio
-async def test_resolve_best_source_prefers_eod_for_daily():
+async def test_resolve_best_source_prefers_crypto_for_daily_when_available():
+    session = AsyncMock()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            ohlcv_dal,
+            "get_coverage",
+            AsyncMock(return_value=[
+                {"source": "tiingo_eod"},
+                {"source": "tiingo_crypto"},
+            ]),
+        )
+        source = await ohlcv_dal.resolve_best_source(session, 1, "1d")
+
+    assert source == "tiingo_crypto"
+
+
+@pytest.mark.asyncio
+async def test_resolve_best_source_prefers_eod_for_daily_without_crypto():
     session = AsyncMock()
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(

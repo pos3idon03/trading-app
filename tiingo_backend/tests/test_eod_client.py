@@ -41,6 +41,8 @@ async def test_fetch_eod_bars_stores_adjusted_prices():
         "adjLow": 123.75,
         "adjClose": 129.0,
         "volume": 1000000,
+        "divCash": 0.82,
+        "splitFactor": 4.0,
     }]
     start = datetime(2020, 8, 1, tzinfo=timezone.utc)
     end = datetime(2020, 9, 1, tzinfo=timezone.utc)
@@ -60,4 +62,6 @@ async def test_fetch_eod_bars_stores_adjusted_prices():
     assert records[0].open == 126.0
     assert records[0].high == 128.75
     assert records[0].close == 129.0
+    assert records[0].div_cash == 0.82
+    assert records[0].split_factor == 4.0
     assert records[0].source == "tiingo_eod"

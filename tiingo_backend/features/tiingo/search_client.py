@@ -4,12 +4,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dtos.market_data_dto import TickerSearchResponseDTO, TickerSearchResultDTO
 from features.tiingo.common import get_token, normalize_crypto_symbol
+from features.tiingo.crypto_meta_client import get_crypto_meta
+from features.tiingo.crypto_search import search_crypto_meta
 from utils.logging import get_logger
 from utils.rate_limiter import check_and_increment
 
 logger = get_logger(__name__)
 
 _SEARCH_URL = "https://api.tiingo.com/tiingo/utilities/search"
+_CRYPTO_SEARCH_CAP = 5
 
 _ASSET_TYPE_MAP = {
     "stock": "stock",
@@ -47,24 +50,31 @@ def _parse_item(item: dict) -> TickerSearchResultDTO | None:
     )
 
 
-async def search_tickers(
+def _dedupe_by_symbol(results: list[TickerSearchResultDTO]) -> list[TickerSearchResultDTO]:
+    seen: set[str] = set()
+    merged: list[TickerSearchResultDTO] = []
+    for row in results:
+        key = row.symbol.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(row)
+    return merged
+
+
+async def _search_utilities(
     query: str,
-    limit: int = 10,
-    session: AsyncSession | None = None,
-) -> TickerSearchResponseDTO:
+    limit: int,
+    session: AsyncSession | None,
+) -> list[TickerSearchResultDTO]:
     token = get_token()
     params = {"query": query, "token": token}
-
-    try:
-        if session is not None:
-            await check_and_increment(session)
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(_SEARCH_URL, params=params)
-            resp.raise_for_status()
-            payload = resp.json()
-    except Exception as exc:
-        logger.error("tiingo_search_failed", query=query, error=str(exc))
-        return TickerSearchResponseDTO(results=[], count=0)
+    if session is not None:
+        await check_and_increment(session)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.get(_SEARCH_URL, params=params)
+        resp.raise_for_status()
+        payload = resp.json()
 
     items = payload if isinstance(payload, list) else []
     results: list[TickerSearchResultDTO] = []
@@ -74,6 +84,29 @@ async def search_tickers(
         parsed = _parse_item(item)
         if parsed:
             results.append(parsed)
+    return results
 
-    logger.info("tiingo_search_done", query=query, count=len(results))
-    return TickerSearchResponseDTO(results=results, count=len(results))
+
+async def search_tickers(
+    query: str,
+    limit: int = 10,
+    session: AsyncSession | None = None,
+) -> TickerSearchResponseDTO:
+    crypto_limit = min(_CRYPTO_SEARCH_CAP, limit)
+    crypto_hits: list[TickerSearchResultDTO] = []
+    try:
+        meta = await get_crypto_meta(session)
+        crypto_hits = search_crypto_meta(query, meta, limit=crypto_limit)
+    except Exception as exc:
+        logger.warning("crypto_meta_search_failed", query=query, error=str(exc))
+
+    try:
+        stock_hits = await _search_utilities(query, limit, session)
+    except Exception as exc:
+        logger.error("tiingo_search_failed", query=query, error=str(exc))
+        merged = _dedupe_by_symbol(crypto_hits)[:limit]
+        return TickerSearchResponseDTO(results=merged, count=len(merged))
+
+    merged = _dedupe_by_symbol(crypto_hits + stock_hits)[:limit]
+    logger.info("tiingo_search_done", query=query, count=len(merged), crypto=len(crypto_hits))
+    return TickerSearchResponseDTO(results=merged, count=len(merged))

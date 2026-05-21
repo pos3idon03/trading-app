@@ -51,7 +51,7 @@ async def finish_job(
             status=status,
             result=result,
             error_message=error,
-            progress=100 if status == "completed" else 0,
+            progress=100 if status in ("completed", "partial") else 0,
             finished_at=datetime.now(timezone.utc),
         )
     )
@@ -63,8 +63,24 @@ async def get_job(session: AsyncSession, job_id: UUID) -> dict | None:
     return _to_dict(row) if row else None
 
 
-async def list_jobs(session: AsyncSession, limit: int = 50) -> list[dict]:
+async def list_jobs(
+    session: AsyncSession,
+    limit: int = 50,
+    status: str | None = None,
+) -> list[dict]:
     q = select(IngestionJob).order_by(IngestionJob.created_at.desc()).limit(limit)
+    if status:
+        q = q.where(IngestionJob.status == status)
+    return [_to_dict(r) for r in (await session.execute(q)).scalars().all()]
+
+
+async def list_active_jobs(session: AsyncSession, limit: int = 50) -> list[dict]:
+    q = (
+        select(IngestionJob)
+        .where(IngestionJob.status.in_(("pending", "running")))
+        .order_by(IngestionJob.created_at.desc())
+        .limit(limit)
+    )
     return [_to_dict(r) for r in (await session.execute(q)).scalars().all()]
 
 

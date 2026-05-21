@@ -33,61 +33,31 @@ cp .env.example .env
 # Edit .env with your API keys
 
 # 3. Start all services
-docker compose up --build
-
-# 4. API is available at http://localhost:8000
-# 5. Frontend is available at http://localhost:5173
-# 6. API docs at http://localhost:8000/docs
-```
-
-### Tiingo Ingestion Platform (Phase 1)
-
-Standalone ingestion services with a dedicated TimescaleDB:
-
-```bash
-# Starts tiingo_db (:5433), tiingo_backend (:8002), tiingo_frontend (:5174)
-# Default host port 8002 avoids conflict with other services on 8001
-docker compose up tiingo_db tiingo_backend tiingo_frontend --build
+docker compose up --build -d
 
 # Ingestion UI: http://localhost:5174
 # Tiingo API docs: http://localhost:8002/docs
+# Database: localhost:5433
 ```
 
 Configure in `.env`: `TIINGO_API_KEY`, `FRED_API_KEY`, `TIINGO_FUNDAMENTALS_TIER` (`dow30` or `addon_*`).
 
-```bash
-docker compose exec tiingo_backend pytest tests/ -v
-```
-
 ### Running Tests
 
 ```bash
-# Backend tests
-docker compose exec backend pytest tests/ -v
+docker compose exec tiingo_backend pytest tests/ -v
 
 # Or locally
-cd backend && pip install -r requirements.txt && pytest tests/ -v
+cd tiingo_backend && pip install -r requirements.txt && pytest tests/ -v
 ```
 
 ## Project Structure
 
 ```
 trading-app/
-├── backend/                    # FastAPI application
-│   ├── features/
-│   │   ├── data_ingestion/     # OHLCV providers (Polygon, Alpaca, yfinance, FMP)
-│   │   ├── quantitative_engine/# Vasicek, Monte Carlo, jump diffusion
-│   │   ├── backtesting/        # vectorbt runner, strategies, optimization
-│   │   ├── ai_agents/          # CrewAI multi-agent research crew
-│   │   ├── live_trading/       # WebSocket stream, resampler, indicators, signals
-│   │   └── execution/          # Broker client, order manager, risk manager, portfolio
-│   ├── routes/                 # HTTP route handlers (6 modules)
-│   ├── models/                 # SQLAlchemy ORM models
-│   ├── dtos/                   # Pydantic request/response schemas
-│   ├── dal/                    # Data Access Layer
-│   └── utils/                  # Shared utilities
-├── frontend/                   # React + TypeScript SPA (7 pages)
-├── database/                   # SQL migrations and init scripts
+├── tiingo_backend/             # FastAPI ingestion API + ARQ worker
+├── tiingo_frontend/            # React + TypeScript ingestion UI
+├── tiingo_database/            # SQL migrations and init scripts
 └── docker-compose.yml
 ```
 

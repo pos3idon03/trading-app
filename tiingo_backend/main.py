@@ -17,14 +17,15 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("tiingo_backend_startup", env=settings.app_env)
 
-    async with __import__("db", fromlist=["AsyncSessionLocal"]).AsyncSessionLocal() as session:
-        from features.fred.macro_orchestrator import seed_catalog
-        try:
-            await seed_catalog(session)
-            await session.commit()
-        except Exception as exc:
-            await session.rollback()
-            logger.warning("seed_catalog_failed", error=str(exc))
+    try:
+        from db import AsyncSessionLocal
+        from features.worker.tasks import create_and_enqueue_job
+
+        async with AsyncSessionLocal() as session:
+            await create_and_enqueue_job(session, "macro_seed_catalog", {})
+        logger.info("macro_seed_catalog_enqueued")
+    except Exception as exc:
+        logger.warning("macro_seed_catalog_enqueue_failed", error=str(exc))
 
     if settings.enable_scheduler:
         from features.scheduler.scheduler import start_scheduler
@@ -42,6 +43,10 @@ async def lifespan(app: FastAPI):
 
     from features.stream import iex_stream
     await iex_stream.stop_stream()
+
+    from features.worker.pool import close_arq_pool
+    await close_arq_pool()
+
     logger.info("tiingo_backend_shutdown")
 
 

@@ -8,6 +8,7 @@ export interface Instrument {
   currency: string;
   is_active: boolean;
   metadata?: Record<string, unknown>;
+  job_id?: string;
 }
 
 export interface TickerSearchResult {
@@ -36,8 +37,11 @@ export interface Job {
   job_type: string;
   status: string;
   progress: number;
+  params?: Record<string, unknown>;
   error_message?: string;
   result?: Record<string, unknown>;
+  started_at?: string;
+  finished_at?: string;
   created_at: string;
 }
 
@@ -66,6 +70,8 @@ export interface OHLCVBar {
   low: number;
   close: number;
   volume: number;
+  div_cash?: number;
+  split_factor?: number;
   source: string;
 }
 
@@ -119,6 +125,38 @@ export interface FundamentalsMetricsResponse {
 }
 
 export type FundamentalsPeriodType = 'quarterly' | 'annual';
+
+export interface PerformancePeriod {
+  period: string;
+  change_pct: number | null;
+  price_change_pct: number | null;
+  dividend_return_pct: number | null;
+  total_return_pct: number | null;
+  example_investment: number;
+  example_outcome: number | null;
+  example_dividend_income: number | null;
+}
+
+export interface PerformanceResponse {
+  symbol: string;
+  currency: string;
+  as_of: string | null;
+  periods: PerformancePeriod[];
+}
+
+export interface StockKpiItem {
+  key: string;
+  label: string;
+  value: number | null;
+  format: 'ratio' | 'percent' | 'currency' | 'perShare';
+}
+
+export interface StockKpisResponse {
+  symbol: string;
+  as_of: string | null;
+  price: number | null;
+  kpis: StockKpiItem[];
+}
 
 export type SeriesSource = 'macro' | 'instrument';
 

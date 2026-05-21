@@ -1,9 +1,9 @@
 from datetime import date
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dal import job_dal, macro_dal
+from dal import macro_dal
 from db import get_db
 from dtos.market_data_dto import (
     MacroBackfillRequest,
@@ -11,8 +11,7 @@ from dtos.market_data_dto import (
     MacroObservationsResponseDTO,
     MacroSeriesDTO,
 )
-from features.fred.macro_orchestrator import backfill_series, seed_catalog
-from features.ingestion.job_runner import execute_job
+from features.worker.tasks import create_and_enqueue_job
 
 router = APIRouter(prefix="/ingestion/macro", tags=["macro"])
 
@@ -24,7 +23,6 @@ async def list_macro_series(
     limit: int = 50,
     session: AsyncSession = Depends(get_db),
 ):
-    await seed_catalog(session)
     if ingested_only:
         return await macro_dal.list_ingested_series(session, query=query, limit=limit)
     return await macro_dal.list_series(session)
@@ -33,19 +31,21 @@ async def list_macro_series(
 @router.post("/backfill", status_code=202)
 async def macro_backfill(
     body: MacroBackfillRequest,
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
 ):
-    await seed_catalog(session)
-    job = await job_dal.create_job(session, "macro_backfill", body.model_dump())
-    background.add_task(execute_job, job["id"], "macro_backfill", body.model_dump())
+    job = await create_and_enqueue_job(session, "macro_backfill", body.model_dump())
+    return {"job_id": str(job["id"]), "status": "accepted"}
+
+
+@router.post("/seed", status_code=202)
+async def macro_seed_catalog(session: AsyncSession = Depends(get_db)):
+    job = await create_and_enqueue_job(session, "macro_seed_catalog", {})
     return {"job_id": str(job["id"]), "status": "accepted"}
 
 
 @router.post("/refresh", status_code=202)
-async def macro_refresh(background: BackgroundTasks, session: AsyncSession = Depends(get_db)):
-    job = await job_dal.create_job(session, "macro_refresh", {})
-    background.add_task(execute_job, job["id"], "macro_refresh", {})
+async def macro_refresh(session: AsyncSession = Depends(get_db)):
+    job = await create_and_enqueue_job(session, "macro_refresh", {})
     return {"job_id": str(job["id"]), "status": "accepted"}
 
 

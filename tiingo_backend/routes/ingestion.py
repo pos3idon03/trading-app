@@ -1,25 +1,24 @@
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from dal import instrument_dal, job_dal, news_dal, ohlcv_dal, usage_dal
 from db import get_db
 from dtos.market_data_dto import (
+    AssetFullIngestRequest,
     FundamentalsRunRequest,
     IngestionStatusResponse,
     JobDTO,
-    MacroBackfillRequest,
     NewsRunRequest,
     OHLCVBackfillRequest,
     StreamControlRequest,
 )
-from features.fred.macro_orchestrator import backfill_series, seed_catalog
-from features.ingestion.job_runner import execute_job
 from features.scheduler.scheduler import list_jobs
 from features.stream import iex_stream
 from features.tiingo.entitlement import DOW_30_SYMBOLS
+from features.worker.tasks import create_and_enqueue_job
 
 router = APIRouter(prefix="/ingestion", tags=["ingestion"])
 
@@ -43,14 +42,21 @@ async def ingestion_status(session: AsyncSession = Depends(get_db)):
     )
 
 
+@router.post("/asset/ingest", status_code=202)
+async def asset_ingest(
+    body: AssetFullIngestRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    job = await create_and_enqueue_job(session, "asset_full_ingest", body.model_dump())
+    return {"job_id": str(job["id"]), "status": "accepted"}
+
+
 @router.post("/ohlcv/backfill", status_code=202)
 async def ohlcv_backfill(
     body: OHLCVBackfillRequest,
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
 ):
-    job = await job_dal.create_job(session, "ohlcv_backfill", body.model_dump())
-    background.add_task(execute_job, job["id"], "ohlcv_backfill", body.model_dump())
+    job = await create_and_enqueue_job(session, "ohlcv_backfill", body.model_dump())
     return {"job_id": str(job["id"]), "status": "accepted"}
 
 
@@ -65,11 +71,9 @@ async def ohlcv_coverage(symbol: str, timeframe: str = "1d", session: AsyncSessi
 @router.post("/news/run", status_code=202)
 async def news_run(
     body: NewsRunRequest,
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
 ):
-    job = await job_dal.create_job(session, "news_ingest", body.model_dump())
-    background.add_task(execute_job, job["id"], "news_ingest", body.model_dump())
+    job = await create_and_enqueue_job(session, "news_ingest", body.model_dump())
     return {"job_id": str(job["id"]), "status": "accepted"}
 
 
@@ -81,11 +85,9 @@ async def list_news(limit: int = 50, session: AsyncSession = Depends(get_db)):
 @router.post("/fundamentals/run", status_code=202)
 async def fundamentals_run(
     body: FundamentalsRunRequest,
-    background: BackgroundTasks,
     session: AsyncSession = Depends(get_db),
 ):
-    job = await job_dal.create_job(session, "fundamentals_ingest", body.model_dump())
-    background.add_task(execute_job, job["id"], "fundamentals_ingest", body.model_dump())
+    job = await create_and_enqueue_job(session, "fundamentals_ingest", body.model_dump())
     return {"job_id": str(job["id"]), "status": "accepted"}
 
 
@@ -115,8 +117,20 @@ async def stream_status():
 
 
 @router.get("/jobs", response_model=list[JobDTO])
-async def list_ingestion_jobs(limit: int = 50, session: AsyncSession = Depends(get_db)):
-    return await job_dal.list_jobs(session, limit)
+async def list_ingestion_jobs(
+    limit: int = Query(default=50, ge=1, le=200),
+    status: str | None = Query(default=None),
+    session: AsyncSession = Depends(get_db),
+):
+    return await job_dal.list_jobs(session, limit, status=status)
+
+
+@router.get("/jobs/active", response_model=list[JobDTO])
+async def list_active_ingestion_jobs(
+    limit: int = Query(default=50, ge=1, le=200),
+    session: AsyncSession = Depends(get_db),
+):
+    return await job_dal.list_active_jobs(session, limit)
 
 
 @router.get("/jobs/{job_id}", response_model=JobDTO)

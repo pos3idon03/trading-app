@@ -55,6 +55,8 @@ async def fetch_eod_bars(
             low=_pick_adjusted_price(row, "low"),
             close=_pick_adjusted_price(row, "close"),
             volume=int(row.get("volume") or 0),
+            div_cash=float(row.get("divCash") or 0),
+            split_factor=float(row.get("splitFactor") or 1),
             source="tiingo_eod",
         ))
     logger.info("eod_fetched", symbol=symbol, count=len(records))

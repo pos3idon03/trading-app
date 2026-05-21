@@ -48,7 +48,9 @@ export default function MarketDataTab() {
         Backfill All Active (EOD + IEX)
       </button>
       <p className="text-xs text-slate-500">
-        Daily EOD bars use split-adjusted prices. Re-run backfill after upgrading to refresh historical charts.
+        Daily EOD bars use split-adjusted prices. After upgrading, run backfill with{' '}
+        <code className="text-slate-400">refresh_corporate_actions: true</code> to populate
+        dividend and split markers on existing symbols.
       </p>
       <div className="flex flex-wrap gap-2 items-end">
         <TiingoTickerSearch selected={selected} onSelect={setSelected} />

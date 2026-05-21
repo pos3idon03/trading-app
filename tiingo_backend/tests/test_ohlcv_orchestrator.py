@@ -4,7 +4,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from dtos.market_data_dto import OHLCVBackfillRequest
-from features.ingestion.ohlcv_orchestrator import _backfill_one, _effective_sources
+from features.ingestion.ohlcv_orchestrator import (
+    _backfill_one,
+    _effective_sources,
+    has_partial_ohlcv_results,
+)
 
 
 def test_effective_sources_adds_crypto_for_crypto_asset():
@@ -53,7 +57,7 @@ async def test_backfill_crypto_uses_crypto_client_not_eod():
         "features.ingestion.ohlcv_orchestrator.ohlcv_dal.bulk_insert_ohlcv",
         new=AsyncMock(return_value=0),
     ):
-        result = await _backfill_one(session, "BTC-USD", request)
+        result = await _backfill_one(session, "BTC-USD", request, intraday_days=90)
 
     assert result["status"] == "ok"
     assert mock_crypto.await_count == 2
@@ -100,9 +104,61 @@ async def test_backfill_stock_uses_eod_and_iex():
         "features.ingestion.ohlcv_orchestrator.ohlcv_dal.bulk_insert_ohlcv",
         new=AsyncMock(return_value=0),
     ):
-        result = await _backfill_one(session, "AAPL", request)
+        result = await _backfill_one(session, "AAPL", request, intraday_days=90)
 
     assert result["status"] == "ok"
     mock_eod.assert_awaited_once()
     mock_iex.assert_awaited_once()
     mock_crypto.assert_not_awaited()
+
+
+def test_has_partial_ohlcv_results_detects_rate_limited():
+    assert has_partial_ohlcv_results([{"status": "rate_limited"}])
+
+
+def test_has_partial_ohlcv_results_detects_partial_timeframe():
+    assert has_partial_ohlcv_results([{"status": "partial"}])
+
+
+@pytest.mark.asyncio
+async def test_backfill_continues_after_timeframe_error():
+    inst = {
+        "id": 3,
+        "symbol": "AAPL",
+        "tiingo_ticker": "AAPL",
+        "asset_type": "stock",
+    }
+    request = OHLCVBackfillRequest(
+        symbols=["AAPL"],
+        timeframes=["1d", "5m"],
+        sources=["tiingo_eod", "tiingo_iex"],
+    )
+    session = AsyncMock()
+
+    async def fetch_eod(*_args, **_kwargs):
+        raise RuntimeError("eod failed")
+
+    with patch(
+        "features.ingestion.ohlcv_orchestrator.instrument_dal.get_by_symbol",
+        new=AsyncMock(return_value=inst),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.check_and_increment",
+        new=AsyncMock(),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.ohlcv_dal.get_latest_timestamp",
+        new=AsyncMock(return_value=None),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.eod_client.fetch_eod_bars",
+        new=AsyncMock(side_effect=fetch_eod),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.iex_client.fetch_iex_bars",
+        new=AsyncMock(return_value=[]),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.ohlcv_dal.bulk_insert_ohlcv",
+        new=AsyncMock(return_value=0),
+    ):
+        result = await _backfill_one(session, "AAPL", request, intraday_days=90)
+
+    assert result["status"] == "partial"
+    assert len(result["errors"]) == 1
+    assert result["errors"][0]["timeframe"] == "1d"

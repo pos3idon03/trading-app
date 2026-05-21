@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ingestionApi } from '../../api/endpoints';
 import type { IngestionStatus, Job } from '../../api/types';
 import Spinner from '../../components/Spinner';
@@ -64,12 +65,18 @@ export default function OverviewTab() {
       </section>
 
       <section className="bg-surface-900 border border-slate-800 rounded-xl p-4">
-        <h3 className="font-semibold text-slate-200 mb-3">Recent Jobs</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-slate-200">Recent Jobs</h3>
+          <Link to="/ingestion/jobs" className="text-sm text-brand-500 hover:text-brand-400">
+            View all jobs
+          </Link>
+        </div>
         <table className="w-full text-sm">
           <thead>
             <tr className="text-slate-500 text-left">
               <th className="pb-2">Type</th>
               <th>Status</th>
+              <th>Progress</th>
               <th>Created</th>
             </tr>
           </thead>
@@ -78,6 +85,7 @@ export default function OverviewTab() {
               <tr key={j.id} className="border-t border-slate-800">
                 <td className="py-2 text-slate-300">{j.job_type}</td>
                 <td className={j.status === 'completed' ? 'text-brand-500' : 'text-amber-400'}>{j.status}</td>
+                <td className="text-slate-500">{j.progress}%</td>
                 <td className="text-slate-500">{new Date(j.created_at).toLocaleString()}</td>
               </tr>
             ))}

@@ -10,6 +10,7 @@ import {
   backfillStartedMessage,
   deleteConfirmMessage,
   deleteSuccessMessage,
+  ingestStartedMessage,
 } from '../../utils/watchlistMessages';
 
 type ToastState = { message: string; variant: 'success' | 'error' };
@@ -40,7 +41,7 @@ export default function WatchlistTab() {
     if (!selected) return;
     setBusy('add');
     try {
-      await ingestionApi.createInstrument({
+      const created = await ingestionApi.createInstrument({
         symbol: selected.symbol,
         asset_type: selected.asset_type,
         name: selected.name,
@@ -49,6 +50,12 @@ export default function WatchlistTab() {
       });
       setSelected(null);
       await load();
+      if (created.job_id) {
+        setToast({
+          message: ingestStartedMessage(created.symbol, created.job_id),
+          variant: 'success',
+        });
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -72,11 +79,7 @@ export default function WatchlistTab() {
     setBusy(`bf-${sym}`);
     setError(null);
     try {
-      await ingestionApi.backfillOhlcv({
-        symbols: [sym],
-        timeframes: ['1d', '5m', '1m', '15m', '30m', '1h'],
-        sources: ['tiingo_eod', 'tiingo_iex', 'tiingo_crypto'],
-      });
+      await ingestionApi.ingestAsset(sym);
       setToast({ message: backfillStartedMessage(sym), variant: 'success' });
     } catch (e) {
       setError((e as Error).message);
@@ -174,7 +177,7 @@ export default function WatchlistTab() {
                     disabled={!!busy}
                     className="text-xs text-slate-300 hover:text-white underline disabled:opacity-50"
                   >
-                    Backfill
+                    Re-ingest
                   </button>
                   <button
                     type="button"

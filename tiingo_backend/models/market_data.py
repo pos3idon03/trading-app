@@ -21,6 +21,8 @@ class OHLCV(Base):
     volume: Mapped[int] = mapped_column(BigInteger, default=0)
     vwap: Mapped[float | None] = mapped_column(Double)
     trade_count: Mapped[int | None] = mapped_column(Integer)
+    div_cash: Mapped[float] = mapped_column(Double, default=0)
+    split_factor: Mapped[float] = mapped_column(Double, default=1)
 
 
 class Fundamental(Base):

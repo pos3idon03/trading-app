@@ -16,6 +16,8 @@ class OHLCVRecord(BaseModel):
     volume: int = 0
     vwap: Optional[float] = None
     trade_count: Optional[int] = None
+    div_cash: float = 0
+    split_factor: float = 1
     source: str
 
 
@@ -37,6 +39,15 @@ class InstrumentCreateRequest(BaseModel):
     tiingo_ticker: Optional[str] = None
     name: Optional[str] = None
     exchange: Optional[str] = None
+    auto_ingest: bool = True
+
+
+class InstrumentCreateResponse(InstrumentDTO):
+    job_id: Optional[UUID] = None
+
+
+class AssetFullIngestRequest(BaseModel):
+    symbol: str
 
 
 class InstrumentPatchRequest(BaseModel):
@@ -50,6 +61,7 @@ class OHLCVBackfillRequest(BaseModel):
     timeframes: list[str] = Field(default_factory=lambda: ["1d", "5m"])
     sources: list[str] = Field(default_factory=lambda: ["tiingo_eod", "tiingo_iex"])
     start_date: Optional[str] = None
+    refresh_corporate_actions: bool = False
 
 
 class NewsRunRequest(BaseModel):
@@ -158,6 +170,8 @@ class OHLCVBarDTO(BaseModel):
     low: float
     close: float
     volume: int = 0
+    div_cash: float = 0
+    split_factor: float = 1
     source: str
 
 
@@ -168,3 +182,35 @@ class OHLCVQueryResponse(BaseModel):
     source: str
     records: list[OHLCVBarDTO]
     count: int
+
+
+class PerformancePeriodDTO(BaseModel):
+    period: str
+    change_pct: Optional[float] = None
+    price_change_pct: Optional[float] = None
+    dividend_return_pct: Optional[float] = None
+    total_return_pct: Optional[float] = None
+    example_investment: float = 100
+    example_outcome: Optional[float] = None
+    example_dividend_income: Optional[float] = None
+
+
+class PerformanceResponseDTO(BaseModel):
+    symbol: str
+    currency: str = "USD"
+    as_of: Optional[datetime] = None
+    periods: list[PerformancePeriodDTO]
+
+
+class StockKpiItemDTO(BaseModel):
+    key: str
+    label: str
+    value: Optional[float] = None
+    format: str
+
+
+class StockKpisResponseDTO(BaseModel):
+    symbol: str
+    as_of: Optional[datetime] = None
+    price: Optional[float] = None
+    kpis: list[StockKpiItemDTO]

@@ -1,15 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import get_settings
 from dal import instrument_dal
 from db import get_db
 from dtos.market_data_dto import (
     InstrumentCreateRequest,
+    InstrumentCreateResponse,
     InstrumentDTO,
     InstrumentPatchRequest,
     TickerSearchResponseDTO,
 )
 from features.tiingo.search_client import search_tickers
+from features.worker.tasks import create_and_enqueue_job
 
 router = APIRouter(prefix="/instruments", tags=["instruments"])
 
@@ -41,9 +44,29 @@ async def list_instruments(active_only: bool = False, session: AsyncSession = De
     return await instrument_dal.list_instruments(session, active_only=active_only)
 
 
-@router.post("", response_model=InstrumentDTO, status_code=201)
-async def create_instrument(body: InstrumentCreateRequest, session: AsyncSession = Depends(get_db)):
-    return await instrument_dal.upsert_instrument(session, body.model_dump())
+@router.post("", response_model=InstrumentCreateResponse, status_code=201)
+async def create_instrument(
+    body: InstrumentCreateRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    settings = get_settings()
+    instrument = await instrument_dal.upsert_instrument(session, body.model_dump(exclude={"auto_ingest"}))
+    job_id = None
+
+    should_ingest = (
+        body.auto_ingest
+        and settings.auto_backfill_on_create
+        and instrument.get("is_active", True)
+    )
+    if should_ingest:
+        job = await create_and_enqueue_job(
+            session,
+            "asset_full_ingest",
+            {"symbol": instrument["symbol"]},
+        )
+        job_id = job["id"]
+
+    return InstrumentCreateResponse(**instrument, job_id=job_id)
 
 
 @router.patch("/{symbol}", response_model=InstrumentDTO)

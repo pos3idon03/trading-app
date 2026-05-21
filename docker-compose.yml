@@ -1,80 +1,14 @@
-version: "3.9"
-
 services:
-  db:
-    image: timescale/timescaledb:latest-pg16
-    container_name: trading_db
-    command: postgres -c max_connections=200
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+  redis:
+    image: redis:7-alpine
+    container_name: trading_redis
     ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/00_init.sql
-      - ./database/migrations:/docker-entrypoint-initdb.d/migrations
+      - "6379:6379"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
       retries: 5
-      start_period: 60s
-    restart: unless-stopped
-
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: trading_backend
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      DATABASE_SYNC_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
-    depends_on:
-      db:
-        condition: service_healthy
-    restart: unless-stopped
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: trading_frontend
-    env_file: .env
-    environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    depends_on:
-      - backend
-    restart: unless-stopped
-
-  openbb:
-    build:
-      context: ./openbb-platform
-      dockerfile: Dockerfile
-    container_name: trading_openbb
-    env_file: .env
-    ports:
-      - "6900:6900"
-    volumes:
-      - openbb_data:/root/.openbb_platform
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:6900/"]
-      interval: 30s
-      timeout: 10s
-      start_period: 40s
-      retries: 3
     restart: unless-stopped
 
   tiingo_db:
@@ -114,6 +48,9 @@ services:
       ENABLE_TIINGO_SCHEDULER: ${ENABLE_TIINGO_SCHEDULER:-true}
       STREAM_ENABLED: ${STREAM_ENABLED:-false}
       CORS_ORIGINS: http://localhost:5174
+      REDIS_URL: redis://redis:6379
+      ARQ_MAX_JOBS: ${ARQ_MAX_JOBS:-4}
+      AUTO_BACKFILL_ON_CREATE: ${AUTO_BACKFILL_ON_CREATE:-true}
     ports:
       - "${TIINGO_BACKEND_PORT:-8002}:8001"
     volumes:
@@ -121,8 +58,34 @@ services:
     depends_on:
       tiingo_db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     command: uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+
+  tiingo_worker:
+    build:
+      context: ./tiingo_backend
+      dockerfile: Dockerfile
+    container_name: tiingo_worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${TIINGO_POSTGRES_USER:-tiingo_user}:${TIINGO_POSTGRES_PASSWORD:-changeme_tiingo_password}@tiingo_db:5432/${TIINGO_POSTGRES_DB:-tiingo_db}
+      DATABASE_SYNC_URL: postgresql://${TIINGO_POSTGRES_USER:-tiingo_user}:${TIINGO_POSTGRES_PASSWORD:-changeme_tiingo_password}@tiingo_db:5432/${TIINGO_POSTGRES_DB:-tiingo_db}
+      TIINGO_API_KEY: ${TIINGO_API_KEY}
+      FRED_API_KEY: ${FRED_API_KEY}
+      TIINGO_FUNDAMENTALS_TIER: ${TIINGO_FUNDAMENTALS_TIER:-dow30}
+      REDIS_URL: redis://redis:6379
+      ARQ_MAX_JOBS: ${ARQ_MAX_JOBS:-4}
+    volumes:
+      - ./tiingo_backend:/app
+    depends_on:
+      tiingo_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    command: arq worker.WorkerSettings
 
   tiingo_frontend:
     build:
@@ -142,6 +105,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
-  openbb_data:
   tiingo_pgdata:

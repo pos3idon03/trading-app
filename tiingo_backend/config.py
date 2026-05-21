@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     iex_backfill_days: int = 90
     news_interval_minutes: int = 20
 
+    redis_url: str = Field(default="redis://redis:6379", validation_alias="REDIS_URL")
+    arq_max_jobs: int = Field(default=4, validation_alias="ARQ_MAX_JOBS")
+    auto_backfill_on_create: bool = Field(default=True, validation_alias="AUTO_BACKFILL_ON_CREATE")
+    crypto_meta_cache_ttl_seconds: int = 86400
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",")]

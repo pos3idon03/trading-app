@@ -62,9 +62,9 @@ async def test_search_tickers_success():
             "exchange": "NASDAQ",
         }
     ]
-    with patch("features.tiingo.search_client.get_token", return_value="tok"), patch(
-        "features.tiingo.search_client.httpx.AsyncClient"
-    ) as mock_client:
+    with patch("features.tiingo.search_client.get_crypto_meta", new=AsyncMock(return_value=[])), patch(
+        "features.tiingo.search_client.get_token", return_value="tok"
+    ), patch("features.tiingo.search_client.httpx.AsyncClient") as mock_client:
         instance = mock_client.return_value.__aenter__.return_value
         resp = MagicMock()
         resp.json.return_value = payload
@@ -77,10 +77,41 @@ async def test_search_tickers_success():
 
 
 @pytest.mark.asyncio
+async def test_search_tickers_merges_crypto_before_utilities():
+    meta = [{
+        "ticker": "btcusd",
+        "name": "Bitcoin Tether (BTC/USD)",
+        "baseCurrency": "btc",
+        "quoteCurrency": "usd",
+    }]
+    utilities = [{
+        "ticker": "BTC",
+        "name": "Grayscale Bitcoin Mini Trust ETF",
+        "assetType": "ETF",
+        "exchange": "NYSE",
+    }]
+    with patch("features.tiingo.search_client.get_crypto_meta", new=AsyncMock(return_value=meta)), patch(
+        "features.tiingo.search_client.get_token", return_value="tok"
+    ), patch("features.tiingo.search_client.httpx.AsyncClient") as mock_client:
+        instance = mock_client.return_value.__aenter__.return_value
+        resp = MagicMock()
+        resp.json.return_value = utilities
+        instance.get = AsyncMock(return_value=resp)
+
+        result = await search_tickers("BTC", limit=10)
+
+    assert result.count == 2
+    assert result.results[0].symbol == "BTC-USD"
+    assert result.results[0].asset_type == "crypto"
+    assert result.results[1].symbol == "BTC"
+    assert result.results[1].asset_type == "etf"
+
+
+@pytest.mark.asyncio
 async def test_search_tickers_error_returns_empty():
-    with patch("features.tiingo.search_client.get_token", return_value="tok"), patch(
-        "features.tiingo.search_client.httpx.AsyncClient"
-    ) as mock_client:
+    with patch("features.tiingo.search_client.get_crypto_meta", new=AsyncMock(return_value=[])), patch(
+        "features.tiingo.search_client.get_token", return_value="tok"
+    ), patch("features.tiingo.search_client.httpx.AsyncClient") as mock_client:
         instance = mock_client.return_value.__aenter__.return_value
         instance.get = AsyncMock(side_effect=httpx.HTTPError("fail"))
 

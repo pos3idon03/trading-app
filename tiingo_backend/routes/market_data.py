@@ -6,8 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal import instrument_dal, ohlcv_dal
 from db import get_db
-from dtos.market_data_dto import OHLCVBarDTO, OHLCVQueryResponse
+from dtos.market_data_dto import (
+    OHLCVBarDTO,
+    OHLCVQueryResponse,
+    PerformancePeriodDTO,
+    PerformanceResponseDTO,
+    StockKpiItemDTO,
+    StockKpisResponseDTO,
+)
 from features.market_data.ohlcv_resample import SUPPORTED_TIMEFRAMES, is_tail_timeframe
+from features.market_data.performance_service import load_performance
+from features.market_data.stock_kpis import load_stock_kpis
 
 router = APIRouter(prefix="/market-data", tags=["market-data"])
 
@@ -65,4 +74,61 @@ async def get_ohlcv_by_symbol(
         source=resolved_source or source or "",
         records=records,
         count=len(records),
+    )
+
+
+@router.get("/performance/{symbol}", response_model=PerformanceResponseDTO)
+async def get_performance(
+    symbol: str,
+    session: AsyncSession = Depends(get_db),
+) -> PerformanceResponseDTO:
+    instrument = await instrument_dal.get_by_symbol(session, symbol)
+    if not instrument:
+        raise HTTPException(status_code=404, detail=f"Instrument not found: {symbol.upper()}")
+
+    periods, as_of = await load_performance(session, instrument["id"])
+    periods_dto = [
+        PerformancePeriodDTO(
+            period=row["period"],
+            change_pct=row.get("total_return_pct"),
+            price_change_pct=row.get("price_change_pct"),
+            dividend_return_pct=row.get("dividend_return_pct"),
+            total_return_pct=row.get("total_return_pct"),
+            example_investment=row.get("example_investment", 100),
+            example_outcome=row.get("example_outcome"),
+            example_dividend_income=row.get("example_dividend_income"),
+        )
+        for row in periods
+    ]
+    return PerformanceResponseDTO(
+        symbol=instrument["symbol"],
+        currency=instrument.get("currency") or "USD",
+        as_of=as_of,
+        periods=periods_dto,
+    )
+
+
+@router.get("/kpis/{symbol}", response_model=StockKpisResponseDTO)
+async def get_stock_kpis(
+    symbol: str,
+    session: AsyncSession = Depends(get_db),
+) -> StockKpisResponseDTO:
+    instrument = await instrument_dal.get_by_symbol(session, symbol)
+    if not instrument:
+        raise HTTPException(status_code=404, detail=f"Instrument not found: {symbol.upper()}")
+
+    price, as_of, kpis = await load_stock_kpis(session, instrument["id"])
+    return StockKpisResponseDTO(
+        symbol=instrument["symbol"],
+        as_of=as_of,
+        price=price,
+        kpis=[
+            StockKpiItemDTO(
+                key=k.key,
+                label=k.label,
+                value=k.value,
+                format=k.format,
+            )
+            for k in kpis
+        ],
     )

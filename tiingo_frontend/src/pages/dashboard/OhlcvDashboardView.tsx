@@ -7,6 +7,8 @@ import ErrorAlert from '../../components/ErrorAlert';
 import InstrumentSearch from '../../components/InstrumentSearch';
 import Spinner from '../../components/Spinner';
 import FundamentalsPanel from '../../components/FundamentalsPanel';
+import PerformanceCards from '../../components/PerformanceCards';
+import StockKpiPanel from '../../components/StockKpiPanel';
 import OhlcvTimelineChart from '../../components/charts/OhlcvTimelineChart';
 import {
   OHLCV_TIMEFRAMES,
@@ -194,11 +196,19 @@ export default function OhlcvDashboardView({
         </div>
       )}
 
+      {showFundamentals && symbol && !loading && (
+        <PerformanceCards symbol={symbol} />
+      )}
+
       {showFundamentals && symbol && (
         <section className="space-y-4 pt-4 border-t border-slate-800">
           <h2 className="text-lg font-semibold text-slate-200">Fundamentals</h2>
           <FundamentalsPanel symbol={symbol} />
         </section>
+      )}
+
+      {showFundamentals && symbol && !loading && (
+        <StockKpiPanel symbol={symbol} />
       )}
 
       {!loading && !symbol && (

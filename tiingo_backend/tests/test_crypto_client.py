@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -25,7 +25,7 @@ async def test_fetch_crypto_bars_daily():
         "features.tiingo.crypto_client.httpx.AsyncClient"
     ) as mock_client:
         instance = mock_client.return_value.__aenter__.return_value
-        resp = AsyncMock()
+        resp = MagicMock()
         resp.json.return_value = payload
         instance.get = AsyncMock(return_value=resp)
 
@@ -67,7 +67,7 @@ async def test_fetch_crypto_bars_4h_aggregates_hourly():
         "features.tiingo.crypto_client.httpx.AsyncClient"
     ) as mock_client:
         instance = mock_client.return_value.__aenter__.return_value
-        resp = AsyncMock()
+        resp = MagicMock()
         resp.json.return_value = payload
         instance.get = AsyncMock(return_value=resp)
 

@@ -9,3 +9,4 @@ CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 \i /docker-entrypoint-initdb.d/migrations/005_create_macro.sql
 \i /docker-entrypoint-initdb.d/migrations/006_create_ingestion_jobs.sql
 \i /docker-entrypoint-initdb.d/migrations/007_create_api_usage.sql
+\i /docker-entrypoint-initdb.d/migrations/008_add_ohlcv_corporate_fields.sql

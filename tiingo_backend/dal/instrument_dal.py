@@ -4,7 +4,7 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.tiingo.common import normalize_crypto_symbol
+from features.tiingo.common import normalize_crypto_symbol, symbol_to_crypto_ticker
 from models.instrument import Instrument
 
 _table = Instrument.__table__
@@ -55,10 +55,12 @@ async def search_instruments(
 async def upsert_instrument(session: AsyncSession, data: dict) -> dict:
     now = datetime.now(timezone.utc)
     asset_type = data.get("asset_type", "stock")
-    symbol = data["symbol"].upper()
     if asset_type == "crypto":
         symbol = normalize_crypto_symbol(data["symbol"])
-    tiingo_ticker = data.get("tiingo_ticker") or symbol
+        tiingo_ticker = data.get("tiingo_ticker") or symbol_to_crypto_ticker(symbol)
+    else:
+        symbol = data["symbol"].upper()
+        tiingo_ticker = data.get("tiingo_ticker") or symbol
     row = {
         _table.c.symbol: symbol,
         _table.c.tiingo_ticker: tiingo_ticker,

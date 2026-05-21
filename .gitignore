@@ -22,8 +22,8 @@ coverage.xml
 
 # Node / Frontend
 node_modules/
-frontend/dist/
-frontend/.vite/
+tiingo_frontend/dist/
+tiingo_frontend/.vite/
 *.tsbuildinfo
 
 # Docker

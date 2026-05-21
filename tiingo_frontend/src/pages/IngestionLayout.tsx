@@ -4,6 +4,7 @@ import clsx from 'clsx';
 const TABS = [
   { path: '.', label: 'Overview', end: true },
   { path: 'watchlist', label: 'Watchlist', end: false },
+  { path: 'jobs', label: 'Jobs', end: false },
   { path: 'market', label: 'Market Data', end: false },
   { path: 'stream', label: 'Live Stream', end: false },
   { path: 'news', label: 'News', end: false },

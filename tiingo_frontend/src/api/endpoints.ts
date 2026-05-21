@@ -10,6 +10,8 @@ import type {
   MacroSeries,
   NewsArticle,
   OHLCVQueryResponse,
+  PerformanceResponse,
+  StockKpisResponse,
   TickerSearchResponse,
 } from './types';
 
@@ -33,8 +35,11 @@ export const ingestionApi = {
     name?: string;
     exchange?: string;
     tiingo_ticker?: string;
+    auto_ingest?: boolean;
   }) =>
     api.post<Instrument>('/instruments', body).then((r) => r.data),
+  ingestAsset: (symbol: string) =>
+    api.post<{ job_id: string }>('/ingestion/asset/ingest', { symbol }).then((r) => r.data),
   patchInstrument: (symbol: string, body: { is_active?: boolean }) =>
     api.patch<Instrument>(`/instruments/${symbol}`, body).then((r) => r.data),
   deleteInstrument: (symbol: string) => api.delete(`/instruments/${symbol}`),
@@ -71,7 +76,9 @@ export const ingestionApi = {
     api.post('/ingestion/stream/start', { symbols }).then((r) => r.data),
   streamStop: () => api.post('/ingestion/stream/stop').then((r) => r.data),
   streamStatus: () => api.get('/ingestion/stream/status').then((r) => r.data),
-  listJobs: () => api.get<Job[]>('/ingestion/jobs').then((r) => r.data),
+  listJobs: (params?: { status?: string; limit?: number }) =>
+    api.get<Job[]>('/ingestion/jobs', { params }).then((r) => r.data),
+  listActiveJobs: () => api.get<Job[]>('/ingestion/jobs/active').then((r) => r.data),
   getJob: (id: string) => api.get<Job>(`/ingestion/jobs/${id}`).then((r) => r.data),
   listMacroSeries: (params?: { ingestedOnly?: boolean; query?: string; limit?: number }) =>
     api
@@ -86,6 +93,8 @@ export const ingestionApi = {
   macroBackfill: (seriesIds: string[]) =>
     api.post<{ job_id: string }>('/ingestion/macro/backfill', { series_ids: seriesIds }).then((r) => r.data),
   macroRefresh: () => api.post<{ job_id: string }>('/ingestion/macro/refresh').then((r) => r.data),
+  macroSeedCatalog: () =>
+    api.post<{ job_id: string }>('/ingestion/macro/seed').then((r) => r.data),
   macroObservations: (
     seriesId: string,
     params?: {
@@ -115,4 +124,10 @@ export const marketDataApi = {
     api
       .get<OHLCVQueryResponse>(`/market-data/ohlcv/${symbol}`, { params })
       .then((r) => r.data),
+  getPerformance: (symbol: string) =>
+    api
+      .get<PerformanceResponse>(`/market-data/performance/${symbol}`)
+      .then((r) => r.data),
+  getKpis: (symbol: string) =>
+    api.get<StockKpisResponse>(`/market-data/kpis/${symbol}`).then((r) => r.data),
 };

@@ -1,4 +1,4 @@
-import type { UTCTimestamp } from 'lightweight-charts';
+import type { SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
 import type { OHLCVBar } from '../api/types';
 import { DAILY_PLUS_TIMEFRAMES, INTRADAY_TIMEFRAMES } from '../constants/timeframes';
 
@@ -9,6 +9,17 @@ export type ChartBar = {
   low: number;
   close: number;
 };
+
+export type VolumeBar = {
+  time: string | UTCTimestamp;
+  value: number;
+  color: string;
+};
+
+const UP_COLOR = '#22c55e';
+const DOWN_COLOR = '#ef4444';
+const DIVIDEND_COLOR = '#3b82f6';
+const SPLIT_COLOR = '#a855f7';
 
 export function normalizeChartTime(raw: string, timeframe: string): string | UTCTimestamp {
   if (INTRADAY_TIMEFRAMES.has(timeframe)) {
@@ -33,6 +44,75 @@ export function buildCandleData(records: OHLCVBar[], timeframe: string): ChartBa
   }
 
   return [...byTime.values()].sort((a, b) => (a.time > b.time ? 1 : a.time < b.time ? -1 : 0));
+}
+
+export function buildVolumeData(records: OHLCVBar[], timeframe: string): VolumeBar[] {
+  const sorted = [...records].sort((a, b) => a.time.localeCompare(b.time));
+  const byTime = new Map<string | number, VolumeBar>();
+
+  for (const r of sorted) {
+    const time = normalizeChartTime(r.time, timeframe);
+    const up = r.close >= r.open;
+    byTime.set(time, {
+      time,
+      value: r.volume,
+      color: up ? `${UP_COLOR}99` : `${DOWN_COLOR}99`,
+    });
+  }
+
+  return [...byTime.values()].sort((a, b) => (a.time > b.time ? 1 : a.time < b.time ? -1 : 0));
+}
+
+function splitLabel(factor: number): string {
+  if (factor >= 1) {
+    const whole = Number.isInteger(factor) ? factor.toFixed(0) : factor.toFixed(2);
+    return `${whole}:1`;
+  }
+  const inverse = 1 / factor;
+  const whole = Number.isInteger(inverse) ? inverse.toFixed(0) : inverse.toFixed(2);
+  return `1:${whole}`;
+}
+
+export function buildCorporateActionMarkers(
+  records: OHLCVBar[],
+  timeframe: string,
+): SeriesMarker<Time>[] {
+  if (timeframe !== '1d') {
+    return [];
+  }
+
+  const markers: SeriesMarker<Time>[] = [];
+
+  for (const r of records) {
+    const time = normalizeChartTime(r.time, timeframe) as Time;
+    const divCash = r.div_cash ?? 0;
+    const splitFactor = r.split_factor ?? 1;
+
+    if (divCash > 0) {
+      markers.push({
+        time,
+        position: 'belowBar',
+        color: DIVIDEND_COLOR,
+        shape: 'circle',
+        text: 'D',
+      });
+    }
+    if (splitFactor !== 1) {
+      markers.push({
+        time,
+        position: 'belowBar',
+        color: SPLIT_COLOR,
+        shape: 'square',
+        text: 'S',
+      });
+    }
+  }
+
+  return markers.sort((a, b) => (a.time > b.time ? 1 : a.time < b.time ? -1 : 0));
+}
+
+export function formatSplitTooltip(factor: number): string {
+  return `Split ${splitLabel(factor)}`;
 }
 
 export function isDailyPlusChartTimeframe(timeframe: string): boolean {

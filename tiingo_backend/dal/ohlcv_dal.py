@@ -31,6 +31,9 @@ _SOURCE_PRIORITY: dict[str, list[str]] = {
 }
 
 
+_UPSERT_BATCH_SIZE = 500
+
+
 async def bulk_insert_ohlcv(session: AsyncSession, records: list[OHLCVRecord]) -> int:
     if not records:
         return 0
@@ -39,7 +42,15 @@ async def bulk_insert_ohlcv(session: AsyncSession, records: list[OHLCVRecord]) -
             return await _copy_insert(session, records)
     except Exception as exc:
         logger.warning("ohlcv_copy_failed", error=str(exc))
-        return await _orm_upsert(session, records)
+        return await _orm_upsert_batched(session, records)
+
+
+async def _orm_upsert_batched(session: AsyncSession, records: list[OHLCVRecord]) -> int:
+    total = 0
+    for i in range(0, len(records), _UPSERT_BATCH_SIZE):
+        batch = records[i:i + _UPSERT_BATCH_SIZE]
+        total += await _orm_upsert(session, batch)
+    return total
 
 
 async def _copy_insert(session: AsyncSession, records: list[OHLCVRecord]) -> int:
@@ -51,6 +62,7 @@ async def _copy_insert(session: AsyncSession, records: list[OHLCVRecord]) -> int
             r.time, r.instrument_id, r.timeframe,
             r.open, r.high, r.low, r.close,
             r.volume, r.vwap, r.trade_count, r.source,
+            r.div_cash, r.split_factor,
         )
         for r in records
     ]
@@ -59,7 +71,7 @@ async def _copy_insert(session: AsyncSession, records: list[OHLCVRecord]) -> int
         records=rows,
         columns=[
             "time", "instrument_id", "timeframe", "open", "high", "low", "close",
-            "volume", "vwap", "trade_count", "source",
+            "volume", "vwap", "trade_count", "source", "div_cash", "split_factor",
         ],
     )
     return len(rows)
@@ -71,10 +83,17 @@ async def _orm_upsert(session: AsyncSession, records: list[OHLCVRecord]) -> int:
             time=r.time, instrument_id=r.instrument_id, timeframe=r.timeframe,
             open=r.open, high=r.high, low=r.low, close=r.close,
             volume=r.volume, vwap=r.vwap, trade_count=r.trade_count, source=r.source,
+            div_cash=r.div_cash, split_factor=r.split_factor,
         )
         for r in records
     ])
-    stmt = stmt.on_conflict_do_nothing(constraint="uq_ohlcv")
+    stmt = stmt.on_conflict_do_update(
+        constraint="uq_ohlcv",
+        set_={
+            "div_cash": stmt.excluded.div_cash,
+            "split_factor": stmt.excluded.split_factor,
+        },
+    )
     result = await session.execute(stmt)
     return result.rowcount or 0
 
@@ -137,6 +156,8 @@ def _rows_to_bars(rows) -> list[dict]:
             "low": r.low,
             "close": r.close,
             "volume": r.volume,
+            "div_cash": r.div_cash,
+            "split_factor": r.split_factor,
             "source": r.source,
         }
         for r in rows
@@ -271,6 +292,25 @@ async def get_bars_with_resample(
             return bars, resolved
 
     return [], None
+
+
+async def sum_div_cash(
+    session: AsyncSession,
+    instrument_id: int,
+    *,
+    start: datetime,
+    end: datetime,
+    source: str = "tiingo_eod",
+) -> float:
+    q = select(func.coalesce(func.sum(OHLCV.div_cash), 0)).where(
+        OHLCV.instrument_id == instrument_id,
+        OHLCV.timeframe == "1d",
+        OHLCV.source == source,
+        OHLCV.time >= start,
+        OHLCV.time <= end,
+    )
+    result = await session.execute(q)
+    return float(result.scalar_one())
 
 
 def default_start_for_timeframe(timeframe: str) -> datetime:

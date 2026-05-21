@@ -3,6 +3,7 @@ import AppShell from './components/layout/AppShell';
 import IngestionLayout from './pages/IngestionLayout';
 import OverviewTab from './pages/ingestion/OverviewTab';
 import WatchlistTab from './pages/ingestion/WatchlistTab';
+import JobsTab from './pages/ingestion/JobsTab';
 import MarketDataTab from './pages/ingestion/MarketDataTab';
 import LiveStreamTab from './pages/ingestion/LiveStreamTab';
 import NewsTab from './pages/ingestion/NewsTab';
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="ingestion" element={<IngestionLayout />}>
             <Route index element={<OverviewTab />} />
             <Route path="watchlist" element={<WatchlistTab />} />
+            <Route path="jobs" element={<JobsTab />} />
             <Route path="market" element={<MarketDataTab />} />
             <Route path="stream" element={<LiveStreamTab />} />
             <Route path="news" element={<NewsTab />} />

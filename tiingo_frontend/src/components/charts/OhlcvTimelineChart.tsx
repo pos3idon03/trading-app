@@ -6,7 +6,11 @@ import {
   type ISeriesApi,
 } from 'lightweight-charts';
 import type { OHLCVBar } from '../../api/types';
-import { buildCandleData } from '../../utils/ohlcvChartData';
+import {
+  buildCandleData,
+  buildCorporateActionMarkers,
+  buildVolumeData,
+} from '../../utils/ohlcvChartData';
 
 interface OhlcvTimelineChartProps {
   records: OHLCVBar[];
@@ -17,11 +21,12 @@ interface OhlcvTimelineChartProps {
 export default function OhlcvTimelineChart({
   records,
   timeframe,
-  height = 420,
+  height = 520,
 }: OhlcvTimelineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -39,6 +44,10 @@ export default function OhlcvTimelineChart({
       height,
     });
 
+    chart.priceScale('right').applyOptions({
+      scaleMargins: { top: 0.05, bottom: 0.28 },
+    });
+
     const series = chart.addCandlestickSeries({
       upColor: '#22c55e',
       downColor: '#ef4444',
@@ -47,8 +56,18 @@ export default function OhlcvTimelineChart({
       wickDownColor: '#ef4444',
     });
 
+    const volumeSeries = chart.addHistogramSeries({
+      priceFormat: { type: 'volume' },
+      priceScaleId: '',
+    });
+
+    chart.priceScale('').applyOptions({
+      scaleMargins: { top: 0.78, bottom: 0 },
+    });
+
     chartRef.current = chart;
     seriesRef.current = series;
+    volumeRef.current = volumeSeries;
 
     const observer = new ResizeObserver(() => {
       if (containerRef.current) {
@@ -62,13 +81,19 @@ export default function OhlcvTimelineChart({
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      volumeRef.current = null;
     };
   }, [height]);
 
   useEffect(() => {
-    if (!seriesRef.current) return;
-    const data = buildCandleData(records, timeframe);
-    seriesRef.current.setData(data);
+    if (!seriesRef.current || !volumeRef.current) return;
+    const candles = buildCandleData(records, timeframe);
+    const volume = buildVolumeData(records, timeframe);
+    const markers = buildCorporateActionMarkers(records, timeframe);
+
+    seriesRef.current.setData(candles);
+    volumeRef.current.setData(volume);
+    seriesRef.current.setMarkers(markers);
     chartRef.current?.timeScale().fitContent();
   }, [records, timeframe]);
 
@@ -81,9 +106,23 @@ export default function OhlcvTimelineChart({
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="w-full border border-slate-800 rounded-lg overflow-hidden bg-surface-900"
-    />
+    <div className="space-y-2">
+      {timeframe === '1d' && (
+        <div className="flex gap-4 text-xs text-slate-500">
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-full bg-blue-500" />
+            Dividend (D)
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-sm bg-purple-500" />
+            Split (S)
+          </span>
+        </div>
+      )}
+      <div
+        ref={containerRef}
+        className="w-full border border-slate-800 rounded-lg overflow-hidden bg-surface-900"
+      />
+    </div>
   );
 }
