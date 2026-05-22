@@ -21,6 +21,10 @@ from features.market_data.stock_kpis import load_stock_kpis
 router = APIRouter(prefix="/market-data", tags=["market-data"])
 
 
+def _ensure_utc(value: datetime) -> datetime:
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
 @router.get("/ohlcv/{symbol}", response_model=OHLCVQueryResponse)
 async def get_ohlcv_by_symbol(
     symbol: str,
@@ -41,12 +45,12 @@ async def get_ohlcv_by_symbol(
     if not instrument:
         raise HTTPException(status_code=404, detail=f"Instrument not found: {symbol.upper()}")
 
-    effective_end = end or datetime.now(timezone.utc)
-    if start is not None and start > effective_end:
+    effective_end = _ensure_utc(end) if end else datetime.now(timezone.utc)
+    effective_start = _ensure_utc(start) if start is not None else None
+    if effective_start is not None and effective_start > effective_end:
         raise HTTPException(status_code=400, detail="start must be before or equal to end")
 
     fetch_tail = is_tail_timeframe(timeframe)
-    effective_start = start
     if effective_start is None and not fetch_tail:
         effective_start = ohlcv_dal.default_start_for_timeframe(timeframe)
 

@@ -22,6 +22,11 @@ const DASHBOARD_ROUTES = [
   { path: '/dashboard/macro?tab=standalone', label: 'Macro standalone tab' },
 ];
 
+const BACKTESTING_ROUTES = [
+  { path: '/backtesting/algos', label: 'Algos' },
+  { path: '/backtesting/algos/AAPL', label: 'Algos symbol' },
+];
+
 describe('route paths', () => {
   it('defines unique ingestion tab paths', () => {
     const paths = INGESTION_TABS.map((t) => t.path);
@@ -31,6 +36,15 @@ describe('route paths', () => {
   it('includes dashboard asset path params', () => {
     expect(DASHBOARD_ROUTES.some((r) => r.path.includes('/dashboard/stocks/AAPL'))).toBe(true);
     expect(DASHBOARD_ROUTES.some((r) => r.path.includes('/dashboard/macro/GDP'))).toBe(true);
+  });
+
+  it('defines unique backtesting route paths', () => {
+    const paths = BACKTESTING_ROUTES.map((r) => r.path);
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  it('includes backtesting symbol path param', () => {
+    expect(BACKTESTING_ROUTES.some((r) => r.path.includes('/backtesting/algos/AAPL'))).toBe(true);
   });
 });
 

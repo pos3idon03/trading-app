@@ -6,6 +6,7 @@ from features.market_data.ohlcv_resample import (
     SUPPORTED_TIMEFRAMES,
     compute_resample_start,
     is_tail_timeframe,
+    resample_source_candidates,
     resolve_ohlcv_query,
 )
 
@@ -28,9 +29,11 @@ class TestResolveOhlcvQuery:
         assert plan.source_timeframe == "1m"
         assert plan.bucket_interval == timedelta(hours=1)
 
-    def test_4h_resample(self):
+    def test_4h_resample_prefers_1h_source(self):
         plan = resolve_ohlcv_query("4h")
+        assert plan.source_timeframe == "1h"
         assert plan.bucket_interval == timedelta(hours=4)
+        assert resample_source_candidates("4h") == ("1h", "1m", "5m")
 
     def test_1w_resample_from_daily(self):
         plan = resolve_ohlcv_query("1w")

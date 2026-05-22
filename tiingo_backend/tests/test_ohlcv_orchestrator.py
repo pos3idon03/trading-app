@@ -290,3 +290,44 @@ async def test_backfill_continues_after_timeframe_error():
     assert result["status"] == "partial"
     assert len(result["errors"]) == 1
     assert result["errors"][0]["timeframe"] == "1d"
+
+
+@pytest.mark.asyncio
+async def test_backfill_1h_persists_derived_4h():
+    inst = {
+        "id": 2,
+        "symbol": "MSFT",
+        "tiingo_ticker": "MSFT",
+        "asset_type": "stock",
+    }
+    request = OHLCVBackfillRequest(
+        symbols=["MSFT"],
+        timeframes=["1h"],
+        sources=["tiingo_iex"],
+    )
+    session = AsyncMock()
+
+    with patch(
+        "features.ingestion.ohlcv_orchestrator.instrument_dal.get_by_symbol",
+        new=AsyncMock(return_value=inst),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.check_and_increment",
+        new=AsyncMock(),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.ohlcv_dal.get_latest_timestamp",
+        new=AsyncMock(return_value=None),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.iex_client.fetch_iex_bars",
+        new=AsyncMock(return_value=[object()]),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.ohlcv_dal.bulk_insert_ohlcv",
+        new=AsyncMock(return_value=10),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.persist_derived_intraday_bars",
+        new=AsyncMock(return_value=5),
+    ) as mock_derived:
+        result = await _backfill_one(session, "MSFT", request, intraday_days=90)
+
+    assert result["status"] == "ok"
+    assert result["inserted"] == 15
+    mock_derived.assert_awaited_once()

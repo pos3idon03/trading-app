@@ -61,10 +61,19 @@ async def ohlcv_backfill(
 
 
 @router.get("/ohlcv/coverage/{symbol}")
-async def ohlcv_coverage(symbol: str, timeframe: str = "1d", session: AsyncSession = Depends(get_db)):
+async def ohlcv_coverage(
+    symbol: str,
+    timeframe: str = "1d",
+    effective: bool = Query(default=False),
+    session: AsyncSession = Depends(get_db),
+):
     inst = await instrument_dal.get_by_symbol(session, symbol)
     if not inst:
         raise HTTPException(404, "Instrument not found")
+    if effective:
+        from features.market_data.effective_coverage import get_effective_coverage
+
+        return await get_effective_coverage(session, inst["id"], timeframe)
     return await ohlcv_dal.get_coverage(session, inst["id"], timeframe)
 
 

@@ -1,4 +1,5 @@
 import type { SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
+import type { BacktestTrade } from '../api/backtestTypes';
 import type { OHLCVBar } from '../api/types';
 import { DAILY_PLUS_TIMEFRAMES, INTRADAY_TIMEFRAMES } from '../constants/timeframes';
 
@@ -20,6 +21,8 @@ const UP_COLOR = '#22c55e';
 const DOWN_COLOR = '#ef4444';
 const DIVIDEND_COLOR = '#3b82f6';
 const SPLIT_COLOR = '#a855f7';
+const ENTRY_COLOR = '#22c55e';
+const EXIT_COLOR = '#ef4444';
 
 export function normalizeChartTime(raw: string, timeframe: string): string | UTCTimestamp {
   if (INTRADAY_TIMEFRAMES.has(timeframe)) {
@@ -109,6 +112,39 @@ export function buildCorporateActionMarkers(
   }
 
   return markers.sort((a, b) => (a.time > b.time ? 1 : a.time < b.time ? -1 : 0));
+}
+
+export function buildTradeMarkers(trades: BacktestTrade[], timeframe: string): SeriesMarker<Time>[] {
+  if (!trades.length) {
+    return [];
+  }
+
+  const markers: SeriesMarker<Time>[] = [];
+  for (const trade of trades) {
+    markers.push({
+      time: normalizeChartTime(trade.entry_date, timeframe) as Time,
+      position: 'belowBar',
+      color: ENTRY_COLOR,
+      shape: 'arrowUp',
+      text: 'B',
+    });
+    markers.push({
+      time: normalizeChartTime(trade.exit_date, timeframe) as Time,
+      position: 'aboveBar',
+      color: EXIT_COLOR,
+      shape: 'arrowDown',
+      text: 'S',
+    });
+  }
+
+  return markers.sort((a, b) => (a.time > b.time ? 1 : a.time < b.time ? -1 : 0));
+}
+
+export function mergeChartMarkers(
+  corporate: SeriesMarker<Time>[],
+  trades: SeriesMarker<Time>[],
+): SeriesMarker<Time>[] {
+  return [...corporate, ...trades].sort((a, b) => (a.time > b.time ? 1 : a.time < b.time ? -1 : 0));
 }
 
 export function formatSplitTooltip(factor: number): string {

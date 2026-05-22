@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     tiingo_hourly_limit: int = 9500
     tiingo_daily_limit: int = 95000
     ingest_concurrency: int = 8
-    iex_backfill_days: int = 90
+    iex_backfill_days: int = 120
     news_interval_minutes: int = 20
 
     redis_url: str = Field(default="redis://redis:6379", validation_alias="REDIS_URL")

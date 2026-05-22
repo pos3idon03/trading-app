@@ -5,23 +5,28 @@ import {
   type IChartApi,
   type ISeriesApi,
 } from 'lightweight-charts';
+import type { BacktestTrade } from '../../api/backtestTypes';
 import type { OHLCVBar } from '../../api/types';
 import {
   buildCandleData,
   buildCorporateActionMarkers,
+  buildTradeMarkers,
   buildVolumeData,
+  mergeChartMarkers,
 } from '../../utils/ohlcvChartData';
 
 interface OhlcvTimelineChartProps {
   records: OHLCVBar[];
   timeframe: string;
   height?: number;
+  trades?: BacktestTrade[];
 }
 
 export default function OhlcvTimelineChart({
   records,
   timeframe,
   height = 520,
+  trades = [],
 }: OhlcvTimelineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -89,13 +94,15 @@ export default function OhlcvTimelineChart({
     if (!seriesRef.current || !volumeRef.current) return;
     const candles = buildCandleData(records, timeframe);
     const volume = buildVolumeData(records, timeframe);
-    const markers = buildCorporateActionMarkers(records, timeframe);
+    const corporateMarkers = buildCorporateActionMarkers(records, timeframe);
+    const tradeMarkers = buildTradeMarkers(trades, timeframe);
+    const markers = mergeChartMarkers(corporateMarkers, tradeMarkers);
 
     seriesRef.current.setData(candles);
     volumeRef.current.setData(volume);
     seriesRef.current.setMarkers(markers);
     chartRef.current?.timeScale().fitContent();
-  }, [records, timeframe]);
+  }, [records, timeframe, trades]);
 
   if (!records.length) {
     return (
@@ -108,7 +115,7 @@ export default function OhlcvTimelineChart({
   return (
     <div className="space-y-2">
       {timeframe === '1d' && (
-        <div className="flex gap-4 text-xs text-slate-500">
+        <div className="flex flex-wrap gap-4 text-xs text-slate-500">
           <span className="flex items-center gap-1">
             <span className="inline-block w-2 h-2 rounded-full bg-blue-500" />
             Dividend (D)
@@ -117,6 +124,18 @@ export default function OhlcvTimelineChart({
             <span className="inline-block w-2 h-2 rounded-sm bg-purple-500" />
             Split (S)
           </span>
+          {trades.length > 0 && (
+            <>
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+                Entry (B)
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
+                Exit (S)
+              </span>
+            </>
+          )}
         </div>
       )}
       <div

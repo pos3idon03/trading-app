@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import get_settings
 from dal import instrument_dal, job_dal, ohlcv_dal
 from dtos.market_data_dto import OHLCVBackfillRequest
+from features.ingestion.intraday_aggregate import persist_derived_intraday_bars
 from features.tiingo import crypto_client, eod_client, iex_client
 from utils.logging import get_logger
 from utils.rate_limiter import RateLimitExceeded, check_and_increment
@@ -171,6 +172,16 @@ async def _backfill_timeframe(
             await check_and_increment(session)
             recs = await iex_client.fetch_iex_bars(ticker, iid, timeframe, start, end)
             inserted = await ohlcv_dal.bulk_insert_ohlcv(session, recs)
+            if timeframe == "1h" and inserted > 0:
+                derived = await persist_derived_intraday_bars(
+                    session,
+                    iid,
+                    source_timeframe="1h",
+                    source="tiingo_iex",
+                    start=start,
+                    end=end,
+                )
+                inserted += derived
             return inserted, None, False
         return 0, None, False
     except Exception as exc:

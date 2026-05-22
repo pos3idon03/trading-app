@@ -9,8 +9,8 @@ from dtos.market_data_dto import OHLCVRecord
 from features.market_data.ohlcv_resample import (
     compute_resample_start,
     get_resampled_bars,
-    intraday_source_candidates,
     is_tail_timeframe,
+    resample_source_candidates,
     resolve_ohlcv_query,
 )
 from models.market_data import OHLCV
@@ -244,11 +244,7 @@ async def get_bars_with_resample(
         explicit_start=start,
     )
 
-    source_candidates = (
-        intraday_source_candidates()
-        if plan.source_timeframe in intraday_source_candidates()
-        else (plan.source_timeframe,)
-    )
+    source_candidates = resample_source_candidates(timeframe)
 
     for source_tf in source_candidates:
         resolved = await resolve_best_source(session, instrument_id, source_tf, source)

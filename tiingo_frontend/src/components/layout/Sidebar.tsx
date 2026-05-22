@@ -52,6 +52,17 @@ export default function Sidebar() {
             </NavLink>
           </div>
         </div>
+
+        <div>
+          <p className="px-3 mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Backtesting
+          </p>
+          <div className="space-y-1">
+            <NavLink to="/backtesting/algos" className={subLinkClass}>
+              Algos
+            </NavLink>
+          </div>
+        </div>
       </nav>
     </aside>
   );

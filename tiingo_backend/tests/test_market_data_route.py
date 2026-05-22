@@ -126,6 +126,37 @@ async def test_get_ohlcv_resample_fallback():
 
 
 @pytest.mark.asyncio
+async def test_get_ohlcv_accepts_naive_date_only_start():
+    instrument = {"id": 1, "symbol": "IBM"}
+    bars = [
+        {
+            "time": datetime(2024, 6, 1, tzinfo=timezone.utc),
+            "open": 190.0,
+            "high": 195.0,
+            "low": 189.0,
+            "close": 194.0,
+            "volume": 5000,
+            "source": "tiingo_eod",
+        }
+    ]
+
+    with (
+        patch("routes.market_data.instrument_dal.get_by_symbol", new=AsyncMock(return_value=instrument)),
+        patch(
+            "routes.market_data.ohlcv_dal.get_bars_with_resample",
+            new=AsyncMock(return_value=(bars, "tiingo_eod")),
+        ) as mock_resample,
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/v1/market-data/ohlcv/IBM?timeframe=1d&start=2020-01-01")
+
+    assert resp.status_code == 200
+    kwargs = mock_resample.await_args.kwargs
+    assert kwargs["start"].tzinfo == timezone.utc
+
+
+@pytest.mark.asyncio
 async def test_get_ohlcv_daily_uses_full_history():
     instrument = {"id": 1, "symbol": "AAPL"}
     bars = [{"time": datetime(2016, 1, 1, tzinfo=timezone.utc), "open": 1, "high": 2, "low": 0.5, "close": 1.5, "volume": 1, "source": "tiingo_eod"}]

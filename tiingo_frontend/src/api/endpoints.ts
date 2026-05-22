@@ -16,6 +16,12 @@ import type {
   StockKpisResponse,
   TickerSearchResponse,
 } from './types';
+import type {
+  BacktestResultsResponse,
+  BacktestRunRequest,
+  BacktestRunResponse,
+  StrategyCatalogResponse,
+} from './backtestTypes';
 
 export const ingestionApi = {
   getStatus: () => api.get<IngestionStatus>('/ingestion/status').then((r) => r.data),
@@ -47,8 +53,10 @@ export const ingestionApi = {
   deleteInstrument: (symbol: string) => api.delete(`/instruments/${symbol}`),
   backfillOhlcv: (body: Record<string, unknown>) =>
     api.post<{ job_id: string }>('/ingestion/ohlcv/backfill', body).then((r) => r.data),
-  getCoverage: (symbol: string, timeframe = '1d') =>
-    api.get(`/ingestion/ohlcv/coverage/${symbol}`, { params: { timeframe } }).then((r) => r.data),
+  getCoverage: (symbol: string, timeframe = '1d', effective = false) =>
+    api
+      .get(`/ingestion/ohlcv/coverage/${symbol}`, { params: { timeframe, effective } })
+      .then((r) => r.data),
   runNews: (body: Record<string, unknown>) =>
     api.post<{ job_id: string }>('/ingestion/news/run', body).then((r) => r.data),
   listNews: (limit = 50) =>
@@ -144,4 +152,13 @@ export const marketDataApi = {
         params: { category },
       })
       .then((r) => r.data),
+};
+
+export const backtestApi = {
+  listStrategies: () =>
+    api.get<StrategyCatalogResponse>('/backtest/strategies').then((r) => r.data),
+  run: (body: BacktestRunRequest) =>
+    api.post<BacktestRunResponse>('/backtest/run', body).then((r) => r.data),
+  getResults: (id: string) =>
+    api.get<BacktestResultsResponse>(`/backtest/${id}/results`).then((r) => r.data),
 };

@@ -16,7 +16,14 @@ _INTRADAY_RESAMPLE: dict[str, timedelta] = {
     "4h": timedelta(hours=4),
 }
 
-_INTRADAY_SOURCE_PRIORITY = ("1m", "5m")
+_DEFAULT_INTRADAY_SOURCES = ("1m", "5m")
+
+_RESAMPLE_SOURCE_PRIORITY: dict[str, tuple[str, ...]] = {
+    "15m": _DEFAULT_INTRADAY_SOURCES,
+    "30m": _DEFAULT_INTRADAY_SOURCES,
+    "1h": _DEFAULT_INTRADAY_SOURCES,
+    "4h": ("1h", "1m", "5m"),
+}
 
 _TAIL_WINDOW_BUFFER = 1.2
 
@@ -32,8 +39,9 @@ def resolve_ohlcv_query(timeframe: str) -> OhlcvQueryPlan:
         raise ValueError(f"Unsupported timeframe: {timeframe}")
 
     if timeframe in _INTRADAY_RESAMPLE:
+        sources = resample_source_candidates(timeframe)
         return OhlcvQueryPlan(
-            source_timeframe=_INTRADAY_SOURCE_PRIORITY[0],
+            source_timeframe=sources[0],
             bucket_interval=_INTRADAY_RESAMPLE[timeframe],
         )
 
@@ -46,8 +54,18 @@ def resolve_ohlcv_query(timeframe: str) -> OhlcvQueryPlan:
     return OhlcvQueryPlan(source_timeframe=timeframe)
 
 
-def intraday_source_candidates() -> tuple[str, ...]:
-    return _INTRADAY_SOURCE_PRIORITY
+def resample_source_candidates(timeframe: str) -> tuple[str, ...]:
+    if timeframe in _RESAMPLE_SOURCE_PRIORITY:
+        return _RESAMPLE_SOURCE_PRIORITY[timeframe]
+    if timeframe in _INTRADAY_RESAMPLE:
+        return _DEFAULT_INTRADAY_SOURCES
+    return (timeframe,)
+
+
+def intraday_source_candidates(timeframe: str | None = None) -> tuple[str, ...]:
+    if timeframe is not None:
+        return resample_source_candidates(timeframe)
+    return _DEFAULT_INTRADAY_SOURCES
 
 
 def is_tail_timeframe(timeframe: str) -> bool:

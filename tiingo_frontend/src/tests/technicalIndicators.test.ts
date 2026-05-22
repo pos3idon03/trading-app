@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildStandaloneChartData,
   computeEMA,
+  computeRSI,
   computeSMA,
   trendSeriesKey,
 } from '../utils/technicalIndicators';
@@ -21,6 +22,20 @@ describe('computeEMA', () => {
     const result = computeEMA([1, 2, 3, 4, 5], 3);
     expect(result.slice(0, 2)).toEqual([null, null]);
     expect(result[2]).toBeCloseTo(2, 5);
+  });
+});
+
+describe('computeRSI', () => {
+  it('returns null until period is satisfied', () => {
+    const result = computeRSI([1, 2, 3, 4, 5, 6], 3);
+    expect(result.slice(0, 3)).toEqual([null, null, null]);
+    expect(result[3]).not.toBeNull();
+  });
+
+  it('returns 100 when only gains', () => {
+    const values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+    const result = computeRSI(values, 14);
+    expect(result[result.length - 1]).toBe(100);
   });
 });
 
