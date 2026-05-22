@@ -185,13 +185,59 @@ async def test_backfill_stock_uses_eod_and_iex():
     ) as mock_iex, patch(
         "features.ingestion.ohlcv_orchestrator.ohlcv_dal.bulk_insert_ohlcv",
         new=AsyncMock(return_value=0),
-    ):
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.refresh_eod_corporate_actions",
+        new=AsyncMock(return_value={"status": "ok"}),
+    ) as mock_refresh:
         result = await _backfill_one(session, "AAPL", request, intraday_days=90)
 
     assert result["status"] == "ok"
     mock_eod.assert_awaited_once()
     mock_iex.assert_awaited_once()
     mock_crypto.assert_not_awaited()
+    mock_refresh.assert_awaited_once_with(session, "AAPL")
+    assert result["corporate_actions"]["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_backfill_etf_triggers_corporate_actions_refresh():
+    inst = {
+        "id": 4,
+        "symbol": "QQQ",
+        "tiingo_ticker": "QQQ",
+        "asset_type": "etf",
+    }
+    request = OHLCVBackfillRequest(
+        symbols=["QQQ"],
+        timeframes=["1d"],
+        sources=["tiingo_eod"],
+    )
+    session = AsyncMock()
+
+    with patch(
+        "features.ingestion.ohlcv_orchestrator.instrument_dal.get_by_symbol",
+        new=AsyncMock(return_value=inst),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.check_and_increment",
+        new=AsyncMock(),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.ohlcv_dal.get_latest_timestamp",
+        new=AsyncMock(return_value=None),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.eod_client.fetch_eod_bars",
+        new=AsyncMock(return_value=[]),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.ohlcv_dal.bulk_insert_ohlcv",
+        new=AsyncMock(return_value=0),
+    ), patch(
+        "features.ingestion.ohlcv_orchestrator.refresh_eod_corporate_actions",
+        new=AsyncMock(return_value={"status": "ok", "dividend_bars": 4}),
+    ) as mock_refresh:
+        result = await _backfill_one(session, "QQQ", request, intraday_days=90)
+
+    assert result["status"] == "ok"
+    mock_refresh.assert_awaited_once_with(session, "QQQ")
+    assert result["corporate_actions"]["dividend_bars"] == 4
 
 
 def test_has_partial_ohlcv_results_detects_rate_limited():

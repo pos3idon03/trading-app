@@ -5,6 +5,7 @@ from typing import Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal import fundamentals_dal, ohlcv_dal
+from features.market_data.dividend_yield import resolve_dividend_yield
 
 KpiFormat = Literal["ratio", "percent", "currency", "perShare"]
 
@@ -93,6 +94,9 @@ async def _latest_overview_metrics(
 async def load_stock_kpis(
     session: AsyncSession,
     instrument_id: int,
+    *,
+    symbol: str | None = None,
+    tiingo_ticker: str | None = None,
 ) -> tuple[float | None, datetime | None, list[KpiItem]]:
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=400)
@@ -112,11 +116,19 @@ async def load_stock_kpis(
     price = bars[-1]["close"]
     as_of = bars[-1]["time"]
 
-    div_start = end - timedelta(days=365)
-    div_sum = await ohlcv_dal.sum_div_cash(
-        session, instrument_id, start=div_start, end=end,
-    )
-    div_yield = (div_sum / price * 100.0) if price > 0 else None
+    if symbol:
+        div_yield = await resolve_dividend_yield(
+            session,
+            instrument_id,
+            symbol=symbol,
+            tiingo_ticker=tiingo_ticker,
+        )
+    else:
+        div_start = end - timedelta(days=365)
+        div_sum = await ohlcv_dal.sum_div_cash(
+            session, instrument_id, start=div_start, end=end,
+        )
+        div_yield = (div_sum / price * 100.0) if price > 0 else None
 
     eps_rows = await fundamentals_dal.list_fundamentals_for_symbol(
         session,

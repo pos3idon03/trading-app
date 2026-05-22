@@ -10,6 +10,8 @@ import {
 const DEBOUNCE_MS = 300;
 const INSTRUMENT_TYPES = ['stock', 'etf', 'crypto'];
 
+type SearchSource = 'macro' | 'instrument';
+
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -30,6 +32,8 @@ interface UnifiedSeriesSearchProps {
   placeholder?: string;
   className?: string;
   disabled?: boolean;
+  sources?: SearchSource[];
+  instrumentTypes?: string[];
 }
 
 export default function UnifiedSeriesSearch({
@@ -38,7 +42,12 @@ export default function UnifiedSeriesSearch({
   placeholder = 'Search macro, stock, ETF, or crypto',
   className = '',
   disabled = false,
+  sources = ['macro', 'instrument'],
+  instrumentTypes = INSTRUMENT_TYPES,
 }: UnifiedSeriesSearchProps) {
+  const includeMacro = sources.includes('macro');
+  const includeInstrument = sources.includes('instrument');
+
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -70,14 +79,16 @@ export default function UnifiedSeriesSearch({
 
     const q = debouncedQuery.trim();
 
-    const macroPromise = ingestionApi.listMacroSeries({
-      ingestedOnly: true,
-      query: q || undefined,
-      limit: 25,
-    });
+    const macroPromise = includeMacro
+      ? ingestionApi.listMacroSeries({
+          ingestedOnly: true,
+          query: q || undefined,
+          limit: 25,
+        })
+      : Promise.resolve([]);
     const instrumentPromise =
-      q.length > 0
-        ? ingestionApi.searchDbInstruments(q, INSTRUMENT_TYPES, 25)
+      includeInstrument && q.length > 0
+        ? ingestionApi.searchDbInstruments(q, instrumentTypes, 25)
         : Promise.resolve([]);
 
     Promise.all([macroPromise, instrumentPromise])
@@ -114,7 +125,7 @@ export default function UnifiedSeriesSearch({
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, selected, disabled]);
+  }, [debouncedQuery, selected, disabled, includeMacro, includeInstrument, instrumentTypes]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {

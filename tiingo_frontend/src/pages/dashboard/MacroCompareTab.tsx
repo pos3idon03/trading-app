@@ -131,17 +131,17 @@ export default function MacroCompareTab() {
     };
   }, [seriesId, compareId, compareKind, dateRange]);
 
-  const withRegressionTab = (params: URLSearchParams): URLSearchParams => {
-    if (searchParams.get('tab') === 'regression') {
-      params.set('tab', 'regression');
-    }
+  const withActiveTab = (params: URLSearchParams): URLSearchParams => {
+    const tab = searchParams.get('tab');
+    if (tab === 'regression') params.set('tab', 'regression');
+    if (tab === 'standalone') params.set('tab', 'standalone');
     return params;
   };
 
   const handleSelect = (series: MacroSeries | null) => {
     setSelected(series);
     if (series) {
-      const params = withRegressionTab(new URLSearchParams());
+      const params = withActiveTab(new URLSearchParams());
       if (compareId) {
         params.set('compare', compareId);
         if (compareKind === 'instrument') params.set('compareKind', 'instrument');
@@ -149,7 +149,7 @@ export default function MacroCompareTab() {
       const qs = params.toString();
       navigate(`/dashboard/macro/${series.series_id}${qs ? `?${qs}` : ''}`);
     } else {
-      const qs = withRegressionTab(new URLSearchParams()).toString();
+      const qs = withActiveTab(new URLSearchParams()).toString();
       navigate(`/dashboard/macro${qs ? `?${qs}` : ''}`);
     }
   };
@@ -158,7 +158,7 @@ export default function MacroCompareTab() {
     setCompareRef(ref);
     if (!seriesId) return;
 
-    const params = withRegressionTab(new URLSearchParams(searchParams));
+    const params = withActiveTab(new URLSearchParams(searchParams));
     if (ref) {
       params.set('compare', ref.id);
       params.set('compareKind', ref.source === 'instrument' ? 'instrument' : 'macro');

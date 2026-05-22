@@ -19,6 +19,7 @@ const DASHBOARD_ROUTES = [
   { path: '/dashboard/macro', label: 'Macro' },
   { path: '/dashboard/macro/GDP', label: 'Macro series' },
   { path: '/dashboard/macro?tab=regression', label: 'Macro regression tab' },
+  { path: '/dashboard/macro?tab=standalone', label: 'Macro standalone tab' },
 ];
 
 describe('route paths', () => {

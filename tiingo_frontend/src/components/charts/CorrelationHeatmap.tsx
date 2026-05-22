@@ -97,13 +97,14 @@ export default function CorrelationHeatmap({
               const value = values[i]?.[j] ?? null;
               const isDiagonal = i === j;
               const formatted = formatMatrixCell(value, method);
+              const isNullCell = value == null || !Number.isFinite(value);
               return (
                 <div
                   key={`${row}-${col}`}
                   role="gridcell"
-                  className={`p-1 text-center text-[10px] font-mono text-slate-100 ${
-                    isDiagonal ? 'ring-1 ring-inset ring-slate-500' : ''
-                  }`}
+                  className={`p-1 text-center text-[10px] font-mono ${
+                    isNullCell ? 'text-slate-100' : 'text-black'
+                  } ${isDiagonal ? 'ring-1 ring-inset ring-slate-500' : ''}`}
                   style={{ backgroundColor: cellColor(value, min, max, method) }}
                   title={`${row} vs ${col}: ${formatted}`}
                 >

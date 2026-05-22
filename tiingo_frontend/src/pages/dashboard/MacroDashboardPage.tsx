@@ -2,8 +2,10 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import clsx from 'clsx';
 import MacroCompareTab from './MacroCompareTab';
 import MacroRegressionTab from './MacroRegressionTab';
+import MacroStandaloneTab from './MacroStandaloneTab';
 
 const TABS = [
+  { id: 'standalone', label: 'Standalone' },
   { id: 'compare', label: 'Compare' },
   { id: 'regression', label: 'Regression' },
 ] as const;
@@ -11,6 +13,7 @@ const TABS = [
 type TabId = (typeof TABS)[number]['id'];
 
 function activeTab(param: string | null): TabId {
+  if (param === 'standalone') return 'standalone';
   if (param === 'regression') return 'regression';
   return 'compare';
 }
@@ -23,10 +26,14 @@ export default function MacroDashboardPage() {
     const nextParams = new URLSearchParams(searchParams);
     if (next === 'compare') {
       nextParams.delete('tab');
+      nextParams.delete('asset');
     } else {
-      nextParams.set('tab', 'regression');
+      nextParams.set('tab', next);
       nextParams.delete('compare');
       nextParams.delete('compareKind');
+      if (next === 'regression') {
+        nextParams.delete('asset');
+      }
     }
     setSearchParams(nextParams, { replace: true });
   };
@@ -36,7 +43,8 @@ export default function MacroDashboardPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-100">Macro Dashboard</h1>
         <p className="text-slate-400 text-sm mt-1">
-          Compare FRED macro series with market instruments, or run cross-series regression analysis.
+          Analyze macro series standalone with trend overlays, compare with market instruments, or
+          run cross-series regression analysis.
         </p>
       </div>
 
@@ -58,7 +66,9 @@ export default function MacroDashboardPage() {
         ))}
       </nav>
 
-      {tab === 'compare' ? <MacroCompareTab /> : <MacroRegressionTab />}
+      {tab === 'standalone' && <MacroStandaloneTab />}
+      {tab === 'compare' && <MacroCompareTab />}
+      {tab === 'regression' && <MacroRegressionTab />}
     </div>
   );
 }

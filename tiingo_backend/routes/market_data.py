@@ -117,7 +117,12 @@ async def get_stock_kpis(
     if not instrument:
         raise HTTPException(status_code=404, detail=f"Instrument not found: {symbol.upper()}")
 
-    price, as_of, kpis = await load_stock_kpis(session, instrument["id"])
+    price, as_of, kpis = await load_stock_kpis(
+        session,
+        instrument["id"],
+        symbol=instrument["symbol"],
+        tiingo_ticker=instrument.get("tiingo_ticker"),
+    )
     return StockKpisResponseDTO(
         symbol=instrument["symbol"],
         as_of=as_of,

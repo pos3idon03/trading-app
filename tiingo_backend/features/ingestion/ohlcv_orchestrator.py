@@ -140,7 +140,7 @@ async def _backfill_timeframe(
     asset_type: str,
     sources: list[str],
     intraday_days: int,
-) -> tuple[int, str | None]:
+) -> tuple[int, str | None, bool]:
     use_crypto = asset_type == "crypto" and "tiingo_crypto" in sources
     try:
         if timeframe == "1d":
@@ -148,7 +148,7 @@ async def _backfill_timeframe(
                 inserted = await _backfill_crypto(
                     session, symbol, iid, ticker, "1d", request, intraday_days
                 )
-                return inserted, None
+                return inserted, None, False
             if "tiingo_eod" in sources:
                 start = await _resolve_start(
                     session, iid, "1d", "tiingo_eod", request.start_date, years=_EOD_HISTORY_YEARS
@@ -156,14 +156,14 @@ async def _backfill_timeframe(
                 await check_and_increment(session)
                 recs = await eod_client.fetch_eod_bars(ticker, iid, start, end)
                 inserted = await ohlcv_dal.bulk_insert_ohlcv(session, recs)
-                return inserted, None
-            return 0, None
+                return inserted, None, True
+            return 0, None, False
 
         if use_crypto:
             inserted = await _backfill_crypto(
                 session, symbol, iid, ticker, timeframe, request, intraday_days
             )
-            return inserted, None
+            return inserted, None, False
         if "tiingo_iex" in sources:
             start = await _resolve_start(
                 session, iid, timeframe, "tiingo_iex", request.start_date, days=intraday_days
@@ -171,8 +171,8 @@ async def _backfill_timeframe(
             await check_and_increment(session)
             recs = await iex_client.fetch_iex_bars(ticker, iid, timeframe, start, end)
             inserted = await ohlcv_dal.bulk_insert_ohlcv(session, recs)
-            return inserted, None
-        return 0, None
+            return inserted, None, False
+        return 0, None, False
     except Exception as exc:
         logger.error(
             "backfill_timeframe_error",
@@ -180,7 +180,7 @@ async def _backfill_timeframe(
             timeframe=timeframe,
             error=str(exc),
         )
-        return 0, str(exc)
+        return 0, str(exc), False
 
 
 async def _backfill_one(
@@ -198,6 +198,7 @@ async def _backfill_one(
     end = datetime.now(timezone.utc)
     inserted = 0
     errors: list[dict] = []
+    eod_backfilled = False
     asset_type = inst["asset_type"]
     sources = _effective_sources(asset_type, request.sources)
 
@@ -209,10 +210,11 @@ async def _backfill_one(
         ordered = timeframes
 
     for tf in ordered:
-        count, err = await _backfill_timeframe(
+        count, err, did_eod = await _backfill_timeframe(
             session, symbol, iid, ticker, tf, request, end, asset_type, sources, intraday_days
         )
         inserted += count
+        eod_backfilled = eod_backfilled or did_eod
         if err:
             errors.append({"timeframe": tf, "error": err})
 
@@ -220,6 +222,10 @@ async def _backfill_one(
     result: dict = {"symbol": symbol, "inserted": inserted, "status": status}
     if errors:
         result["errors"] = errors
+
+    if eod_backfilled and asset_type != "crypto":
+        result["corporate_actions"] = await refresh_eod_corporate_actions(session, symbol)
+
     return result
 
 
@@ -257,7 +263,7 @@ async def run_ohlcv_backfill(
     for idx, sym in enumerate(symbols):
         try:
             results.append(await _backfill_one(session, sym, request, intraday_days))
-            if request.refresh_corporate_actions:
+            if request.refresh_corporate_actions and "corporate_actions" not in results[-1]:
                 results[-1]["corporate_actions"] = await refresh_eod_corporate_actions(
                     session, sym,
                 )

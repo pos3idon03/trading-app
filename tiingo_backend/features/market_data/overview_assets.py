@@ -6,6 +6,7 @@ from dal import fundamentals_dal, instrument_dal, ohlcv_dal
 from features.market_data.fundamentals_growth import MetricGrowth, compute_metric_growth
 from features.market_data.performance import compute_performance_breakdown
 from features.market_data.performance_service import _PERFORMANCE_LOOKBACK_DAYS
+from features.market_data.dividend_yield import resolve_dividend_yield
 from features.market_data.stock_kpis import load_stock_kpis
 
 _OVERVIEW_PERFORMANCE_PERIODS = ("1W", "1M", "3M", "6M", "YTD", "1Y", "2Y", "5Y")
@@ -66,7 +67,12 @@ async def _load_metric_growth(
 
 
 async def _build_stock_row(session: AsyncSession, instrument: dict) -> dict:
-    _, as_of, kpis = await load_stock_kpis(session, instrument["id"])
+    _, as_of, kpis = await load_stock_kpis(
+        session,
+        instrument["id"],
+        symbol=instrument["symbol"],
+        tiingo_ticker=instrument.get("tiingo_ticker"),
+    )
     bars = await _load_bars(session, instrument["id"])
     perf = _period_map(bars)
 
@@ -103,10 +109,12 @@ async def _build_price_row(session: AsyncSession, instrument: dict) -> dict:
 
     as_of = bars[-1]["time"]
     perf = _period_map(bars)
-    _, _, kpis = await load_stock_kpis(session, instrument["id"])
-    div_yield = _kpi_value(kpis, "dividend_yield")
-    if div_yield is not None and div_yield == 0:
-        div_yield = None
+    div_yield = await resolve_dividend_yield(
+        session,
+        instrument["id"],
+        symbol=instrument["symbol"],
+        tiingo_ticker=instrument.get("tiingo_ticker"),
+    )
 
     return {
         "symbol": instrument["symbol"],
