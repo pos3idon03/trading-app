@@ -21,8 +21,10 @@ const ASSET_TABS = [
 
 const MACRO_TABS = [
   { id: 'all', label: 'All' },
-  { id: 'inflation', label: 'Inflation' },
+  { id: 'growth', label: 'Growth' },
   { id: 'labor', label: 'Labor' },
+  { id: 'inflation', label: 'Inflation' },
+  { id: 'consumer', label: 'Consumer' },
   { id: 'rates', label: 'Rates' },
   { id: 'housing', label: 'Housing' },
   { id: 'energy', label: 'Energy' },

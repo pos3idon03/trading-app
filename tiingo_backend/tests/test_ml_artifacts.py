@@ -1,0 +1,58 @@
+from uuid import uuid4
+
+import pytest
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+
+from features.ml.artifacts import (
+    build_feature_schema,
+    load_model_artifact,
+    save_model_artifact,
+    validate_feature_schema,
+)
+from features.ml.trainer import train_model
+
+
+@pytest.fixture
+def artifact_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("ML_ARTIFACT_DIR", str(tmp_path))
+    from config import get_settings
+
+    get_settings.cache_clear()
+    yield tmp_path
+    get_settings.cache_clear()
+
+
+def test_save_and_load_model_round_trip(artifact_dir):
+    model = LogisticRegression(max_iter=200, random_state=42)
+    model.fit([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6], [0.7, 0.8]], [0, 1, 0, 1])
+    model_id = uuid4()
+
+    path = save_model_artifact(model, model_id)
+    loaded = load_model_artifact(path)
+
+    assert loaded.predict([[0.1, 0.2]]).tolist() == model.predict([[0.1, 0.2]]).tolist()
+
+
+def test_save_and_load_scaled_pipeline_round_trip(artifact_dir):
+    x_rows = [[0.01, 50.0], [0.02, 60.0], [-0.01, 40.0], [0.03, 70.0]]
+    y_rows = [0, 1, 0, 1]
+    trained = train_model("ml_logistic", x_rows, y_rows, {})
+    assert isinstance(trained.model, Pipeline)
+    model_id = uuid4()
+
+    path = save_model_artifact(trained.model, model_id)
+    loaded = load_model_artifact(path)
+
+    assert loaded.predict([[0.01, 50.0]]).tolist() == trained.model.predict([[0.01, 50.0]]).tolist()
+
+
+def test_validate_feature_schema_rejects_mismatch():
+    saved = build_feature_schema(["a", "b", "c"])
+    with pytest.raises(ValueError, match="Feature schema mismatch"):
+        validate_feature_schema(saved, ["a", "c", "b"])
+
+
+def test_validate_feature_schema_accepts_match():
+    saved = build_feature_schema(["a", "b"])
+    validate_feature_schema(saved, ["a", "b"])

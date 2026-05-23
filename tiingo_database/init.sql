@@ -11,3 +11,5 @@ CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 \i /docker-entrypoint-initdb.d/migrations/007_create_api_usage.sql
 \i /docker-entrypoint-initdb.d/migrations/008_add_ohlcv_corporate_fields.sql
 \i /docker-entrypoint-initdb.d/migrations/009_create_backtest_runs.sql
+\i /docker-entrypoint-initdb.d/migrations/011_create_ml_models.sql
+\i /docker-entrypoint-initdb.d/migrations/012_macro_release_dates.sql

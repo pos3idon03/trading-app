@@ -244,7 +244,10 @@ async def get_bars_with_resample(
         explicit_start=start,
     )
 
-    source_candidates = resample_source_candidates(timeframe)
+    if plan.source_timeframe != timeframe:
+        source_candidates = (plan.source_timeframe,)
+    else:
+        source_candidates = resample_source_candidates(timeframe)
 
     for source_tf in source_candidates:
         resolved = await resolve_best_source(session, instrument_id, source_tf, source)

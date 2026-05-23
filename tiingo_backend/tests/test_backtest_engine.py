@@ -1,8 +1,8 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from features.backtesting.engine import run_backtest, run_buy_and_hold_benchmark
+from features.backtesting.engine import run_backtest, run_backtest_with_signals, run_buy_and_hold_benchmark
 from features.backtesting.metrics import compute_metrics
 from features.backtesting.simulator import EquityPoint, SimulationResult, TradeRecord
 
@@ -13,7 +13,7 @@ def _bars(count: int, start_price: float = 100.0, step: float = 1.0) -> list[dic
         price = start_price + (i * step)
         rows.append(
             {
-                "time": datetime(2024, 1, 1 + i, tzinfo=timezone.utc),
+                "time": datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(days=i),
                 "open": price,
                 "high": price + 1,
                 "low": price - 1,
@@ -23,6 +23,20 @@ def _bars(count: int, start_price: float = 100.0, step: float = 1.0) -> list[dic
             }
         )
     return rows
+
+
+def test_run_backtest_with_signals_executes_trades():
+    bars = _bars(5, start_price=100.0, step=0.0)
+    signals = ["buy", "hold", "hold", "sell", "hold"]
+    result = run_backtest_with_signals(bars, signals, 10_000.0, 0.0)
+    assert len(result.equity_curve) == len(bars)
+    assert len(result.trades) == 1
+
+
+def test_run_backtest_with_signals_length_mismatch_raises():
+    bars = _bars(3)
+    with pytest.raises(ValueError):
+        run_backtest_with_signals(bars, ["buy"], 10_000.0, 0.0)
 
 
 def test_buy_and_hold_matches_benchmark_on_uptrend():

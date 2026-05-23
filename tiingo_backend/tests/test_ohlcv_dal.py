@@ -192,3 +192,21 @@ async def test_get_bars_with_resample_4h_tries_1h_before_1m():
     assert bars == resampled
     assert source == "tiingo_iex"
     assert resample_mock.await_args.args[3] == "1h"
+
+
+@pytest.mark.asyncio
+async def test_get_bars_with_resample_1w_uses_daily_source():
+    t1 = datetime(2024, 1, 5, tzinfo=timezone.utc)
+    resampled = [{"time": t1, "open": 1, "high": 2, "low": 0.5, "close": 1.5, "volume": 10, "source": "tiingo_eod"}]
+    session = AsyncMock()
+    resample_mock = AsyncMock(return_value=resampled)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(ohlcv_dal, "get_bars", AsyncMock(return_value=([], None)))
+        mp.setattr(ohlcv_dal, "resolve_best_source", AsyncMock(return_value="tiingo_eod"))
+        mp.setattr("dal.ohlcv_dal.get_resampled_bars", resample_mock)
+        bars, source = await ohlcv_dal.get_bars_with_resample(session, 1, "1w")
+
+    assert bars == resampled
+    assert source == "tiingo_eod"
+    assert resample_mock.await_args.args[3] == "1d"

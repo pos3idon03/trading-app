@@ -46,7 +46,11 @@ async def resolve_dividend_yield(
     *,
     symbol: str,
     tiingo_ticker: str | None = None,
+    use_api: bool = True,
 ) -> float | None:
+    if not use_api:
+        return await _div_cash_yield(session, instrument_id)
+
     ticker = tiingo_ticker or symbol
     try:
         await check_and_increment(session)

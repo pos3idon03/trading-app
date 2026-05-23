@@ -24,3 +24,4 @@ class MacroObservation(Base):
     series_id: Mapped[str] = mapped_column(String, primary_key=True)
     obs_date: Mapped[date] = mapped_column(Date, primary_key=True)
     value: Mapped[float | None] = mapped_column(Double)
+    release_date: Mapped[date | None] = mapped_column(Date, nullable=True)

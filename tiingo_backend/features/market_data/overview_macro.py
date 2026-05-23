@@ -9,9 +9,12 @@ _PERIOD_OFFSETS: dict[str, dict[str, int]] = {
     "Daily": {"1m": 21, "3m": 63, "6m": 126},
     "Weekly": {"1m": 4, "3m": 13, "6m": 26},
     "Monthly": {"1m": 1, "3m": 3, "6m": 6},
+    "Quarterly": {"1m": 1, "3m": 1, "6m": 2},
 }
 _DEFAULT_OFFSETS = _PERIOD_OFFSETS["Monthly"]
-_VALID_CATEGORIES = {"all", "inflation", "labor", "rates", "housing", "energy", "goods"}
+_VALID_CATEGORIES = {
+    "all", "growth", "labor", "inflation", "consumer", "rates", "housing", "energy", "goods",
+}
 
 
 def _offsets_for_frequency(frequency: str | None) -> dict[str, int]:

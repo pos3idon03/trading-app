@@ -61,6 +61,9 @@ export default function Sidebar() {
             <NavLink to="/backtesting/algos" className={subLinkClass}>
               Algos
             </NavLink>
+            <NavLink to="/backtesting/ml" className={subLinkClass}>
+              ML
+            </NavLink>
           </div>
         </div>
       </nav>

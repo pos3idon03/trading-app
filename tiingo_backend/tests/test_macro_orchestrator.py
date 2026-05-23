@@ -1,4 +1,5 @@
 from datetime import date
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -6,10 +7,26 @@ import pytest
 from uuid import uuid4
 
 from features.fred.macro_orchestrator import (
+    backfill_alfred_releases,
     backfill_series,
     has_partial_macro_results,
     refresh_enabled,
 )
+
+
+@contextmanager
+def _patch_release_date_ingest(*, fallback_updated: int = 0):
+    with patch(
+        "features.fred.macro_orchestrator.alfred_client.fetch_initial_release_observations",
+        new=AsyncMock(return_value=[]),
+    ), patch(
+        "features.fred.macro_orchestrator.macro_dal.backfill_same_day_release_dates",
+        new=AsyncMock(return_value=fallback_updated),
+    ), patch(
+        "features.fred.macro_orchestrator.macro_dal.get_release_date_coverage",
+        new=AsyncMock(return_value={"total": 1, "with_release_date": 1, "pct": 100.0}),
+    ):
+        yield
 
 
 @pytest.mark.asyncio
@@ -17,7 +34,7 @@ async def test_backfill_uses_full_fetch():
     session = AsyncMock()
     obs = [{"series_id": "DGS10", "obs_date": date(2024, 1, 1), "value": 4.0}]
 
-    with patch(
+    with _patch_release_date_ingest(), patch(
         "features.fred.macro_orchestrator.seed_catalog",
         new=AsyncMock(return_value=1),
     ), patch(
@@ -42,7 +59,7 @@ async def test_refresh_uses_incremental_when_latest_exists():
     session = AsyncMock()
     obs = [{"series_id": "DGS10", "obs_date": date(2024, 6, 1), "value": 4.5}]
 
-    with patch(
+    with _patch_release_date_ingest(), patch(
         "features.fred.macro_orchestrator.seed_catalog",
         new=AsyncMock(return_value=1),
     ), patch(
@@ -100,7 +117,7 @@ async def test_backfill_updates_progress():
 async def test_refresh_full_fetch_when_no_latest():
     session = AsyncMock()
 
-    with patch(
+    with _patch_release_date_ingest(), patch(
         "features.fred.macro_orchestrator.seed_catalog",
         new=AsyncMock(return_value=1),
     ), patch(
@@ -123,3 +140,53 @@ async def test_refresh_full_fetch_when_no_latest():
 
     mock_all.assert_awaited_once_with("DGS10")
     assert result["DGS10"]["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_alfred_backfill_applies_same_day_fallback_when_alfred_fails():
+    session = AsyncMock()
+
+    with patch(
+        "features.fred.macro_orchestrator.seed_catalog",
+        new=AsyncMock(return_value=1),
+    ), patch(
+        "features.fred.macro_orchestrator.alfred_client.fetch_initial_release_observations",
+        new=AsyncMock(side_effect=RuntimeError("400 Bad Request")),
+    ), patch(
+        "features.fred.macro_orchestrator.macro_dal.backfill_same_day_release_dates",
+        new=AsyncMock(return_value=100),
+    ) as mock_fallback, patch(
+        "features.fred.macro_orchestrator.macro_dal.get_release_date_coverage",
+        new=AsyncMock(return_value={"total": 100, "with_release_date": 100, "pct": 100.0}),
+    ):
+        result = await backfill_alfred_releases(session, ["DFF"], job_id=None)
+
+    mock_fallback.assert_awaited_once_with(session, "DFF")
+    assert result["DFF"]["status"] == "ok"
+    assert result["DFF"]["alfred_updated"] == 0
+    assert result["DFF"]["fallback_updated"] == 100
+    assert result["DFF"]["release_date_coverage_pct"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_alfred_backfill_skips_fallback_for_non_rate_series():
+    session = AsyncMock()
+
+    with patch(
+        "features.fred.macro_orchestrator.seed_catalog",
+        new=AsyncMock(return_value=1),
+    ), patch(
+        "features.fred.macro_orchestrator.alfred_client.fetch_initial_release_observations",
+        new=AsyncMock(return_value=[]),
+    ), patch(
+        "features.fred.macro_orchestrator.macro_dal.backfill_same_day_release_dates",
+        new=AsyncMock(return_value=0),
+    ) as mock_fallback, patch(
+        "features.fred.macro_orchestrator.macro_dal.get_release_date_coverage",
+        new=AsyncMock(return_value={"total": 0, "with_release_date": 0, "pct": 0.0}),
+    ):
+        result = await backfill_alfred_releases(session, ["CPIAUCSL"], job_id=None)
+
+    mock_fallback.assert_not_awaited()
+    assert result["CPIAUCSL"]["fallback_updated"] == 0
+

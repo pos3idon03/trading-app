@@ -76,6 +76,50 @@ def run_backtest(
     )
 
 
+def run_backtest_with_signals(
+    bars: list[dict],
+    signals: list[str],
+    initial_cash: float,
+    commission_bps: float,
+    decision_timeframe: str = "1d",
+) -> SimulationResult:
+    if len(signals) != len(bars):
+        raise ValueError(
+            f"Signal count ({len(signals)}) must match bar count ({len(bars)})"
+        )
+
+    state = PortfolioState(cash=initial_cash)
+    trades: list[TradeRecord] = []
+    equity_curve: list[EquityPoint] = []
+    pending_action: str | None = None
+    peak_equity = initial_cash
+
+    for index, bar in enumerate(bars):
+        apply_corporate_actions(state, bar)
+        _execute_pending(state, bar, pending_action, commission_bps, trades)
+        pending_action = None
+
+        pending_action = _resolve_pending(signals[index], state)
+
+        equity, drawdown = mark_equity(state, bar, peak_equity)
+        peak_equity = max(peak_equity, equity)
+        equity_curve.append(
+            EquityPoint(
+                date=_format_bar_date(bar, decision_timeframe),
+                equity=round(equity, 2),
+                cash=round(state.cash, 2),
+                shares=round(state.shares, 6),
+                drawdown_pct=round(drawdown, 2),
+            )
+        )
+
+    return SimulationResult(
+        equity_curve=equity_curve,
+        trades=trades,
+        final_equity=equity_curve[-1].equity if equity_curve else initial_cash,
+    )
+
+
 def run_buy_and_hold_benchmark(
     bars: list[dict],
     initial_cash: float,

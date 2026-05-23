@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
-from routes import backtest, fundamentals_read, ingestion, instruments, macro, market_data, overview
+from routes import backtest, backtest_ml, fundamentals_read, ingestion, instruments, macro, market_data, overview
 from utils.logging import configure_logging, get_logger, new_correlation_id
 
 settings = get_settings()
@@ -93,3 +93,4 @@ app.include_router(fundamentals_read.router, prefix="/api/v1")
 app.include_router(market_data.router, prefix="/api/v1")
 app.include_router(overview.router, prefix="/api/v1")
 app.include_router(backtest.router, prefix="/api/v1")
+app.include_router(backtest_ml.router, prefix="/api/v1")

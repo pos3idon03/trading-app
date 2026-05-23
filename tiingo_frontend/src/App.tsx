@@ -14,6 +14,7 @@ import CryptoDashboardPage from './pages/dashboard/CryptoDashboardPage';
 import MacroDashboardPage from './pages/dashboard/MacroDashboardPage';
 import OverviewPage from './pages/dashboard/OverviewPage';
 import AlgosPage from './pages/backtesting/AlgosPage';
+import MLPage from './pages/backtesting/MLPage';
 
 export default function App() {
   return (
@@ -41,6 +42,8 @@ export default function App() {
           <Route path="backtesting" element={<Navigate to="/backtesting/algos" replace />} />
           <Route path="backtesting/algos" element={<AlgosPage />} />
           <Route path="backtesting/algos/:symbol" element={<AlgosPage />} />
+          <Route path="backtesting/ml" element={<MLPage />} />
+          <Route path="backtesting/ml/:symbol" element={<MLPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

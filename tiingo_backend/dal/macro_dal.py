@@ -88,11 +88,109 @@ async def bulk_insert_observations(session: AsyncSession, rows: list[dict]) -> i
         stmt = pg_insert(MacroObservation).values(batch)
         stmt = stmt.on_conflict_do_update(
             index_elements=["series_id", "obs_date"],
-            set_={"value": stmt.excluded.value},
+            set_={
+                "value": stmt.excluded.value,
+                "release_date": func.coalesce(
+                    stmt.excluded.release_date,
+                    MacroObservation.release_date,
+                ),
+            },
         )
         result = await session.execute(stmt)
         total += result.rowcount or len(batch)
     return total
+
+
+async def backfill_same_day_release_dates(
+    session: AsyncSession,
+    series_id: str,
+) -> int:
+    from sqlalchemy import update
+
+    result = await session.execute(
+        update(MacroObservation)
+        .where(
+            MacroObservation.series_id == series_id,
+            MacroObservation.release_date.is_(None),
+        )
+        .values(release_date=MacroObservation.obs_date),
+    )
+    return result.rowcount or 0
+
+
+async def bulk_update_release_dates(session: AsyncSession, rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    total = 0
+    for row in rows:
+        from sqlalchemy import update
+
+        result = await session.execute(
+            update(MacroObservation)
+            .where(
+                MacroObservation.series_id == row["series_id"],
+                MacroObservation.obs_date == row["obs_date"],
+            )
+            .values(release_date=row["release_date"], value=row.get("value")),
+        )
+        total += result.rowcount or 0
+    return total
+
+
+async def get_release_date_coverage(
+    session: AsyncSession,
+    series_id: str,
+) -> dict[str, int | float]:
+    batch = await get_release_date_coverage_batch(session, [series_id])
+    return batch.get(series_id, {"total": 0, "with_release_date": 0, "pct": 0.0})
+
+
+async def get_release_date_coverage_batch(
+    session: AsyncSession,
+    series_ids: list[str],
+) -> dict[str, dict[str, int | float]]:
+    if not series_ids:
+        return {}
+
+    total_q = (
+        select(
+            MacroObservation.series_id,
+            func.count().label("total"),
+        )
+        .where(MacroObservation.series_id.in_(series_ids))
+        .group_by(MacroObservation.series_id)
+    )
+    release_q = (
+        select(
+            MacroObservation.series_id,
+            func.count().label("with_release"),
+        )
+        .where(
+            MacroObservation.series_id.in_(series_ids),
+            MacroObservation.release_date.is_not(None),
+        )
+        .group_by(MacroObservation.series_id)
+    )
+    totals = {
+        row.series_id: int(row.total)
+        for row in (await session.execute(total_q)).all()
+    }
+    with_release = {
+        row.series_id: int(row.with_release)
+        for row in (await session.execute(release_q)).all()
+    }
+
+    result: dict[str, dict[str, int | float]] = {}
+    for series_id in series_ids:
+        total = totals.get(series_id, 0)
+        released = with_release.get(series_id, 0)
+        pct = round((released / total) * 100, 2) if total else 0.0
+        result[series_id] = {
+            "total": total,
+            "with_release_date": released,
+            "pct": pct,
+        }
+    return result
 
 
 async def get_latest_obs_date(session: AsyncSession, series_id: str) -> date | None:
@@ -125,7 +223,14 @@ async def get_observations(
     if limit is not None:
         q = q.limit(limit)
     rows = (await session.execute(q)).scalars().all()
-    return [{"obs_date": r.obs_date, "value": r.value} for r in rows]
+    return [
+        {
+            "obs_date": r.obs_date,
+            "value": r.value,
+            "release_date": r.release_date,
+        }
+        for r in rows
+    ]
 
 
 async def get_enabled_series_ids(session: AsyncSession) -> list[str]:

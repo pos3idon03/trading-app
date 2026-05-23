@@ -12,6 +12,7 @@ from dtos.market_data_dto import (
     OHLCVBackfillRequest,
 )
 from features.fred.macro_orchestrator import (
+    backfill_alfred_releases,
     backfill_series,
     has_partial_macro_results,
     refresh_enabled,
@@ -38,7 +39,7 @@ def _resolve_job_status(job_type: str, result: dict) -> str:
         if fund_errors:
             return "partial"
         return "completed"
-    if job_type in ("macro_backfill", "macro_refresh"):
+    if job_type in ("macro_backfill", "macro_refresh", "macro_alfred_backfill"):
         return "partial" if has_partial_macro_results(result) else "completed"
     if job_type == "macro_seed_catalog":
         return "completed"
@@ -88,6 +89,13 @@ async def _dispatch(
     if job_type == "macro_backfill":
         req = MacroBackfillRequest(**params)
         return await backfill_series(session, req.series_ids, job_id=job_id)
+    if job_type == "macro_alfred_backfill":
+        req = MacroBackfillRequest(**params)
+        return await backfill_alfred_releases(session, req.series_ids, job_id=job_id)
     if job_type == "macro_refresh":
         return await refresh_enabled(session, job_id=job_id)
+    if job_type.startswith("ml_"):
+        from features.ml.job_runner import execute_ml_job
+
+        return await execute_ml_job(session, job_type, params, job_id=job_id)
     raise ValueError(f"Unknown job type: {job_type}")

@@ -30,6 +30,7 @@ async def test_build_price_row_uses_distribution_yield():
         10,
         symbol="QQQ",
         tiingo_ticker="QQQ",
+        use_api=False,
     )
 
 

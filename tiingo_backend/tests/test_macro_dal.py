@@ -67,3 +67,15 @@ async def test_get_observations_with_limit():
     rows = await macro_dal.get_observations(session, "DGS10", limit=1, order="desc")
 
     assert len(rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_same_day_release_dates():
+    session = AsyncMock()
+    session.execute.return_value = MagicMock(rowcount=42)
+
+    updated = await macro_dal.backfill_same_day_release_dates(session, "DFF")
+
+    assert updated == 42
+    session.execute.assert_awaited_once()
+

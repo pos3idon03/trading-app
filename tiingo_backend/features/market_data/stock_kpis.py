@@ -97,6 +97,7 @@ async def load_stock_kpis(
     *,
     symbol: str | None = None,
     tiingo_ticker: str | None = None,
+    use_api_yield: bool = True,
 ) -> tuple[float | None, datetime | None, list[KpiItem]]:
     end = datetime.now(timezone.utc)
     start = end - timedelta(days=400)
@@ -122,6 +123,7 @@ async def load_stock_kpis(
             instrument_id,
             symbol=symbol,
             tiingo_ticker=tiingo_ticker,
+            use_api=use_api_yield,
         )
     else:
         div_start = end - timedelta(days=365)

@@ -5,7 +5,7 @@ import type { MacroSeries } from '../../api/types';
 import Spinner from '../../components/Spinner';
 import Toast from '../../components/Toast';
 
-const CATEGORIES = ['inflation', 'labor', 'rates', 'housing', 'energy', 'goods'];
+const CATEGORIES = ['growth', 'labor', 'inflation', 'consumer', 'rates', 'housing', 'energy', 'goods'];
 
 type ToastState = { message: string; variant: 'success' | 'error' };
 
@@ -57,6 +57,13 @@ export default function FredMacroTab() {
     );
   };
 
+  const alfredBackfillSelected = () => {
+    if (selected.size === 0) return;
+    return queueJob('ALFRED release-date backfill', () =>
+      ingestionApi.macroAlfredBackfill([...selected]),
+    );
+  };
+
   const refreshAll = () => queueJob('Macro refresh', () => ingestionApi.macroRefresh());
 
   const seedCatalog = () => queueJob('Catalog seed', () => ingestionApi.macroSeedCatalog());
@@ -91,6 +98,14 @@ export default function FredMacroTab() {
           className="px-4 py-2 bg-brand-600 rounded-lg text-sm disabled:opacity-50"
         >
           Backfill Selected
+        </button>
+        <button
+          type="button"
+          onClick={alfredBackfillSelected}
+          disabled={busy || selected.size === 0}
+          className="px-4 py-2 border border-brand-700 rounded-lg text-sm text-brand-300 disabled:opacity-50"
+        >
+          Backfill ALFRED Dates
         </button>
         <button
           type="button"

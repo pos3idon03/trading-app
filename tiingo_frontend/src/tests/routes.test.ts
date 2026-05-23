@@ -25,6 +25,8 @@ const DASHBOARD_ROUTES = [
 const BACKTESTING_ROUTES = [
   { path: '/backtesting/algos', label: 'Algos' },
   { path: '/backtesting/algos/AAPL', label: 'Algos symbol' },
+  { path: '/backtesting/ml', label: 'ML' },
+  { path: '/backtesting/ml/AAPL', label: 'ML symbol' },
 ];
 
 describe('route paths', () => {
@@ -45,6 +47,7 @@ describe('route paths', () => {
 
   it('includes backtesting symbol path param', () => {
     expect(BACKTESTING_ROUTES.some((r) => r.path.includes('/backtesting/algos/AAPL'))).toBe(true);
+    expect(BACKTESTING_ROUTES.some((r) => r.path.includes('/backtesting/ml/AAPL'))).toBe(true);
   });
 });
 

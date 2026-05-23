@@ -126,6 +126,7 @@ async def get_stock_kpis(
         instrument["id"],
         symbol=instrument["symbol"],
         tiingo_ticker=instrument.get("tiingo_ticker"),
+        use_api_yield=False,
     )
     return StockKpisResponseDTO(
         symbol=instrument["symbol"],

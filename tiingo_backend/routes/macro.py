@@ -43,6 +43,15 @@ async def macro_seed_catalog(session: AsyncSession = Depends(get_db)):
     return {"job_id": str(job["id"]), "status": "accepted"}
 
 
+@router.post("/alfred-backfill", status_code=202)
+async def macro_alfred_backfill(
+    body: MacroBackfillRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    job = await create_and_enqueue_job(session, "macro_alfred_backfill", body.model_dump())
+    return {"job_id": str(job["id"]), "status": "accepted"}
+
+
 @router.post("/refresh", status_code=202)
 async def macro_refresh(session: AsyncSession = Depends(get_db)):
     job = await create_and_enqueue_job(session, "macro_refresh", {})

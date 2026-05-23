@@ -15,7 +15,9 @@ from features.market_data.overview_macro import load_macro_overview
 router = APIRouter(prefix="/market-data/overview", tags=["overview"])
 
 _VALID_ASSET_TYPES = {"stock", "etf", "crypto"}
-_VALID_CATEGORIES = {"all", "inflation", "labor", "rates", "housing", "energy", "goods"}
+_VALID_CATEGORIES = {
+    "all", "growth", "labor", "inflation", "consumer", "rates", "housing", "energy", "goods",
+}
 
 
 def _growth_dto(data: dict | None) -> MetricGrowthDTO | None:

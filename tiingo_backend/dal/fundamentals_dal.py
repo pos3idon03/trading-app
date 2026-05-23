@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import or_, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -66,6 +66,8 @@ async def _query_fundamentals(
     metric_names: list[str] | None,
     order: str,
     limit: int | None,
+    start: date | None = None,
+    end: date | None = None,
 ) -> list[dict]:
     from sqlalchemy import select
 
@@ -74,6 +76,10 @@ async def _query_fundamentals(
         clauses.append(period_clause)
     if metric_names:
         clauses.append(Fundamental.metric_name.in_(metric_names))
+    if start is not None:
+        clauses.append(Fundamental.time >= datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc))
+    if end is not None:
+        clauses.append(Fundamental.time <= datetime.combine(end, datetime.max.time(), tzinfo=timezone.utc))
 
     order_col = Fundamental.time.asc() if order == "asc" else Fundamental.time.desc()
     q = select(Fundamental).where(*clauses).order_by(order_col)
@@ -92,6 +98,8 @@ async def list_fundamentals_for_symbol(
     metric_names: list[str] | None = None,
     order: str = "desc",
     limit: int | None = 200,
+    start: date | None = None,
+    end: date | None = None,
 ) -> list[dict]:
     if period_type == "annual":
         native = await _query_fundamentals(
@@ -101,6 +109,8 @@ async def list_fundamentals_for_symbol(
             metric_names=metric_names,
             order=order,
             limit=limit,
+            start=start,
+            end=end,
         )
         if native:
             return native
@@ -111,6 +121,8 @@ async def list_fundamentals_for_symbol(
             metric_names=metric_names,
             order="asc",
             limit=None,
+            start=start,
+            end=end,
         )
         annual = aggregate_quarterly_to_annual(quarterly)
         annual.sort(key=lambda r: r["time"], reverse=(order == "desc"))
@@ -126,6 +138,8 @@ async def list_fundamentals_for_symbol(
         metric_names=metric_names,
         order=order,
         limit=limit,
+        start=start,
+        end=end,
     )
 
 

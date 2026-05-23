@@ -72,6 +72,7 @@ async def _build_stock_row(session: AsyncSession, instrument: dict) -> dict:
         instrument["id"],
         symbol=instrument["symbol"],
         tiingo_ticker=instrument.get("tiingo_ticker"),
+        use_api_yield=False,
     )
     bars = await _load_bars(session, instrument["id"])
     perf = _period_map(bars)
@@ -114,6 +115,7 @@ async def _build_price_row(session: AsyncSession, instrument: dict) -> dict:
         instrument["id"],
         symbol=instrument["symbol"],
         tiingo_ticker=instrument.get("tiingo_ticker"),
+        use_api=False,
     )
 
     return {

@@ -38,6 +38,7 @@ class Settings(BaseSettings):
         default="2010-01-01",
         validation_alias="CRYPTO_HISTORY_START_DATE",
     )
+    ml_artifact_dir: str = Field(default="./data/ml_models", validation_alias="ML_ARTIFACT_DIR")
 
     @property
     def cors_origins_list(self) -> list[str]:

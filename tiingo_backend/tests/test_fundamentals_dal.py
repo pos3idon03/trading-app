@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -56,6 +56,37 @@ async def test_list_fundamentals_coverage_returns_rows():
     assert rows[0]["symbol"] == "AAPL"
     assert rows[0]["metric_count"] == 42
     assert rows[0]["last_ingested_at"] == t3
+
+
+@pytest.mark.asyncio
+async def test_list_fundamentals_for_symbol_filters_by_date_range():
+    t1 = datetime(2023, 1, 1, tzinfo=timezone.utc)
+    t2 = datetime(2023, 6, 1, tzinfo=timezone.utc)
+    t3 = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    row1 = MagicMock(time=t1, metric_name="revenue", value=1.0, period="2022-Q4", statement_type="incomeStatement")
+    row2 = MagicMock(time=t2, metric_name="revenue", value=2.0, period="2023-Q2", statement_type="incomeStatement")
+    row3 = MagicMock(time=t3, metric_name="revenue", value=3.0, period="2023-Q4", statement_type="incomeStatement")
+
+    session = AsyncMock()
+    result_mock = MagicMock()
+    result_mock.scalars.return_value.all.return_value = [row2]
+    session.execute.return_value = result_mock
+
+    rows = await fundamentals_dal.list_fundamentals_for_symbol(
+        session,
+        instrument_id=1,
+        period_type="quarterly",
+        metric_names=["revenue"],
+        order="asc",
+        limit=None,
+        start=date(2023, 3, 1),
+        end=date(2023, 12, 31),
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["value"] == 2.0
+    session.execute.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -187,7 +187,7 @@ export default function JobsTab() {
               {detail.params && (
                 <div>
                   <p className="text-slate-500 mb-1">Params</p>
-                  <pre className="text-xs bg-surface-800 p-2 rounded overflow-auto max-h-32">
+                  <pre className="text-xs leading-4 bg-surface-800 p-2 rounded overflow-auto max-h-[21rem]">
                     {JSON.stringify(detail.params, null, 2)}
                   </pre>
                 </div>
