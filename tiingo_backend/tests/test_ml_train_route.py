@@ -40,7 +40,11 @@ async def test_list_saved_models_route():
             "feature_mode": "prices_only",
             "feature_schema": {"feature_names": ["ret_1d"], "version": 1},
             "hyperparams": {},
-            "train_metrics": {"accuracy": 0.7},
+            "train_metrics": {
+                "accuracy": 0.7,
+                "training_symbol": "AAPL",
+                "timeframe": "1d",
+            },
             "created_at": now,
         }
     ]
@@ -56,3 +60,5 @@ async def test_list_saved_models_route():
     assert resp.status_code == 200
     assert len(resp.json()["models"]) == 1
     assert resp.json()["models"][0]["id"] == str(model_id)
+    assert resp.json()["models"][0]["symbol"] == "AAPL"
+    assert resp.json()["models"][0]["timeframe"] == "1d"

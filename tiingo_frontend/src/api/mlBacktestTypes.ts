@@ -49,6 +49,7 @@ export interface MlParams {
   xgboost_max_depth?: number;
   xgboost_learning_rate?: number;
   model_id?: string;
+  inference_eval_scope?: 'holdout' | 'in_sample';
 }
 
 export interface MlRunRequest {
@@ -111,6 +112,14 @@ export interface MlSummary {
   simulation_start_bar_index?: number | null;
   simulation_start_date?: string | null;
   pre_oos_bars_excluded?: number | null;
+  evaluation_start_bar_index?: number | null;
+  evaluation_start_date?: string | null;
+  evaluation_reason?: 'first_trade' | 'simulation_start' | string | null;
+  evaluation_scope?: 'holdout' | 'in_sample' | 'walk_forward_oos' | string | null;
+  holdout_bars?: number | null;
+  holdout_start_date?: string | null;
+  holdout_end_date?: string | null;
+  train_end_date?: string | null;
 }
 
 export interface MlRunResponse {
@@ -171,6 +180,8 @@ export interface MlSavedModel {
   feature_schema: Record<string, unknown>;
   hyperparams: Record<string, unknown>;
   train_metrics?: Record<string, unknown> | null;
+  symbol?: string | null;
+  timeframe?: string | null;
   created_at: string;
 }
 
@@ -207,6 +218,21 @@ export interface MlLabelPreview {
   class_distribution: Record<string, number>;
 }
 
+export interface MlWalkForwardReadiness {
+  total_bars: number;
+  warmup_bars: number;
+  valid_feature_rows: number;
+  labeled_rows: number;
+  trainable_rows: number;
+  structural_folds: number;
+  viable_folds: number;
+  train_bars: number;
+  test_bars: number;
+  step_bars: number;
+  label_horizon: number;
+  readiness_issues?: string[];
+}
+
 export interface MlDataPreviewResponse {
   decision_timeframe: string;
   bar_counts: Record<string, number>;
@@ -216,6 +242,7 @@ export interface MlDataPreviewResponse {
   context_timeframes: string[];
   strategy_feature_ids: string[];
   label_preview: MlLabelPreview;
+  walk_forward_readiness?: MlWalkForwardReadiness;
   warnings: string[];
 }
 
@@ -308,6 +335,38 @@ export interface MlTrainingExportResponse {
   row_count: number;
   warnings: string[];
   content_base64: string;
+}
+
+export type MlExportFormat = 'training_only' | 'full_workbook';
+
+export interface MlWorkbookExportRequest {
+  symbol: string;
+  model_type: string;
+  params?: Partial<MlParams>;
+  timeframe?: string;
+  start?: string;
+  end?: string;
+  training_scope?: MlTrainingExportScope;
+  sample_size?: number;
+  run_id?: string;
+  data_preview?: MlDataPreviewResponse | null;
+  label_search_results?: MlLabelSearchResult[];
+  threshold_search_results?: MlThresholdSearchResult[];
+  compare_results?: MlCompareResult[];
+  config_snapshot?: Record<string, unknown>;
+}
+
+export interface MlWorkbookSheet {
+  name: string;
+  row_count: number;
+}
+
+export interface MlWorkbookExportResponse {
+  filename: string;
+  row_count: number;
+  warnings: string[];
+  content_base64: string;
+  sheets: MlWorkbookSheet[];
 }
 
 export type MlWizardStep =

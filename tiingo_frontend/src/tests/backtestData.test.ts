@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildBacktestQuery,
   buildEquityChartData,
+  buildIndexedEquityChartData,
   formatBacktestDrawdown,
   formatBacktestPct,
   formatBacktestProfitFactor,
@@ -63,11 +64,58 @@ describe('backtestData utils', () => {
     expect(data[0].benchmark).toBe(10000);
   });
 
+  it('indexes equity curves to 100 at each series first point', () => {
+    const indexed = buildIndexedEquityChartData(
+      [
+        { date: '2024-01-01', equity: 10000, cash: 0, shares: 1, drawdown_pct: 0 },
+        { date: '2024-02-01', equity: 11000, cash: 0, shares: 1, drawdown_pct: 0 },
+      ],
+      [
+        { date: '2024-01-01', equity: 10000, cash: 0, shares: 1, drawdown_pct: 0 },
+        { date: '2024-02-01', equity: 20000, cash: 0, shares: 1, drawdown_pct: 0 },
+      ],
+    );
+    expect(indexed[0].strategy).toBe(100);
+    expect(indexed[0].benchmark).toBe(100);
+    expect(indexed[1].strategy).toBeCloseTo(110);
+    expect(indexed[1].benchmark).toBeCloseTo(200);
+  });
+
+  it('shows strategy growth on indexed scale when benchmark is much larger in dollars', () => {
+    const indexed = buildIndexedEquityChartData(
+      [
+        { date: '2024-01-01', equity: 10000, cash: 0, shares: 1, drawdown_pct: 0 },
+        { date: '2024-02-01', equity: 86556, cash: 0, shares: 1, drawdown_pct: 0 },
+      ],
+      [
+        { date: '2024-01-01', equity: 10000, cash: 0, shares: 1, drawdown_pct: 0 },
+        { date: '2024-02-01', equity: 26_000_000, cash: 0, shares: 1, drawdown_pct: 0 },
+      ],
+    );
+    expect(indexed[1].strategy).toBeCloseTo(865.56);
+    expect(indexed[1].benchmark).toBeCloseTo(260_000);
+  });
+
+  it('preserves dates when one series is missing on a row', () => {
+    const indexed = buildIndexedEquityChartData(
+      [{ date: '2024-01-01', equity: 10000, cash: 0, shares: 1, drawdown_pct: 0 }],
+      [
+        { date: '2024-01-02', equity: 12000, cash: 0, shares: 1, drawdown_pct: 0 },
+      ],
+    );
+    expect(indexed).toHaveLength(2);
+    expect(indexed[0].strategy).toBe(100);
+    expect(indexed[0].benchmark).toBeUndefined();
+    expect(indexed[1].benchmark).toBe(100);
+    expect(indexed[1].strategy).toBeUndefined();
+  });
+
   it('summarizes return metrics without risk-adjusted cards', () => {
     const rows = summarizeReturnMetrics(sampleMetrics);
     expect(rows.map((row) => row.key)).toEqual([
       'total_return_pct',
       'alpha_pct',
+      'benchmark_return_pct',
       'cagr_pct',
       'final_equity',
       'trade_count',

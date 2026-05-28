@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildEvaluationScopeNotice,
   buildOosAccuracyChartData,
+  collectMlDataWarnings,
   confusionMatrixMaxValue,
   filterRecordsFromSimulationStart,
   formatSimulationPeriodLabel,
+  resolveEvaluationStartDate,
   topFeatureImportance,
 } from '../utils/mlBacktestEvaluation';
 
@@ -53,5 +56,51 @@ describe('mlBacktestEvaluation', () => {
       '2020-05-01 – 2021-01-01',
     );
     expect(formatSimulationPeriodLabel(null, '2021-01-01')).toBeNull();
+  });
+
+  it('prefers evaluation_start_date over simulation_start_date', () => {
+    expect(
+      resolveEvaluationStartDate({
+        evaluation_start_date: '2022-06-01',
+        simulation_start_date: '2020-01-01',
+      }),
+    ).toBe('2022-06-01');
+    expect(
+      resolveEvaluationStartDate({
+        simulation_start_date: '2020-01-01',
+      }),
+    ).toBe('2020-01-01');
+  });
+});
+
+describe('buildEvaluationScopeNotice', () => {
+  it('returns holdout notice with period', () => {
+    const notice = buildEvaluationScopeNotice({
+      evaluation_scope: 'holdout',
+      holdout_bars: 63,
+      holdout_start_date: '2024-04-01',
+      holdout_end_date: '2024-06-30',
+    });
+    expect(notice?.tone).toBe('info');
+    expect(notice?.title).toBe('Holdout evaluation');
+    expect(notice?.message).toContain('63 bars');
+    expect(notice?.message).toContain('2024-04-01');
+  });
+
+  it('returns in-sample warning', () => {
+    const notice = buildEvaluationScopeNotice({ evaluation_scope: 'in_sample' });
+    expect(notice?.tone).toBe('warning');
+    expect(notice?.message).toContain('not indicative');
+  });
+});
+
+describe('collectMlDataWarnings', () => {
+  it('merges macro and fundamental warnings', () => {
+    expect(
+      collectMlDataWarnings({
+        macro_warnings: ['Macro lag'],
+        fundamental_warnings: ['Re-ingest fundamentals'],
+      }),
+    ).toEqual(['Macro lag', 'Re-ingest fundamentals']);
   });
 });

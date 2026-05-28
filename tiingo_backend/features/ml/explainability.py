@@ -36,7 +36,12 @@ def compute_shap_importance(
     if explainer is None:
         return []
 
-    values = explainer.shap_values(x_array)
+    explain_x = (
+        _scale_features_for_explainer(model, x_array)
+        if _uses_scaled_explainer_input(model)
+        else x_array
+    )
+    values = explainer.shap_values(explain_x)
     return _format_shap_values(values, feature_names, classes)
 
 
@@ -50,12 +55,23 @@ def _build_explainer(model: Any, shap_module: Any, x_array: np.ndarray) -> Any |
     return None
 
 
+def _uses_scaled_explainer_input(model: Any) -> bool:
+    classifier = _resolve_classifier(model)
+    return hasattr(classifier, "coef_")
+
+
 def _scale_features_for_explainer(model: Any, x_array: np.ndarray) -> np.ndarray:
     if isinstance(model, Pipeline):
         scaler = model.named_steps.get("scaler")
         if scaler is not None and hasattr(scaler, "transform"):
             return scaler.transform(x_array)
     return x_array
+
+
+def _default_class_for_single_matrix(classes: list[int]) -> int | str:
+    if len(classes) >= 2:
+        return classes[-1]
+    return classes[0] if classes else 0
 
 
 def _append_feature_rows(
@@ -82,6 +98,15 @@ def _format_shap_values(
     rows: list[dict] = []
 
     if isinstance(values, list):
+        if len(values) == 1 and len(classes) == 2:
+            means = np.abs(np.asarray(values[0])).mean(axis=0)
+            _append_feature_rows(
+                rows,
+                means,
+                feature_names,
+                _default_class_for_single_matrix(classes),
+            )
+            return rows
         for class_index, class_values in enumerate(values):
             class_label = classes[class_index] if class_index < len(classes) else class_index
             means = np.abs(np.asarray(class_values)).mean(axis=0)
@@ -104,6 +129,6 @@ def _format_shap_values(
             _append_feature_rows(rows, means[:, class_index], feature_names, class_label)
         return rows
 
-    class_label = classes[0] if classes else 0
+    class_label = _default_class_for_single_matrix(classes)
     _append_feature_rows(rows, means, feature_names, class_label)
     return rows

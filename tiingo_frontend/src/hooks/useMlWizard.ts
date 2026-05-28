@@ -20,6 +20,7 @@ import {
   canNavigateToWizardStep,
   wizardStepIndex,
 } from '../utils/mlWizardState';
+import { pickWalkForwardParams } from '../utils/mlBacktestConfig';
 
 interface UseMlWizardOptions {
   symbol: string;
@@ -32,6 +33,7 @@ interface UseMlWizardOptions {
   initialCash: number;
   commissionBps: number;
   runMode: string;
+  availableBarCount?: number | null;
 }
 
 export function useMlWizard(options: UseMlWizardOptions) {
@@ -46,6 +48,7 @@ export function useMlWizard(options: UseMlWizardOptions) {
     initialCash,
     commissionBps,
     runMode,
+    availableBarCount,
   } = options;
 
   const [wizardStep, setWizardStep] = useState<MlWizardStep>('universe');
@@ -54,8 +57,16 @@ export function useMlWizard(options: UseMlWizardOptions) {
   const [lockedConfig, setLockedConfig] = useState<MlLockedConfig>({});
 
   const gateError = useMemo(
-    () => validateWizardStepGate(wizardStep, mlParams, selectedModel, symbol, artifacts),
-    [wizardStep, mlParams, selectedModel, symbol, artifacts],
+    () =>
+      validateWizardStepGate(
+        wizardStep,
+        mlParams,
+        selectedModel,
+        symbol,
+        artifacts,
+        availableBarCount,
+      ),
+    [wizardStep, mlParams, selectedModel, symbol, artifacts, availableBarCount],
   );
 
   const invalidateFromStep = useCallback((step: MlWizardStep) => {
@@ -110,6 +121,7 @@ export function useMlWizard(options: UseMlWizardOptions) {
       initialCash,
       commissionBps,
       configOverride,
+      availableBarCount,
     }),
     [
       wizardStep,
@@ -124,6 +136,7 @@ export function useMlWizard(options: UseMlWizardOptions) {
       runMode,
       initialCash,
       commissionBps,
+      availableBarCount,
     ],
   );
 
@@ -153,7 +166,12 @@ export function useMlWizard(options: UseMlWizardOptions) {
     (step: MlWizardStep): MlLockedConfig => {
       switch (step) {
         case 'universe':
-          return { symbol, decisionTimeframe, dateRange };
+          return {
+            symbol,
+            decisionTimeframe,
+            dateRange,
+            mlParams: pickWalkForwardParams(mlParams),
+          };
         case 'data_prep':
           return { mlParams: { ...mlParams } };
         case 'labeling':

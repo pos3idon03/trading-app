@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ingestionApi, marketDataApi, mlBacktestApi } from '../../api/endpoints';
 import type { BacktestResultsResponse } from '../../api/backtestTypes';
@@ -33,8 +33,9 @@ import MlShapImportanceChart from '../charts/MlShapImportanceChart';
 import OhlcvTimelineChart from '../charts/OhlcvTimelineChart';
 import MlComparePanel from './MlComparePanel';
 import MlTrainingExportDialog from './MlTrainingExportDialog';
-import MlUniverseChart from './MlUniverseChart';
+import MlUniversePeriodSection from './MlUniversePeriodSection';
 import MlWizardSummaryCard from './MlWizardSummaryCard';
+import MlWalkForwardReadinessCard from './MlWalkForwardReadinessCard';
 import MlBarCountChart from '../charts/MlBarCountChart';
 import MlClassDistributionChart from '../charts/MlClassDistributionChart';
 import MlMacroCoverageChart from '../charts/MlMacroCoverageChart';
@@ -42,10 +43,12 @@ import MlLabelGridHeatmap from '../charts/MlLabelGridHeatmap';
 import MlLabelModelCompareChart from '../charts/MlLabelModelCompareChart';
 import MlThresholdSweepChart from '../charts/MlThresholdSweepChart';
 import { useMlWizard } from '../../hooks/useMlWizard';
+import { useMlUniverseBarCount } from '../../hooks/useMlUniverseBarCount';
 import {
   canNavigateToWizardStep,
   type MlLockedConfig,
 } from '../../utils/mlWizardState';
+import { buildMlWorkbookConfigSnapshot } from '../../utils/mlWorkbookExport';
 import { formatBacktestPct, sortTradesByExit } from '../../utils/backtestData';
 import { apiRangeFromOhlcvQuery, chartDateRange } from '../../utils/multitimeframeBacktest';
 import {
@@ -67,8 +70,11 @@ import {
   macroCoverageWarning,
   minimumBarsRequired,
   parseMlParams,
+  pickWalkForwardParams,
   resolveWalkForwardParams,
   validateMlParams,
+  validateWalkForwardParams,
+  type WalkForwardParamKey,
 } from '../../utils/mlBacktestConfig';
 import {
   FUNDAMENTAL_GROUPS,
@@ -83,14 +89,23 @@ import { mlFieldHelp, mlFieldLabel, type MlHelpFieldKey } from '../../utils/mlBa
 import {
   filterRecordsFromSimulationStart,
   formatSimulationPeriodLabel,
+  resolveEvaluationStartDate,
 } from '../../utils/mlBacktestEvaluation';
+import MlEvaluationScopeBanner from './MlEvaluationScopeBanner';
+import {
+  isReadinessReady,
+  previewConfigFingerprint,
+} from '../../utils/mlWalkForwardDiagnostics';
+import { computeWalkForwardBudget } from '../../utils/mlUniverseBudget';
 
 interface MLBacktestPanelProps {
   symbol: string;
   dateRange: DateRangeValue;
+  onDateRangeChange: (value: DateRangeValue) => void;
   decisionTimeframe: string;
   wizardStep?: MlWizardStep;
   onWizardBridge?: (bridge: MlWizardBridge | null) => void;
+  initialEditModelId?: string;
 }
 
 export interface MlWizardBridge {
@@ -102,6 +117,13 @@ export interface MlWizardBridge {
   isUniverseLocked: boolean;
   lockedConfig: MlLockedConfig;
   canNavigateToStep: (step: MlWizardStep) => boolean;
+  walkForwardParams: Pick<MlParams, 'train_bars' | 'test_bars' | 'step_bars' | 'label_horizon'>;
+  setWalkForwardParam: (key: WalkForwardParamKey, value: number) => void;
+  resetWalkForwardDefaults: () => void;
+  walkForwardValidationError: string | null;
+  minimumBarsRequired: number;
+  availableBarCount: number | null;
+  previewViableFolds: number | null;
 }
 
 type MlNumericParamKey = Exclude<
@@ -116,16 +138,11 @@ type MlNumericParamKey = Exclude<
   | 'saved_model'
   | 'initial_cash'
   | 'commission_bps'
+  | 'label_horizon'
+  | 'train_bars'
+  | 'test_bars'
+  | 'step_bars'
 >;
-
-const ML_PARAM_FIELDS: MlNumericParamKey[] = [
-  'label_horizon',
-  'train_bars',
-  'test_bars',
-  'step_bars',
-  'buy_threshold',
-  'sell_threshold',
-];
 
 function extractErrorMessage(err: unknown, fallback = 'ML backtest failed.'): string {
   if (err && typeof err === 'object' && 'response' in err) {
@@ -165,15 +182,17 @@ function stepVisible(wizardStep: MlWizardStep | undefined, allowed: MlWizardStep
 export default function MLBacktestPanel({
   symbol,
   dateRange,
+  onDateRangeChange,
   decisionTimeframe,
   wizardStep,
   onWizardBridge,
+  initialEditModelId,
 }: MLBacktestPanelProps) {
   const [models, setModels] = useState<MlModelCatalogItem[]>([]);
   const [modelType, setModelType] = useState('ml_logistic');
   const [mlParams, setMlParams] = useState<MlParams>(DEFAULT_ML_PARAMS);
   const [initialCash, setInitialCash] = useState(10_000);
-  const [commissionBps, setCommissionBps] = useState(0);
+  const [commissionBps, setCommissionBps] = useState(5);
   const [loadingCatalog, setLoadingCatalog] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -196,12 +215,25 @@ export default function MLBacktestPanel({
   const [dataPreview, setDataPreview] = useState<MlDataPreviewResponse | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [jobProgress, setJobProgress] = useState<number | null>(null);
+  const appliedEditModelIdRef = useRef<string | null>(null);
   const [labelSearchResults, setLabelSearchResults] = useState<MlLabelSearchResult[]>([]);
   const [labelSearchLoading, setLabelSearchLoading] = useState(false);
   const [thresholdResults, setThresholdResults] = useState<MlThresholdSearchResult[]>([]);
   const [thresholdLoading, setThresholdLoading] = useState(false);
   const [hyperparamMessage, setHyperparamMessage] = useState<string | null>(null);
   const [appliedModelLabel, setAppliedModelLabel] = useState<string | null>(null);
+  const walkForwardCustomizedRef = useRef(false);
+  const prevModelTypeRef = useRef(modelType);
+  const previewFingerprintRef = useRef<string | null>(null);
+  const prevDateRangeRef = useRef(JSON.stringify(dateRange));
+
+  const {
+    barCount: availableBarCount,
+    rangeStart: universeRangeStart,
+    rangeEnd: universeRangeEnd,
+    loading: universeBarCountLoading,
+    error: universeBarCountError,
+  } = useMlUniverseBarCount(symbol, decisionTimeframe, dateRange);
 
   const usesMacroFeatures = featureModeUsesMacro(mlParams.feature_mode);
   const usesFundamentalFeatures = mlParams.feature_mode === 'prices_macro_fundamentals';
@@ -222,9 +254,122 @@ export default function MLBacktestPanel({
     initialCash,
     commissionBps,
     runMode,
+    availableBarCount,
   });
 
   const activeWizardStep = wizardStep ?? wizard.wizardStep;
+
+  const walkForwardParams = useMemo(() => pickWalkForwardParams(mlParams), [mlParams]);
+
+  const walkForwardBudget = useMemo(
+    () =>
+      availableBarCount != null && availableBarCount > 0
+        ? computeWalkForwardBudget(availableBarCount, walkForwardParams)
+        : null,
+    [availableBarCount, walkForwardParams],
+  );
+
+  const walkForwardValidationError = useMemo(
+    () => validateWalkForwardParams(walkForwardParams, availableBarCount),
+    [walkForwardParams, availableBarCount],
+  );
+
+  const exportRange = useMemo(
+    () => apiRangeFromOhlcvQuery(buildOhlcvQuery(decisionTimeframe, dateRange)),
+    [decisionTimeframe, dateRange],
+  );
+
+  const workbookConfigSnapshot = useMemo(
+    () =>
+      buildMlWorkbookConfigSnapshot({
+        initialCash,
+        commissionBps,
+        runMode,
+        modelLabel: selectedModel?.label,
+        appliedModelLabel,
+        dateRangeStart: exportRange.start,
+        dateRangeEnd: exportRange.end,
+      }),
+    [
+      initialCash,
+      commissionBps,
+      runMode,
+      selectedModel?.label,
+      appliedModelLabel,
+      exportRange.start,
+      exportRange.end,
+    ],
+  );
+
+  const applyResolvedWalkForwardParams = useCallback(
+    (barCount?: number | null) => {
+      const resolved = resolveWalkForwardParams(decisionTimeframe, barCount);
+      setMlParams((prev) => ({ ...prev, ...resolved }));
+    },
+    [decisionTimeframe],
+  );
+
+  const setWalkForwardParam = useCallback(
+    (key: WalkForwardParamKey, value: number) => {
+      walkForwardCustomizedRef.current = true;
+      setMlParams((prev) => ({ ...prev, [key]: value }));
+      if (wizard.wizardStep === 'universe') {
+        wizard.invalidateFromStep('universe');
+      }
+    },
+    [wizard],
+  );
+
+  const resetWalkForwardDefaults = useCallback(() => {
+    walkForwardCustomizedRef.current = false;
+    applyResolvedWalkForwardParams(availableBarCount);
+    if (wizard.wizardStep === 'universe') {
+      wizard.invalidateFromStep('universe');
+    }
+  }, [applyResolvedWalkForwardParams, availableBarCount, wizard]);
+
+  useEffect(() => {
+    const serialized = JSON.stringify(dateRange);
+    if (prevDateRangeRef.current === serialized) {
+      return;
+    }
+    prevDateRangeRef.current = serialized;
+    wizard.invalidateFromStep('universe');
+  }, [dateRange, wizard]);
+
+  const validationError = useMemo(
+    () => validateMlParams(mlParams, selectedModel),
+    [mlParams, selectedModel],
+  );
+
+  const minBars = useMemo(() => minimumBarsRequired(mlParams), [mlParams]);
+
+  const barCoverageWarnings = useMemo(
+    () =>
+      buildCoverageWarnings(
+        { [decisionTimeframe]: decisionCoverage },
+        dateRange,
+        { [decisionTimeframe]: minBars },
+      ),
+    [decisionCoverage, decisionTimeframe, dateRange, minBars],
+  );
+
+  const previewStale = useMemo(() => {
+    if (!dataPreview || !previewFingerprintRef.current) {
+      return false;
+    }
+    return previewConfigFingerprint(mlParams, dateRange) !== previewFingerprintRef.current;
+  }, [dataPreview, mlParams, dateRange]);
+
+  const labelGridBlocked = useMemo(() => {
+    if (!dataPreview?.walk_forward_readiness) {
+      return true;
+    }
+    if (previewStale) {
+      return true;
+    }
+    return !isReadinessReady(dataPreview.walk_forward_readiness);
+  }, [dataPreview, previewStale]);
 
   useEffect(() => {
     if (!onWizardBridge) {
@@ -245,48 +390,62 @@ export default function MLBacktestPanel({
           wizard.completedSteps,
           wizard.gateError,
         ),
+      walkForwardParams,
+      setWalkForwardParam,
+      resetWalkForwardDefaults,
+      walkForwardValidationError,
+      minimumBarsRequired: minBars,
+      availableBarCount,
+      previewViableFolds: dataPreview?.walk_forward_readiness?.viable_folds ?? null,
     });
     return () => onWizardBridge(null);
-  }, [onWizardBridge, wizard]);
+  }, [
+    onWizardBridge,
+    wizard,
+    walkForwardParams,
+    setWalkForwardParam,
+    resetWalkForwardDefaults,
+    walkForwardValidationError,
+    minBars,
+    availableBarCount,
+    dataPreview,
+  ]);
 
-  const validationError = useMemo(
-    () => validateMlParams(mlParams, selectedModel),
-    [mlParams, selectedModel],
+  const evaluationStartDate = useMemo(
+    () => resolveEvaluationStartDate(results?.ml_summary),
+    [results?.ml_summary],
   );
-
-  const minBars = useMemo(() => minimumBarsRequired(mlParams), [mlParams]);
-
-  const barCoverageWarnings = useMemo(
-    () =>
-      buildCoverageWarnings(
-        { [decisionTimeframe]: decisionCoverage },
-        dateRange,
-        { [decisionTimeframe]: minBars },
-      ),
-    [decisionCoverage, decisionTimeframe, dateRange, minBars],
-  );
-
-  const availableBarCount = decisionCoverage?.effective?.bar_count ?? null;
 
   const simulationChartRecords = useMemo(() => {
-    const startDate = results?.ml_summary?.simulation_start_date;
-    if (!startDate) {
+    if (!evaluationStartDate) {
       return chartRecords;
     }
-    return filterRecordsFromSimulationStart(chartRecords, startDate);
-  }, [chartRecords, results?.ml_summary?.simulation_start_date]);
+    return filterRecordsFromSimulationStart(chartRecords, evaluationStartDate);
+  }, [chartRecords, evaluationStartDate]);
 
   const simulationPeriodLabel = useMemo(() => {
-    const startDate = results?.ml_summary?.simulation_start_date;
-    if (!startDate) {
+    if (!evaluationStartDate) {
       return null;
     }
     const endDate =
       results?.equity_curve[results.equity_curve.length - 1]?.date ??
       results?.end_date ??
       null;
-    return formatSimulationPeriodLabel(startDate, endDate);
-  }, [results]);
+    return formatSimulationPeriodLabel(evaluationStartDate, endDate);
+  }, [evaluationStartDate, results]);
+
+  const portfolioMetricsCaption = useMemo(() => {
+    if (!simulationPeriodLabel) {
+      return null;
+    }
+    if (results?.ml_summary?.evaluation_reason === 'first_trade') {
+      return `Evaluation period: ${simulationPeriodLabel}. Portfolio metrics reflect active trading from first entry.`;
+    }
+    if (results?.ml_summary?.simulation_start_date) {
+      return `Evaluation period: ${simulationPeriodLabel}. Portfolio metrics reflect out-of-sample simulation only.`;
+    }
+    return `Evaluation period: ${simulationPeriodLabel}.`;
+  }, [results?.ml_summary, simulationPeriodLabel]);
 
   const macroWarning = useMemo(
     () =>
@@ -468,14 +627,33 @@ export default function MLBacktestPanel({
 
   useEffect(() => {
     if (!selectedModel) return;
+
+    const modelChanged = prevModelTypeRef.current !== modelType;
+    prevModelTypeRef.current = modelType;
+
     const parsed = parseMlParams(selectedModel.params);
+    const resolvedWalkForward = resolveWalkForwardParams(decisionTimeframe, availableBarCount);
+
+    if (modelChanged) {
+      walkForwardCustomizedRef.current = false;
+      setMlParams((prev) => ({
+        ...parsed,
+        ...resolvedWalkForward,
+        feature_mode: prev.feature_mode ?? parsed.feature_mode,
+        macro_series_ids: prev.macro_series_ids ?? parsed.macro_series_ids,
+        fundamental_metrics: prev.fundamental_metrics ?? parsed.fundamental_metrics,
+        fundamental_period_type: prev.fundamental_period_type ?? parsed.fundamental_period_type,
+      }));
+      return;
+    }
+
+    if (walkForwardCustomizedRef.current) {
+      return;
+    }
+
     setMlParams((prev) => ({
-      ...parsed,
-      ...resolveWalkForwardParams(decisionTimeframe, availableBarCount),
-      feature_mode: prev.feature_mode ?? parsed.feature_mode,
-      macro_series_ids: prev.macro_series_ids ?? parsed.macro_series_ids,
-      fundamental_metrics: prev.fundamental_metrics ?? parsed.fundamental_metrics,
-      fundamental_period_type: prev.fundamental_period_type ?? parsed.fundamental_period_type,
+      ...prev,
+      ...resolvedWalkForward,
     }));
   }, [modelType, selectedModel, decisionTimeframe, availableBarCount]);
 
@@ -544,6 +722,49 @@ export default function MLBacktestPanel({
       model_id: saved.id,
     }));
   };
+
+  const applyEditModel = useCallback((saved: MlSavedModel) => {
+    setRunMode('walk_forward');
+    setSelectedSavedModelId('');
+    setModelType(saved.model_type);
+    const nextParams = parseMlParams(saved.hyperparams);
+    delete nextParams.model_id;
+    setMlParams({
+      ...nextParams,
+      feature_mode: saved.feature_mode,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!initialEditModelId || appliedEditModelIdRef.current === initialEditModelId) {
+      return;
+    }
+
+    const saved = savedModels.find((item) => item.id === initialEditModelId);
+    if (saved) {
+      applyEditModel(saved);
+      appliedEditModelIdRef.current = initialEditModelId;
+      return;
+    }
+
+    let cancelled = false;
+    mlBacktestApi
+      .getSavedModel(initialEditModelId)
+      .then((model) => {
+        if (cancelled) return;
+        applyEditModel(model);
+        appliedEditModelIdRef.current = initialEditModelId;
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError('Failed to load saved model for editing.');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialEditModelId, savedModels, applyEditModel]);
 
   const buildRunParams = (): Partial<MlParams> => {
     const params: Partial<MlParams> = { ...mlParams };
@@ -699,6 +920,7 @@ export default function MLBacktestPanel({
         setJobProgress(job.progress);
       });
       setDataPreview(preview);
+      previewFingerprintRef.current = previewConfigFingerprint(mlParams, dateRange);
       wizard.setArtifact({ hasDataPreview: true });
     } catch (err: unknown) {
       setError(extractErrorMessage(err, 'Data preview failed.'));
@@ -802,7 +1024,10 @@ export default function MLBacktestPanel({
   };
 
   const confirmCurrentThresholds = () => {
-    wizard.completeStepAndAdvance({ hasThresholdApplied: true });
+    wizard.completeStepAndAdvance(
+      { hasThresholdApplied: true },
+      { mlParams: { ...mlParams } },
+    );
   };
 
   if (loadingCatalog) {
@@ -816,14 +1041,23 @@ export default function MLBacktestPanel({
   return (
     <div className="space-y-6">
       {stepVisible(activeWizardStep, ['universe']) && (
-        <section className="rounded-xl border border-slate-800 bg-surface-900 p-4 space-y-4">
-          <h3 className="text-sm font-medium text-slate-300">Universe preview</h3>
-          <MlUniverseChart
-            symbol={symbol}
-            decisionTimeframe={decisionTimeframe}
-            dateRange={dateRange}
-          />
-        </section>
+        <MlUniversePeriodSection
+          symbol={symbol}
+          decisionTimeframe={decisionTimeframe}
+          dateRange={dateRange}
+          onDateRangeChange={onDateRangeChange}
+          walkForwardParams={walkForwardParams}
+          onWalkForwardParamChange={setWalkForwardParam}
+          onResetWalkForwardDefaults={resetWalkForwardDefaults}
+          barCount={availableBarCount}
+          rangeStart={universeRangeStart}
+          rangeEnd={universeRangeEnd}
+          barCountLoading={universeBarCountLoading}
+          barCountError={universeBarCountError}
+          budget={walkForwardBudget}
+          walkForwardValidationError={walkForwardValidationError}
+          viableFolds={dataPreview?.walk_forward_readiness?.viable_folds ?? null}
+        />
       )}
 
       {activeWizardStep !== 'universe' && (
@@ -832,6 +1066,7 @@ export default function MLBacktestPanel({
           decisionTimeframe={decisionTimeframe}
           lockedConfig={wizard.lockedConfig}
           modelLabel={appliedModelLabel ?? selectedModel?.label}
+          dataPreview={dataPreview}
         />
       )}
 
@@ -950,41 +1185,6 @@ export default function MLBacktestPanel({
               </select>
             </label>
           )}
-
-          {ML_PARAM_FIELDS.filter((key) => {
-            if (stepVisible(activeWizardStep, ['model'])) {
-              return ['train_bars', 'test_bars', 'step_bars'].includes(key);
-            }
-            if (stepVisible(activeWizardStep, ['signals'])) {
-              return ['buy_threshold', 'sell_threshold'].includes(key);
-            }
-            return false;
-          }).filter(
-            (key) =>
-              runMode === 'walk_forward' ||
-              !['train_bars', 'test_bars', 'step_bars'].includes(key),
-          ).map((key) => {
-            const constraint = selectedModel?.constraints[key];
-            return (
-              <label key={key} className="space-y-1 text-sm">
-                <FieldLabel
-                  label={mlFieldLabel(key)}
-                  help={mlFieldHelp(key)}
-                  htmlFor={`ml-param-${key}`}
-                />
-                <input
-                  id={`ml-param-${key}`}
-                  type="number"
-                  value={mlParams[key]}
-                  min={constraint?.min}
-                  max={constraint?.max}
-                  step={key.includes('threshold') ? 0.01 : 1}
-                  onChange={(e) => updateParam(key, Number(e.target.value))}
-                  className="w-full bg-surface-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"
-                />
-              </label>
-            );
-          })}
 
           {isRandomForestModel(modelType) && (
             <label className="space-y-1 text-sm">
@@ -1215,6 +1415,10 @@ export default function MLBacktestPanel({
                 </label>
               ))}
             </div>
+            <p className="text-xs text-slate-500">
+              Optional features merge with price features. If context or strategy columns are
+              missing for a bar, that bar is excluded from training.
+            </p>
             <button
               type="button"
               onClick={handleDataPreview}
@@ -1237,6 +1441,10 @@ export default function MLBacktestPanel({
             )}
             {dataPreview && (
               <div className="space-y-4">
+                <MlWalkForwardReadinessCard
+                  readiness={dataPreview.walk_forward_readiness}
+                  warnings={dataPreview.warnings}
+                />
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div>
                     <h4 className="text-xs text-slate-400 mb-2">Bar counts by timeframe</h4>
@@ -1273,7 +1481,9 @@ export default function MLBacktestPanel({
                   modelType={modelType}
                   params={mlParams}
                   timeframe={decisionTimeframe}
-                  {...apiRangeFromOhlcvQuery(buildOhlcvQuery(decisionTimeframe, dateRange))}
+                  {...exportRange}
+                  dataPreview={dataPreview}
+                  configSnapshot={workbookConfigSnapshot}
                 />
               </div>
             )}
@@ -1282,31 +1492,89 @@ export default function MLBacktestPanel({
 
         {stepVisible(activeWizardStep, ['labeling']) && (
           <div className="space-y-3 border-t border-slate-800 pt-4">
+            {dataPreview && (
+              <MlWalkForwardReadinessCard
+                readiness={dataPreview.walk_forward_readiness}
+                warnings={dataPreview.warnings}
+                compact
+              />
+            )}
+            {previewStale && (
+              <p className="text-xs text-amber-200/80">
+                Settings changed since the last data preview — go back to Data Prep and re-run
+                preview before label grid search.
+              </p>
+            )}
             <div className="flex items-center gap-3">
               <h3 className="text-sm font-medium text-slate-300">Label grid search (all models)</h3>
               <button
                 type="button"
                 onClick={handleLabelSearch}
-                disabled={labelSearchLoading}
-                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs"
+                disabled={labelSearchLoading || labelGridBlocked}
+                className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs"
               >
                 {labelSearchLoading ? 'Searching…' : 'Run grid search'}
               </button>
             </div>
+            <p className="text-xs text-slate-500">
+              Grid search evaluates label horizons 2, 4, 6, 8, and 10 bars. Universe label horizon
+              applies after you Apply a result or continue with your current settings.
+            </p>
+            {labelGridBlocked && !labelSearchLoading && (
+              <p className="text-xs text-amber-200/80">
+                {!dataPreview?.walk_forward_readiness
+                  ? 'Run data preview on Data Prep before label grid search.'
+                  : previewStale
+                    ? 'Re-run data preview — walk-forward settings changed since the last preview.'
+                    : 'Walk-forward readiness shows zero viable folds — adjust universe or Data Prep settings before searching.'}
+              </p>
+            )}
             {labelSearchResults.length > 0 && (
               <>
                 <MlLabelGridHeatmap results={labelSearchResults} />
                 <MlLabelModelCompareChart results={labelSearchResults} />
               </>
             )}
-            <MlLabelGridResults results={labelSearchResults} onApply={applyLabelSearchResult} />
+            <MlLabelGridResults
+              results={labelSearchResults}
+              onApply={applyLabelSearchResult}
+              readiness={dataPreview?.walk_forward_readiness}
+            />
           </div>
         )}
 
         {stepVisible(activeWizardStep, ['signals']) && (
           <div className="space-y-3 border-t border-slate-800 pt-4">
+            <h3 className="text-sm font-medium text-slate-300">Signal thresholds</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {(['buy_threshold', 'sell_threshold'] as const).map((key) => {
+                const constraint = selectedModel?.constraints[key];
+                return (
+                  <label key={key} className="space-y-1 text-sm">
+                    <FieldLabel
+                      label={mlFieldLabel(key)}
+                      help={mlFieldHelp(key)}
+                      htmlFor={`ml-param-${key}`}
+                    />
+                    <input
+                      id={`ml-param-${key}`}
+                      type="number"
+                      value={mlParams[key]}
+                      min={constraint?.min}
+                      max={constraint?.max}
+                      step={0.01}
+                      onChange={(e) => updateParam(key, Number(e.target.value))}
+                      className="w-full bg-surface-950 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"
+                    />
+                  </label>
+                );
+              })}
+            </div>
+            {validationError && (
+              <p className="text-xs text-amber-200/80">{validationError}</p>
+            )}
             <div className="flex flex-wrap items-center gap-3">
-              <h3 className="text-sm font-medium text-slate-300">Threshold sweep</h3>
+              <h3 className="text-sm font-medium text-slate-300">Threshold sweep (optional)</h3>
               <button
                 type="button"
                 onClick={handleThresholdSearch}
@@ -1474,10 +1742,20 @@ export default function MLBacktestPanel({
             modelType={modelType}
             params={mlParams}
             timeframe={decisionTimeframe}
-            {...apiRangeFromOhlcvQuery(buildOhlcvQuery(decisionTimeframe, dateRange))}
+            {...exportRange}
+            dataPreview={dataPreview}
+            labelSearchResults={labelSearchResults}
+            thresholdResults={thresholdResults}
+            compareResults={compareResults}
+            configSnapshot={workbookConfigSnapshot}
+            runId={results.id}
           />
           {results.ml_summary && (
             <section className="rounded-xl border border-slate-800 bg-surface-900 p-4 space-y-3">
+              <MlEvaluationScopeBanner
+                summary={results.ml_summary}
+                commissionBps={results.commission_bps}
+              />
               <h2 className="text-lg font-semibold text-slate-200">ML summary</h2>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                 <div>
@@ -1536,7 +1814,16 @@ export default function MLBacktestPanel({
               {(results.ml_summary.shap_importance?.length ?? 0) > 0 && (
                 <div>
                   <h3 className="text-sm font-medium text-slate-300 mb-2">SHAP feature impact by class</h3>
-                  <MlShapImportanceChart items={results.ml_summary.shap_importance ?? []} />
+                  <MlShapImportanceChart
+                    items={results.ml_summary.shap_importance ?? []}
+                    labelMode={results.ml_summary.label_mode === 'ternary' ? 'ternary' : 'binary'}
+                  />
+                  {results.ml_summary.label_mode !== 'ternary' && (
+                    <p className="text-xs text-slate-500 mt-2">
+                      Buy/sell signals are derived from probability thresholds; SHAP shows impact on
+                      label classes (Down / Up), not trading signals.
+                    </p>
+                  )}
                 </div>
               )}
               {(results.ml_summary.feature_importance?.length ?? 0) > 0 && (
@@ -1570,11 +1857,8 @@ export default function MLBacktestPanel({
 
           <section className="space-y-3">
             <h2 className="text-lg font-semibold text-slate-200">Results</h2>
-            {simulationPeriodLabel && (
-              <p className="text-xs text-slate-400">
-                Simulation period: {simulationPeriodLabel}. Portfolio metrics reflect
-                out-of-sample simulation only.
-              </p>
+            {portfolioMetricsCaption && (
+              <p className="text-xs text-slate-400">{portfolioMetricsCaption}</p>
             )}
             <BacktestMetricsCards metrics={results.metrics} />
             <BacktestPerformanceLabels metrics={results.metrics} />
@@ -1585,6 +1869,7 @@ export default function MLBacktestPanel({
             <BacktestEquityChart
               strategy={results.equity_curve}
               benchmark={results.benchmark_equity_curve}
+              initialCash={results.metrics?.initial_cash ?? undefined}
             />
           </section>
 

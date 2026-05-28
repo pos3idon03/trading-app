@@ -40,6 +40,34 @@ class Settings(BaseSettings):
     )
     ml_artifact_dir: str = Field(default="./data/ml_models", validation_alias="ML_ARTIFACT_DIR")
 
+    foundation_models_enabled: bool = Field(
+        default=False,
+        validation_alias="FOUNDATION_MODELS_ENABLED",
+    )
+    foundation_device: str = Field(default="cpu", validation_alias="FOUNDATION_DEVICE")
+    foundation_model_cache_dir: str | None = Field(
+        default=None,
+        validation_alias="FOUNDATION_MODEL_CACHE_DIR",
+    )
+    foundation_max_context: int = Field(default=1024, validation_alias="FOUNDATION_MAX_CONTEXT")
+    foundation_max_horizon: int = Field(default=256, validation_alias="FOUNDATION_MAX_HORIZON")
+
+    alpaca_api_key: str = Field(default="", validation_alias="ALPACA_API_KEY")
+    alpaca_secret_key: str = Field(default="", validation_alias="ALPACA_SECRET_KEY")
+    alpaca_base_url: str = Field(
+        default="https://api.alpaca.markets",
+        validation_alias="ALPACA_BASE_URL",
+    )
+    alpaca_base_paper_url: str = Field(
+        default="https://paper-api.alpaca.markets",
+        validation_alias="ALPACA_BASE_PAPER_URL",
+    )
+    trading_mode_paper: bool = Field(default=True, validation_alias="TRADING_MODE_PAPER")
+    max_position_pct: float = Field(default=5.0, validation_alias="MAX_POSITION_PCT")
+    max_exposure_pct: float = Field(default=80.0, validation_alias="MAX_EXPOSURE_PCT")
+    daily_loss_limit_pct: float = Field(default=5.0, validation_alias="DAILY_LOSS_LIMIT_PCT")
+    max_orders_per_minute: int = Field(default=10, validation_alias="MAX_ORDERS_PER_MINUTE")
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",")]
@@ -47,6 +75,26 @@ class Settings(BaseSettings):
     @property
     def fundamentals_addon_active(self) -> bool:
         return self.tiingo_fundamentals_tier.startswith("addon_")
+
+    @property
+    def alpaca_configured(self) -> bool:
+        return bool(self.alpaca_api_key and self.alpaca_secret_key)
+
+    @property
+    def trading_mode(self) -> str:
+        return "paper" if self.trading_mode_paper else "live"
+
+    @property
+    def paper_trading_only(self) -> bool:
+        return self.trading_mode_paper
+
+    @property
+    def effective_alpaca_base_url(self) -> str:
+        raw = self.alpaca_base_paper_url if self.trading_mode_paper else self.alpaca_base_url
+        normalized = raw.rstrip("/")
+        if normalized.endswith("/v2"):
+            normalized = normalized[:-3]
+        return normalized
 
 
 @lru_cache

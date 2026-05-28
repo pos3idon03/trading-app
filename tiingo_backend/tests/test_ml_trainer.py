@@ -7,6 +7,7 @@ from sklearn.pipeline import Pipeline
 from features.ml.trainer import (
     _create_model,
     _resolve_classifier,
+    min_train_samples_for_model,
     predict_class_probabilities,
     train_model,
 )
@@ -50,6 +51,30 @@ def test_knn_pipeline_predicts():
     probs = predict_class_probabilities(result.model, x_rows[:5])
     assert len(probs) == 5
     assert all(len(row) >= 2 for row in probs)
+
+
+def test_knn_caps_neighbors_to_sample_count():
+    x_rows = [[1.0, 2.0], [2.0, 3.0], [3.0, 4.0]]
+    y_rows = [0, 1, 0]
+    result = train_model("ml_knn", x_rows, y_rows, {"knn_neighbors": 5})
+    classifier = _resolve_classifier(result.model)
+    assert classifier.n_neighbors == 3
+    assert result.train_accuracy >= 0
+
+
+def test_safe_knn_classifier_caps_on_direct_fit():
+    x_rows = [[1.0, 2.0], [2.0, 3.0], [3.0, 4.0]]
+    y_rows = [0, 1, 0]
+    pipeline = _create_model("ml_knn", {"knn_neighbors": 5})
+    pipeline.fit(x_rows, y_rows)
+    classifier = _resolve_classifier(pipeline)
+    assert classifier.n_neighbors == 3
+
+
+def test_min_train_samples_for_model():
+    assert min_train_samples_for_model("ml_logistic", {}) == 2
+    assert min_train_samples_for_model("ml_knn", {}) == 5
+    assert min_train_samples_for_model("ml_knn", {"knn_neighbors": 3}) == 3
 
 
 def test_resolve_classifier_unwraps_pipeline():

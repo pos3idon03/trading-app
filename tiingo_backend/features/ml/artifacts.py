@@ -47,3 +47,11 @@ def load_model_artifact(artifact_path: str) -> Any:
     if not path.is_file():
         raise FileNotFoundError(f"Model artifact not found: {artifact_path}")
     return joblib.load(path)
+
+
+def delete_model_artifact(artifact_path: str | None) -> None:
+    if not artifact_path:
+        return
+    path = Path(artifact_path)
+    if path.is_file():
+        path.unlink()

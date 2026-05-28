@@ -7,6 +7,7 @@ from features.ml.catalog import feature_mode_uses_macro
 from features.ml.feature_builder import collect_required_ml_timeframes
 from features.ml.labels import build_labels, label_distribution
 from features.ml.price_features import FEATURE_WARMUP_BARS
+from features.ml.walk_forward_diagnostics import build_walk_forward_readiness
 
 
 async def build_data_preview(
@@ -19,6 +20,8 @@ async def build_data_preview(
     fundamental_metrics: list[str],
     context_warnings: list[str],
     strategy_warnings: list[str],
+    bars: list[dict] | None = None,
+    feature_rows: list | None = None,
 ) -> dict:
     bars = bars_by_timeframe[decision_timeframe]
     warnings: list[str] = [*context_warnings, *strategy_warnings]
@@ -65,6 +68,17 @@ async def build_data_preview(
         if majority > 0.85:
             warnings.append("Label distribution is highly imbalanced (>85% one class).")
 
+    walk_forward_readiness: dict = {}
+    if bars is not None and feature_rows is not None:
+        walk_forward_readiness = build_walk_forward_readiness(
+            bars,
+            feature_rows,
+            validated_params,
+        )
+        for issue in walk_forward_readiness.get("readiness_issues", []):
+            if issue not in warnings:
+                warnings.append(issue)
+
     return {
         "decision_timeframe": decision_timeframe,
         "bar_counts": bar_counts,
@@ -79,5 +93,6 @@ async def build_data_preview(
             "label_threshold": validated_params.get("label_threshold"),
             "class_distribution": distribution,
         },
+        "walk_forward_readiness": walk_forward_readiness,
         "warnings": warnings,
     }

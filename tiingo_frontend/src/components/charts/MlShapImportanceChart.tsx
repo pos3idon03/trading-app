@@ -9,39 +9,30 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { MlShapImportanceItem } from '../../api/mlBacktestTypes';
-
-const CLASS_COLORS: Record<string, string> = {
-  '0': '#a3a366',
-  '1': '#60a5fa',
-  '2': '#f472b6',
-};
+import type { MlLabelMode, MlShapImportanceItem } from '../../api/mlBacktestTypes';
+import {
+  SHAP_CLASS_COLORS,
+  buildShapChartData,
+  discoverShapClassLabels,
+  getMlClassDisplayName,
+} from '../../utils/mlShapChartData';
 
 interface MlShapImportanceChartProps {
   items: MlShapImportanceItem[];
+  labelMode?: MlLabelMode;
   topN?: number;
 }
 
-export default function MlShapImportanceChart({ items, topN = 12 }: MlShapImportanceChartProps) {
-  const chartData = useMemo(() => {
-    const byFeature: Record<string, Record<string, number | string>> = {};
-    for (const item of items) {
-      if (!byFeature[item.feature]) {
-        byFeature[item.feature] = { feature: item.feature };
-      }
-      byFeature[item.feature][`class_${item.class_label}`] = item.mean_abs_shap;
-    }
-    return Object.values(byFeature)
-      .map((row) => ({
-        ...row,
-        total: ['0', '1', '2'].reduce(
-          (sum, cls) => sum + Number(row[`class_${cls}`] ?? 0),
-          0,
-        ),
-      }))
-      .sort((a, b) => Number(b.total) - Number(a.total))
-      .slice(0, topN);
-  }, [items, topN]);
+export default function MlShapImportanceChart({
+  items,
+  labelMode = 'binary',
+  topN = 12,
+}: MlShapImportanceChartProps) {
+  const classLabels = useMemo(() => discoverShapClassLabels(items), [items]);
+  const chartData = useMemo(
+    () => buildShapChartData(items, classLabels, topN),
+    [items, classLabels, topN],
+  );
 
   if (!chartData.length) {
     return <p className="text-sm text-slate-500">No SHAP importance data for this run.</p>;
@@ -56,13 +47,13 @@ export default function MlShapImportanceChart({ items, topN = 12 }: MlShapImport
           <YAxis type="category" dataKey="feature" width={110} tick={{ fill: '#cbd5e1', fontSize: 10 }} />
           <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155' }} />
           <Legend />
-          {['0', '1', '2'].map((cls) => (
+          {classLabels.map((classLabel) => (
             <Bar
-              key={cls}
-              dataKey={`class_${cls}`}
-              name={cls === '0' ? 'Ranging' : cls === '1' ? 'Sell' : 'Buy'}
+              key={classLabel}
+              dataKey={`class_${classLabel}`}
+              name={getMlClassDisplayName(classLabel, labelMode)}
               stackId="shap"
-              fill={CLASS_COLORS[cls]}
+              fill={SHAP_CLASS_COLORS[classLabel] ?? '#94a3b8'}
             />
           ))}
         </BarChart>

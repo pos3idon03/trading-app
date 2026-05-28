@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dal import job_dal
 from features.ml.orchestrator import (
     export_training_data_for_symbol,
+    export_workbook_for_symbol,
     preview_ml_data_for_symbol,
     run_ml_backtest_for_symbol,
     search_ml_hyperparameters_for_symbol,
@@ -88,6 +89,28 @@ async def execute_ml_job(
             end=end,
             scope=params.get("scope", "all_labeled"),
             sample_size=int(params.get("sample_size", 500)),
+        )
+        await _update_progress(session, job_id, 100)
+        return payload
+
+    if job_type == "ml_workbook_export":
+        run_id = params.get("run_id")
+        payload = await export_workbook_for_symbol(
+            session,
+            symbol=params["symbol"],
+            model_type=params.get("model_type", "ml_logistic"),
+            params=params.get("params"),
+            timeframe=params.get("timeframe", "1d"),
+            start=start,
+            end=end,
+            training_scope=params.get("training_scope", "all_labeled"),
+            sample_size=int(params.get("sample_size", 500)),
+            run_id=UUID(str(run_id)) if run_id else None,
+            data_preview=params.get("data_preview"),
+            label_search_results=params.get("label_search_results"),
+            threshold_search_results=params.get("threshold_search_results"),
+            compare_results=params.get("compare_results"),
+            config_snapshot=params.get("config_snapshot"),
         )
         await _update_progress(session, job_id, 100)
         return payload

@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from features.tiingo.fundamentals_client import (
     encode_calendar_period,
     encode_fundamental_period,
@@ -17,8 +19,7 @@ def test_encode_fiscal_annual_period():
     assert encode_fundamental_period(2024, 0) == "FY-2024"
 
 
-def test_flatten_uses_calendar_not_tiingo_fiscal_quarter():
-    """Apple fiscal Q2 (Jan–Mar) reported 2026-03-28 → calendar 2026-Q1."""
+def test_flatten_uses_fiscal_period_when_available():
     data = [
         {
             "date": "2026-03-28",
@@ -33,7 +34,8 @@ def test_flatten_uses_calendar_not_tiingo_fiscal_quarter():
         },
     ]
     rows = flatten_fundamentals_statements(data)
-    assert all(r["period"] == "2026-Q1" for r in rows)
+    assert all(r["period"] == "2026-Q2" for r in rows)
+    assert all(r["raw_data"]["as_reported"] is True for r in rows)
 
 
 def test_flatten_statement_data_nested():
@@ -50,7 +52,7 @@ def test_flatten_statement_data_nested():
     ]
     rows = flatten_fundamentals_statements(data)
     assert len(rows) == 2
-    assert all(r["period"] == "2025-Q2" for r in rows)
+    assert all(r["period"] == "2025-Q3" for r in rows)
 
 
 def test_flatten_legacy_top_level():
@@ -81,3 +83,27 @@ def test_flatten_skips_year_quarter_as_metrics():
     rows = flatten_fundamentals_statements(data)
     assert "year" not in {r["metric_name"] for r in rows}
     assert "quarter" not in {r["metric_name"] for r in rows}
+
+
+@pytest.mark.asyncio
+async def test_fetch_fundamentals_statements_requests_as_reported():
+    from unittest.mock import AsyncMock, patch
+
+    from features.tiingo import fundamentals_client
+
+    response = AsyncMock()
+    response.raise_for_status = lambda: None
+    response.json = lambda: []
+
+    client = AsyncMock()
+    client.get = AsyncMock(return_value=response)
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("features.tiingo.fundamentals_client.get_token", return_value="token"), patch(
+        "features.tiingo.fundamentals_client.httpx.AsyncClient",
+        return_value=client,
+    ):
+        await fundamentals_client.fetch_fundamentals_statements("AAPL", as_reported=True)
+
+    assert client.get.await_args.kwargs["params"]["asReported"] == "true"

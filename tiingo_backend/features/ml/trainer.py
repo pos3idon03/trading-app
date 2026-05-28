@@ -23,8 +23,23 @@ TREE_MODEL_TYPES = frozenset({"ml_random_forest", "ml_gradient_boosting", "ml_xg
 SCALED_MODEL_TYPES = frozenset({"ml_logistic", "ml_knn"})
 
 
+class SafeKNeighborsClassifier(KNeighborsClassifier):
+    """Caps n_neighbors to the training fold size so thin folds never crash."""
+
+    def fit(self, X, y):
+        sample_count = len(y)
+        self.n_neighbors = min(self.n_neighbors, max(sample_count, 1))
+        return super().fit(X, y)
+
+
 def supports_feature_importance(model_type: str) -> bool:
     return model_type in TREE_MODEL_TYPES
+
+
+def min_train_samples_for_model(model_type: str, params: dict) -> int:
+    if model_type == "ml_knn":
+        return max(1, int(params.get("knn_neighbors", 5)))
+    return 2
 
 
 def _accuracy(y_true: list[int], y_pred: list[int]) -> float:
@@ -66,7 +81,7 @@ def _create_model(model_type: str, params: dict) -> Any:
         return HistGradientBoostingClassifier(max_iter=max_iter, random_state=42)
     if model_type == "ml_knn":
         neighbors = int(params.get("knn_neighbors", 5))
-        return _scaled_pipeline(KNeighborsClassifier(n_neighbors=neighbors))
+        return _scaled_pipeline(SafeKNeighborsClassifier(n_neighbors=neighbors))
     if model_type == "ml_xgboost":
         if XGBClassifier is None:
             raise ValueError("xgboost is not installed")
@@ -86,6 +101,9 @@ def train_model(
     y_train: list[int],
     params: dict,
 ) -> TrainResult:
+    if model_type == "ml_knn":
+        requested = int(params.get("knn_neighbors", 5))
+        params = {**params, "knn_neighbors": min(requested, len(x_train))}
     model = _create_model(model_type, params)
     model.fit(x_train, y_train)
     predictions = model.predict(x_train).tolist()

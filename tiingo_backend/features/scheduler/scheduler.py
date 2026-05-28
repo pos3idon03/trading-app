@@ -48,6 +48,10 @@ async def _fundamentals_job() -> None:
     await _enqueue_scheduled_job("fundamentals_ingest", {"symbols": []})
 
 
+async def _execution_evaluate_job() -> None:
+    await _enqueue_scheduled_job("execution_evaluate_all", {})
+
+
 async def _fred_seed_job() -> None:
     await _enqueue_scheduled_job("macro_seed_catalog", {})
 
@@ -65,6 +69,12 @@ def start_scheduler() -> None:
     minutes = settings.news_interval_minutes
 
     sched.add_job(_eod_job, CronTrigger(hour=22, minute=0), id="eod_incremental", replace_existing=True)
+    sched.add_job(
+        _execution_evaluate_job,
+        CronTrigger(hour=22, minute=15),
+        id="execution_evaluate_all",
+        replace_existing=True,
+    )
     sched.add_job(_news_job, IntervalTrigger(minutes=minutes), id="news_ingest", replace_existing=True)
     sched.add_job(_fundamentals_job, CronTrigger(hour=6, minute=0), id="fundamentals_ingest", replace_existing=True)
     sched.add_job(_fred_seed_job, CronTrigger(hour=6, minute=30), id="fred_seed_catalog", replace_existing=True)

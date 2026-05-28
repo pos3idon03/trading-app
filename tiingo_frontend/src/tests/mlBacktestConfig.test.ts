@@ -18,6 +18,8 @@ import {
   minimumBarsRequired,
   parseMlParams,
   validateMlParams,
+  validateWalkForwardParams,
+  estimateWalkForwardFoldCount,
 } from '../utils/mlBacktestConfig';
 
 describe('mlBacktestConfig', () => {
@@ -40,16 +42,51 @@ describe('mlBacktestConfig', () => {
 
   it('validates against model constraints', () => {
     const error = validateMlParams(
-      { ...DEFAULT_ML_PARAMS, train_bars: 5 },
+      { ...DEFAULT_ML_PARAMS, train_bars: 9 },
       {
         id: 'ml_logistic',
         label: 'Logistic',
         description: '',
         params: DEFAULT_ML_PARAMS,
-        constraints: { train_bars: { min: 30, max: 2000 } },
+        constraints: { train_bars: { min: 10, max: 2000 } },
       },
     );
     expect(error).toMatch(/train bars/i);
+  });
+
+  it('validateWalkForwardParams accepts train_bars of 10', () => {
+    const params = {
+      train_bars: 10,
+      test_bars: 20,
+      step_bars: 20,
+      label_horizon: 2,
+    };
+    expect(validateWalkForwardParams(params, 100)).toBeNull();
+  });
+
+  it('validateWalkForwardParams rejects train_bars below minimum', () => {
+    const params = {
+      train_bars: 9,
+      test_bars: 20,
+      step_bars: 20,
+      label_horizon: 2,
+    };
+    expect(validateWalkForwardParams(params)).toMatch(/train bars/i);
+  });
+
+  it('validateWalkForwardParams includes max train hint when range is too short', () => {
+    const params = {
+      train_bars: 150,
+      test_bars: 52,
+      step_bars: 52,
+      label_horizon: 3,
+    };
+    expect(validateWalkForwardParams(params, 200)).toMatch(/Max train bars/);
+  });
+
+  it('estimateWalkForwardFoldCount counts sliding windows', () => {
+    expect(estimateWalkForwardFoldCount(200, 60, 40, 40)).toBe(3);
+    expect(estimateWalkForwardFoldCount(80, 60, 40, 40)).toBe(0);
   });
 
   it('detects random forest model type', () => {

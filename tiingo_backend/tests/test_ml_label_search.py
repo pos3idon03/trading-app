@@ -64,3 +64,28 @@ def test_run_multi_model_label_grid_search_sorts_by_f1_macro():
 
     scores = [row["f1_macro"] for row in rows if row["f1_macro"] is not None]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_label_grid_search_knn_with_sparse_folds():
+    bar_count = 250
+    bars = _bars([100 + index for index in range(bar_count)])
+    feature_rows: list[list[float] | None] = [None] * bar_count
+    for index in range(147, bar_count):
+        feature_rows[index] = [float(index), float(index) * 0.1]
+
+    rows = run_label_grid_search(
+        bars=bars,
+        feature_rows=feature_rows,
+        label_mode="binary",
+        horizons=[2],
+        thresholds=[0.01],
+        train_bars=150,
+        test_bars=50,
+        step_bars=50,
+        model_type="ml_knn",
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["model_type"] == "ml_knn"
+    assert rows[0]["oos_window_count"] is not None
+    assert rows[0]["oos_window_count"] >= 1

@@ -64,6 +64,35 @@ export default function Sidebar() {
             <NavLink to="/backtesting/ml" className={subLinkClass}>
               ML
             </NavLink>
+            <NavLink to="/backtesting/foundation" className={subLinkClass}>
+              Foundation Models
+            </NavLink>
+            <NavLink to="/backtesting/trading-models" className={subLinkClass}>
+              Trading Models
+            </NavLink>
+          </div>
+        </div>
+
+        <div>
+          <p className="px-3 mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+            Trading
+          </p>
+          <div className="space-y-1">
+            <NavLink to="/trading/deployments" className={subLinkClass}>
+              Deployments
+            </NavLink>
+            <NavLink to="/trading/activity" className={subLinkClass}>
+              Activity
+            </NavLink>
+            <NavLink to="/trading/portfolio" className={subLinkClass}>
+              Portfolio
+            </NavLink>
+            <NavLink to="/trading/orders" className={subLinkClass}>
+              Orders
+            </NavLink>
+            <NavLink to="/trading/controls" className={subLinkClass}>
+              Controls
+            </NavLink>
           </div>
         </div>
       </nav>

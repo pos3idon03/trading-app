@@ -22,10 +22,10 @@ _SKIP_KEYS = frozenset({
 
 
 def encode_calendar_period(report_date: datetime) -> str:
-    """Calendar quarter from statement date (period end / report date from Tiingo).
+    """Calendar quarter label derived from a statement or filing date.
 
-    Q1 = Jan–Mar, Q2 = Apr–Jun, Q3 = Jul–Sep, Q4 = Oct–Dec.
-    Tiingo's year/quarter fields are company fiscal labels and are not used here.
+    When Tiingo asReported=true, report_date is the SEC filing/publication date.
+    Period labels prefer Tiingo fiscal year/quarter fields when present in flatten.
     """
     calendar_quarter = (report_date.month - 1) // 3 + 1
     return f"{report_date.year}-Q{calendar_quarter}"
@@ -112,30 +112,52 @@ def _flatten_top_level(stmt: dict, ts: datetime, period: str, rows: list[dict]) 
             )
 
 
-def flatten_fundamentals_statements(data: list[dict]) -> list[dict]:
+def _resolve_statement_period(stmt: dict, ts: datetime) -> str:
+    year = stmt.get("year") if stmt.get("year") is not None else stmt.get("fiscalYear")
+    quarter = stmt.get("quarter") if stmt.get("quarter") is not None else stmt.get("fiscalQuarter")
+    if year is not None and quarter is not None:
+        return encode_fundamental_period(year, quarter)
+    return encode_calendar_period(ts)
+
+
+def flatten_fundamentals_statements(
+    data: list[dict],
+    *,
+    as_reported: bool = True,
+) -> list[dict]:
     rows: list[dict] = []
     for stmt in data:
         report_date = stmt.get("date") or stmt.get("reportDate")
         if not report_date:
             continue
         ts = datetime.fromisoformat(str(report_date)[:10]).replace(tzinfo=timezone.utc)
-        period = encode_calendar_period(ts)
-        _flatten_statement_data(rows, stmt, ts, period)
+        period = _resolve_statement_period(stmt, ts)
+        stamped = {**stmt, "as_reported": as_reported}
+        _flatten_statement_data(rows, stamped, ts, period)
         if not stmt.get("statementData"):
-            _flatten_top_level(stmt, ts, period, rows)
+            _flatten_top_level(stamped, ts, period, rows)
     return rows
 
 
-async def fetch_fundamentals_statements(symbol: str) -> list[dict]:
+async def fetch_fundamentals_statements(symbol: str, *, as_reported: bool = True) -> list[dict]:
     token = get_token()
     url = f"{_FUND_URL}/{symbol.upper()}/statements"
-    params = {"token": token}
+    params: dict[str, str] = {"token": token}
+    if as_reported:
+        params["asReported"] = "true"
+    else:
+        logger.warning("fundamentals_fetch_not_point_in_time", symbol=symbol)
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.get(url, params=params)
         resp.raise_for_status()
         payload = resp.json()
 
     data = payload if isinstance(payload, list) else payload.get("statements", [])
-    rows = flatten_fundamentals_statements(data)
-    logger.info("fundamentals_fetched", symbol=symbol, metrics=len(rows))
+    rows = flatten_fundamentals_statements(data, as_reported=as_reported)
+    logger.info(
+        "fundamentals_fetched",
+        symbol=symbol,
+        metrics=len(rows),
+        as_reported=as_reported,
+    )
     return rows

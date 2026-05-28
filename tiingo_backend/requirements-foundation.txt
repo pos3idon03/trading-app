@@ -1,0 +1,10 @@
+# Optional dependencies for foundation-model backtesting (TimesFM + Chronos).
+# Install after base requirements: pip install -r requirements.txt -r requirements-foundation.txt
+#
+# TimesFM: install from source until a stable PyPI release supports 2.5:
+#   git clone https://github.com/google-research/timesfm.git && pip install -e ".[torch]"
+
+torch>=2.1.0,<3.0
+numpy>=1.26.0,<3.0
+chronos-forecasting>=2.0,<3.0
+huggingface-hub>=0.23.0,<1.0

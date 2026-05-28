@@ -27,6 +27,17 @@ const BACKTESTING_ROUTES = [
   { path: '/backtesting/algos/AAPL', label: 'Algos symbol' },
   { path: '/backtesting/ml', label: 'ML' },
   { path: '/backtesting/ml/AAPL', label: 'ML symbol' },
+  { path: '/backtesting/foundation', label: 'Foundation Models' },
+  { path: '/backtesting/foundation/AAPL', label: 'Foundation symbol' },
+  { path: '/backtesting/trading-models', label: 'Trading Models' },
+];
+
+const TRADING_ROUTES = [
+  { path: '/trading/deployments', label: 'Deployments' },
+  { path: '/trading/activity', label: 'Activity' },
+  { path: '/trading/portfolio', label: 'Portfolio' },
+  { path: '/trading/orders', label: 'Orders' },
+  { path: '/trading/controls', label: 'Controls' },
 ];
 
 describe('route paths', () => {
@@ -45,9 +56,17 @@ describe('route paths', () => {
     expect(new Set(paths).size).toBe(paths.length);
   });
 
+  it('defines unique trading route paths', () => {
+    const paths = TRADING_ROUTES.map((r) => r.path);
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
   it('includes backtesting symbol path param', () => {
     expect(BACKTESTING_ROUTES.some((r) => r.path.includes('/backtesting/algos/AAPL'))).toBe(true);
     expect(BACKTESTING_ROUTES.some((r) => r.path.includes('/backtesting/ml/AAPL'))).toBe(true);
+    expect(BACKTESTING_ROUTES.some((r) => r.path.includes('/backtesting/foundation/AAPL'))).toBe(
+      true,
+    );
   });
 });
 

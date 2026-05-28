@@ -84,16 +84,22 @@ def build_training_rows(
     return rows, warnings
 
 
-def training_rows_to_excel_bytes(rows: list[dict[str, Any]]) -> bytes:
-    frame = pd.DataFrame(rows)
-    if not frame.empty and "date" in frame.columns:
-        ordered = ["date", *[col for col in frame.columns if col not in {"date", "label", "forward_return"}]]
-        if "label" in frame.columns:
-            ordered.append("label")
-        if "forward_return" in frame.columns:
-            ordered.append("forward_return")
-        frame = frame[[col for col in ordered if col in frame.columns]]
+def order_training_dataframe(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty or "date" not in frame.columns:
+        return frame
+    ordered = [
+        "date",
+        *[col for col in frame.columns if col not in {"date", "label", "forward_return"}],
+    ]
+    if "label" in frame.columns:
+        ordered.append("label")
+    if "forward_return" in frame.columns:
+        ordered.append("forward_return")
+    return frame[[col for col in ordered if col in frame.columns]]
 
+
+def training_rows_to_excel_bytes(rows: list[dict[str, Any]]) -> bytes:
+    frame = order_training_dataframe(pd.DataFrame(rows))
     buffer = io.BytesIO()
     frame.to_excel(buffer, index=False, sheet_name="training_data")
     buffer.seek(0)

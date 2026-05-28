@@ -43,7 +43,32 @@ import type {
   MlTrainResponse,
   MlTrainingExportRequest,
   MlTrainingExportResponse,
+  MlWorkbookExportRequest,
+  MlWorkbookExportResponse,
 } from './mlBacktestTypes';
+
+import type {
+  FoundationBacktestResultsResponse,
+  FoundationModelCatalogResponse,
+  FoundationPreviewRequest,
+  FoundationPreviewResponse,
+  FoundationRunRequest,
+  FoundationRunJobResult,
+} from './foundationBacktestTypes';
+
+import type {
+  CreateDeploymentRequest,
+  EvaluateDeploymentResponse,
+  EnqueueJobResponse,
+  ExecutionActivityEvent,
+  ExecutionEvaluationsResponse,
+  ExecutionOrdersResponse,
+  ExecutionStatus,
+  PortfolioResponse,
+  RiskConfig,
+  TradingDeployment,
+  TradingDeploymentsResponse,
+} from './executionTypes';
 
 export const ingestionApi = {
   getStatus: () => api.get<IngestionStatus>('/ingestion/status').then((r) => r.data),
@@ -194,6 +219,8 @@ export const mlBacktestApi = {
     api.get<MlSavedModelsResponse>('/backtest/ml/saved-models').then((r) => r.data),
   getSavedModel: (id: string) =>
     api.get<MlSavedModel>(`/backtest/ml/saved-models/${id}`).then((r) => r.data),
+  deleteSavedModel: (id: string) =>
+    api.delete(`/backtest/ml/saved-models/${id}`).then(() => undefined),
   dataPreview: (body: MlDataPreviewRequest, onProgress?: (job: Job) => void) =>
     enqueueAndWait<MlDataPreviewResponse>(
       () => api.post<{ job_id: string }>('/backtest/ml/data-preview', body).then((r) => r.data),
@@ -223,6 +250,11 @@ export const mlBacktestApi = {
       () => api.post<{ job_id: string }>('/backtest/ml/training-data-export', body).then((r) => r.data),
       onProgress,
     ),
+  workbookExport: (body: MlWorkbookExportRequest, onProgress?: (job: Job) => void) =>
+    enqueueAndWait<MlWorkbookExportResponse>(
+      () => api.post<{ job_id: string }>('/backtest/ml/workbook-export', body).then((r) => r.data),
+      onProgress,
+    ),
   train: (body: MlTrainRequest, onProgress?: (job: Job) => void) =>
     enqueueAndWait<MlTrainResponse>(
       () => api.post<{ job_id: string }>('/backtest/ml/train', body).then((r) => r.data),
@@ -242,3 +274,55 @@ export const mlBacktestApi = {
   getResults: (id: string) =>
     api.get<MlBacktestResultsResponse>(`/backtest/ml/${id}/results`).then((r) => r.data),
 };
+
+export const foundationBacktestApi = {
+  listModels: () =>
+    api.get<FoundationModelCatalogResponse>('/backtest/foundation/models').then((r) => r.data),
+  preview: (body: FoundationPreviewRequest, onProgress?: (job: Job) => void) =>
+    enqueueAndWait<FoundationPreviewResponse>(
+      () => api.post<{ job_id: string }>('/backtest/foundation/preview', body).then((r) => r.data),
+      onProgress,
+    ),
+  run: (body: FoundationRunRequest, onProgress?: (job: Job) => void) =>
+    enqueueAndWait<FoundationRunJobResult>(
+      () => api.post<{ job_id: string }>('/backtest/foundation/run', body).then((r) => r.data),
+      onProgress,
+    ),
+  getResults: (id: string) =>
+    api
+      .get<FoundationBacktestResultsResponse>(`/backtest/foundation/${id}/results`)
+      .then((r) => r.data),
+};
+
+export const executionApi = {
+  getStatus: () => api.get<ExecutionStatus>('/execution/status').then((r) => r.data),
+  getRiskConfig: () => api.get<RiskConfig>('/execution/risk-config').then((r) => r.data),
+  setKillSwitch: (enabled: boolean) =>
+    api.post<{ kill_switch_enabled: boolean }>('/execution/kill-switch', { enabled }).then((r) => r.data),
+  getPortfolio: () => api.get<PortfolioResponse>('/execution/portfolio').then((r) => r.data),
+  listDeployments: () =>
+    api.get<TradingDeploymentsResponse>('/execution/deployments').then((r) => r.data),
+  createDeployment: (body: CreateDeploymentRequest) =>
+    api.post<TradingDeployment>('/execution/deployments', body).then((r) => r.data),
+  activateDeployment: (id: string) =>
+    api.post<TradingDeployment>(`/execution/deployments/${id}/activate`).then((r) => r.data),
+  pauseDeployment: (id: string) =>
+    api.post<TradingDeployment>(`/execution/deployments/${id}/pause`).then((r) => r.data),
+  stopDeployment: (id: string) =>
+    api.post<TradingDeployment>(`/execution/deployments/${id}/stop`).then((r) => r.data),
+  evaluateDeployment: (id: string) =>
+    api
+      .post<EvaluateDeploymentResponse>(`/execution/deployments/${id}/evaluate`)
+      .then((r) => r.data),
+  enqueueEvaluateAll: () =>
+    api.post<EnqueueJobResponse>('/execution/evaluate-all/enqueue').then((r) => r.data),
+  listOrders: (params?: { deployment_id?: string; symbol?: string; status?: string }) =>
+    api.get<ExecutionOrdersResponse>('/execution/orders', { params }).then((r) => r.data),
+  listEvaluations: (params?: { deployment_id?: string; symbol?: string; limit?: number }) =>
+    api.get<ExecutionEvaluationsResponse>('/execution/evaluations', { params }).then((r) => r.data),
+};
+
+export function executionActivityWsUrl(): string {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/api/v1/execution/ws`;
+}

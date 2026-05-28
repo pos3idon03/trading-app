@@ -8,6 +8,16 @@ from features.ml.catalog import (
 )
 
 
+def test_validate_ml_params_rejects_invalid_inference_eval_scope():
+    with pytest.raises(ValueError, match="inference_eval_scope"):
+        validate_ml_params("ml_logistic", {"inference_eval_scope": "invalid"})
+
+
+def test_validate_ml_params_defaults_inference_eval_scope():
+    params = validate_ml_params("ml_logistic", {"feature_mode": "prices_only"})
+    assert params["inference_eval_scope"] == "holdout"
+
+
 def test_validate_ml_params_rejects_unknown_feature_mode():
     with pytest.raises(ValueError, match="Unsupported feature_mode"):
         validate_ml_params("ml_logistic", {"feature_mode": "prices_only_macro"})
@@ -72,6 +82,17 @@ def test_validate_ml_params_merges_defaults():
     params = validate_ml_params("ml_logistic", {"train_bars": 120})
     assert params["train_bars"] == 120
     assert params["feature_mode"] == "prices_only"
+
+
+def test_validate_ml_params_accepts_train_bars_of_10():
+    params = validate_ml_params("ml_logistic", {"train_bars": 10, "test_bars": 20})
+    assert params["train_bars"] == 10
+    assert params["test_bars"] == 20
+
+
+def test_validate_ml_params_rejects_train_bars_below_minimum():
+    with pytest.raises(ValueError, match="train_bars"):
+        validate_ml_params("ml_logistic", {"train_bars": 9})
 
 
 def test_validate_ml_params_applies_timeframe_defaults():

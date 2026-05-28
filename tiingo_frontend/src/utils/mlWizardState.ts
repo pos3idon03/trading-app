@@ -7,7 +7,11 @@ import type {
   MlThresholdSearchResult,
   MlWizardStep,
 } from '../api/mlBacktestTypes';
-import { validateMlParams } from './mlBacktestConfig';
+import {
+  pickWalkForwardParams,
+  validateMlParams,
+  validateWalkForwardParams,
+} from './mlBacktestConfig';
 
 export const WIZARD_STEP_ORDER: MlWizardStep[] = [
   'universe',
@@ -77,6 +81,7 @@ export interface CompleteStepInput {
   initialCash: number;
   commissionBps: number;
   configOverride?: CompleteStepConfigOverride;
+  availableBarCount?: number | null;
 }
 
 export function buildWizardStepSnapshot(
@@ -99,6 +104,7 @@ export function buildWizardStepSnapshot(
         symbol: config.symbol,
         decisionTimeframe: config.decisionTimeframe,
         dateRange: config.dateRange,
+        mlParams: pickWalkForwardParams(config.mlParams),
       };
     case 'data_prep':
       return { mlParams: { ...config.mlParams } };
@@ -145,6 +151,7 @@ export function resolveCompleteStepAdvance(
     input.selectedModel,
     input.symbol,
     mergedArtifacts,
+    input.availableBarCount,
   );
   if (error) {
     return { error };
@@ -200,6 +207,7 @@ export function validateWizardStepGate(
   model: MlModelCatalogItem | undefined,
   symbol: string,
   artifacts: MlWizardArtifacts,
+  availableBarCount?: number | null,
 ): string | null {
   if (!symbol) {
     return 'Select a symbol first.';
@@ -207,7 +215,7 @@ export function validateWizardStepGate(
 
   switch (step) {
     case 'universe':
-      return null;
+      return validateWalkForwardParams(pickWalkForwardParams(params), availableBarCount);
     case 'data_prep':
       if (params.feature_mode !== 'prices_only' && !params.macro_series_ids?.length) {
         return 'Select macro series or switch to prices-only mode.';
@@ -230,9 +238,6 @@ export function validateWizardStepGate(
     case 'model':
       return validateMlParams(params, model);
     case 'signals':
-      if (!artifacts.hasThresholdSearch) {
-        return 'Run threshold sweep before continuing.';
-      }
       if (!artifacts.hasThresholdApplied) {
         return 'Apply a threshold result or confirm current thresholds.';
       }

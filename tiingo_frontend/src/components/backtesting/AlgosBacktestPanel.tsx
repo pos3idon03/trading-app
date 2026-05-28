@@ -441,6 +441,7 @@ export default function AlgosBacktestPanel({
             <BacktestEquityChart
               strategy={results.equity_curve}
               benchmark={results.benchmark_equity_curve}
+              initialCash={results.metrics?.initial_cash ?? undefined}
             />
           </section>
 

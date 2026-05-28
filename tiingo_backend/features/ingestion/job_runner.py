@@ -98,4 +98,12 @@ async def _dispatch(
         from features.ml.job_runner import execute_ml_job
 
         return await execute_ml_job(session, job_type, params, job_id=job_id)
+    if job_type.startswith("foundation_"):
+        from features.foundation.job_runner import execute_foundation_job
+
+        return await execute_foundation_job(session, job_type, params, job_id=job_id)
+    if job_type.startswith("execution_"):
+        from features.execution.job_runner import execute_execution_job
+
+        return await execute_execution_job(session, job_type, params, job_id=job_id)
     raise ValueError(f"Unknown job type: {job_type}")

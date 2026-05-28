@@ -6,8 +6,38 @@ import { ML_FIELD_LABELS } from './mlBacktestHelp';
 export const FEATURE_WARMUP_BARS = 50;
 
 const TRADING_MINUTES_PER_DAY = 6.5 * 60;
-const MIN_TRAIN_BARS = 30;
-const MIN_TEST_BARS = 5;
+const MIN_TRAIN_BARS = 10;
+const MIN_TEST_BARS = 1;
+
+export type WalkForwardParamKey = 'train_bars' | 'test_bars' | 'step_bars' | 'label_horizon';
+
+export const WALK_FORWARD_PARAM_KEYS: WalkForwardParamKey[] = [
+  'train_bars',
+  'test_bars',
+  'step_bars',
+  'label_horizon',
+];
+
+export const WALK_FORWARD_CONSTRAINTS: Record<
+  WalkForwardParamKey,
+  { min: number; max: number }
+> = {
+  train_bars: { min: 10, max: 2000 },
+  test_bars: { min: 1, max: 500 },
+  step_bars: { min: 1, max: 500 },
+  label_horizon: { min: 1, max: 60 },
+};
+
+export type WalkForwardParams = Pick<MlParams, WalkForwardParamKey>;
+
+export function pickWalkForwardParams(params: MlParams): WalkForwardParams {
+  return {
+    train_bars: params.train_bars,
+    test_bars: params.test_bars,
+    step_bars: params.step_bars,
+    label_horizon: params.label_horizon,
+  };
+}
 
 export function barsPerYear(timeframe: string): number {
   if (timeframe === '1d') return 252;
@@ -114,6 +144,7 @@ export const DEFAULT_ML_PARAMS: MlParams = {
   step_bars: 63,
   buy_threshold: 0.55,
   sell_threshold: 0.45,
+  inference_eval_scope: 'holdout',
   random_forest_estimators: 100,
   gradient_boosting_max_iter: 100,
   knn_neighbors: 5,
@@ -159,6 +190,8 @@ export function parseMlParams(raw: Record<string, unknown>): MlParams {
     step_bars: Number(raw.step_bars ?? DEFAULT_ML_PARAMS.step_bars),
     buy_threshold: Number(raw.buy_threshold ?? DEFAULT_ML_PARAMS.buy_threshold),
     sell_threshold: Number(raw.sell_threshold ?? DEFAULT_ML_PARAMS.sell_threshold),
+    inference_eval_scope:
+      raw.inference_eval_scope === 'in_sample' ? 'in_sample' : 'holdout',
     random_forest_estimators: Number(
       raw.random_forest_estimators ?? DEFAULT_ML_PARAMS.random_forest_estimators,
     ),
@@ -177,8 +210,70 @@ export function parseMlParams(raw: Record<string, unknown>): MlParams {
   };
 }
 
-export function minimumBarsRequired(params: MlParams): number {
+export function minimumBarsRequired(params: Pick<MlParams, WalkForwardParamKey>): number {
   return FEATURE_WARMUP_BARS + params.train_bars + params.test_bars + params.label_horizon;
+}
+
+export function estimateWalkForwardFoldCount(
+  barCount: number,
+  trainBars: number,
+  testBars: number,
+  stepBars: number,
+): number {
+  if (barCount < trainBars + testBars || trainBars < 1 || testBars < 1 || stepBars < 1) {
+    return 0;
+  }
+
+  let folds = 0;
+  let trainStart = 0;
+  while (trainStart + trainBars + testBars <= barCount) {
+    folds += 1;
+    trainStart += stepBars;
+  }
+  return folds;
+}
+
+export function validateWalkForwardParams(
+  params: Pick<MlParams, WalkForwardParamKey>,
+  barCount?: number | null,
+): string | null {
+  for (const key of WALK_FORWARD_PARAM_KEYS) {
+    const value = params[key];
+    const { min, max } = WALK_FORWARD_CONSTRAINTS[key];
+    if (!Number.isFinite(value)) {
+      return `${key.replace(/_/g, ' ')} must be a number.`;
+    }
+    if (value < min || value > max) {
+      return `${key.replace(/_/g, ' ')} must be between ${min} and ${max}.`;
+    }
+  }
+
+  if (minimumBarsRequired(params) < FEATURE_WARMUP_BARS + 2) {
+    return 'Walk-forward windows require more bars.';
+  }
+
+  if (barCount != null && barCount > 0 && minimumBarsRequired(params) > barCount) {
+    const required = minimumBarsRequired(params);
+    const maxTrain = barCount - FEATURE_WARMUP_BARS - params.test_bars - params.label_horizon;
+    return (
+      `Date range has ~${barCount} bars but ${required} are required (includes feature warmup). ` +
+      `Max train bars at current test/horizon: ${Math.max(WALK_FORWARD_CONSTRAINTS.train_bars.min, maxTrain)}.`
+    );
+  }
+
+  if (barCount != null && barCount > 0) {
+    const folds = estimateWalkForwardFoldCount(
+      barCount,
+      params.train_bars,
+      params.test_bars,
+      params.step_bars,
+    );
+    if (folds === 0) {
+      return 'Walk-forward settings cannot produce any folds for the selected date range.';
+    }
+  }
+
+  return null;
 }
 
 export function validateMlParams(

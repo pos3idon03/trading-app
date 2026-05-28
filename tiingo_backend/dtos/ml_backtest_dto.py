@@ -55,7 +55,7 @@ class MlRunRequest(BaseModel):
     start: Optional[datetime] = None
     end: Optional[datetime] = None
     initial_cash: float = Field(default=10_000.0, gt=0)
-    commission_bps: float = Field(default=0.0, ge=0, le=1000)
+    commission_bps: float = Field(default=5.0, ge=0, le=1000)
 
 
 class MlSummaryDTO(BaseModel):
@@ -89,6 +89,14 @@ class MlSummaryDTO(BaseModel):
     simulation_start_bar_index: Optional[int] = None
     simulation_start_date: Optional[str] = None
     pre_oos_bars_excluded: Optional[int] = None
+    evaluation_start_bar_index: Optional[int] = None
+    evaluation_start_date: Optional[str] = None
+    evaluation_reason: Optional[str] = None
+    evaluation_scope: Optional[str] = None
+    holdout_bars: Optional[int] = None
+    holdout_start_date: Optional[str] = None
+    holdout_end_date: Optional[str] = None
+    train_end_date: Optional[str] = None
 
 
 class MlRunResponse(BaseModel):
@@ -148,6 +156,8 @@ class MlSavedModelDTO(BaseModel):
     feature_schema: dict[str, Any] = Field(default_factory=dict)
     hyperparams: dict[str, Any] = Field(default_factory=dict)
     train_metrics: Optional[dict[str, Any]] = None
+    symbol: Optional[str] = None
+    timeframe: Optional[str] = None
     created_at: datetime
 
 
@@ -177,6 +187,21 @@ class MlLabelPreviewDTO(BaseModel):
     class_distribution: dict[str, int] = Field(default_factory=dict)
 
 
+class MlWalkForwardReadinessDTO(BaseModel):
+    total_bars: int = 0
+    warmup_bars: int = 0
+    valid_feature_rows: int = 0
+    labeled_rows: int = 0
+    trainable_rows: int = 0
+    structural_folds: int = 0
+    viable_folds: int = 0
+    train_bars: int = 0
+    test_bars: int = 0
+    step_bars: int = 0
+    label_horizon: int = 0
+    readiness_issues: list[str] = Field(default_factory=list)
+
+
 class MlDataPreviewResponse(BaseModel):
     decision_timeframe: str
     bar_counts: dict[str, int] = Field(default_factory=dict)
@@ -186,6 +211,9 @@ class MlDataPreviewResponse(BaseModel):
     context_timeframes: list[str] = Field(default_factory=list)
     strategy_feature_ids: list[str] = Field(default_factory=list)
     label_preview: MlLabelPreviewDTO
+    walk_forward_readiness: MlWalkForwardReadinessDTO = Field(
+        default_factory=MlWalkForwardReadinessDTO,
+    )
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -277,6 +305,36 @@ class MlTrainingExportResponse(BaseModel):
     row_count: int
     warnings: list[str] = Field(default_factory=list)
     content_base64: str
+
+
+class MlWorkbookSheetDTO(BaseModel):
+    name: str
+    row_count: int
+
+
+class MlWorkbookExportRequest(BaseModel):
+    symbol: str
+    model_type: str = "ml_logistic"
+    params: dict[str, Any] = Field(default_factory=dict)
+    timeframe: str = "1d"
+    start: Optional[datetime] = None
+    end: Optional[datetime] = None
+    training_scope: str = "all_labeled"
+    sample_size: int = Field(default=500, ge=1, le=10_000)
+    run_id: Optional[UUID] = None
+    data_preview: Optional[dict[str, Any]] = None
+    label_search_results: Optional[list[dict[str, Any]]] = None
+    threshold_search_results: Optional[list[dict[str, Any]]] = None
+    compare_results: Optional[list[dict[str, Any]]] = None
+    config_snapshot: Optional[dict[str, Any]] = None
+
+
+class MlWorkbookExportResponse(BaseModel):
+    filename: str
+    row_count: int
+    warnings: list[str] = Field(default_factory=list)
+    content_base64: str
+    sheets: list[MlWorkbookSheetDTO] = Field(default_factory=list)
 
 
 class MlJobAcceptedResponse(BaseModel):

@@ -16,6 +16,7 @@ from features.backtesting.engine import (
 from features.backtesting.metrics import compute_metrics
 from features.ml.artifacts import (
     build_feature_schema,
+    delete_model_artifact,
     load_model_artifact,
     save_model_artifact,
     validate_feature_schema,
@@ -46,11 +47,23 @@ from features.ml.feature_builder import (
 from features.ml.context_features import build_context_feature_matrix
 from features.ml.strategy_features import build_strategy_feature_matrix
 from features.ml.hyperparameter_search import run_hyperparameter_search
+from features.ml.inference_holdout import (
+    build_holdout_train_metrics,
+    collect_labeled_bar_indices,
+    resolve_holdout_bars,
+    resolve_inference_bar_load_range,
+    resolve_inference_eval_scope,
+    resolve_inference_window,
+    split_holdout_indices,
+    split_labeled_samples_by_indices,
+)
 from features.ml.label_search import DEFAULT_LABEL_SEARCH_MODEL_TYPES, run_label_grid_search
 from features.ml.labels import build_labels
 from features.ml.predictor import predict_with_frozen_model, run_walk_forward_prediction
 from features.ml.simulation_window import (
+    build_evaluation_metadata,
     build_simulation_metadata,
+    resolve_evaluation_start_index,
     slice_simulation_window,
     walk_forward_simulation_start_index,
 )
@@ -111,6 +124,7 @@ def _build_enriched_ml_summary(
     x_rows_for_shap: list[list[float]],
     model_classes: list[int],
     importance_model: Any | None,
+    evaluation_metadata: dict | None = None,
 ) -> dict:
     label_mode = str(validated_params.get("label_mode") or "binary")
     metrics = compute_classification_metrics(y_true, y_pred)
@@ -166,6 +180,7 @@ def _build_enriched_ml_summary(
         "fundamental_warnings": fundamental_warnings,
         "context_timeframes": list(validated_params.get("context_timeframes") or []),
         "strategy_feature_ids": list(validated_params.get("strategy_feature_ids") or []),
+        **(evaluation_metadata or {}),
     }
 
 
@@ -282,20 +297,41 @@ async def train_ml_model_for_symbol(
         label_threshold=float(validated_params.get("label_threshold") or 0.01),
         label_method=str(validated_params.get("label_method") or "endpoint"),
     )
-    x_rows, y_rows = _collect_labeled_samples(feature_rows, labels)
+    labeled_indices = collect_labeled_bar_indices(feature_rows, labels)
+    holdout_bars = resolve_holdout_bars(validated_params)
+    train_indices, holdout_indices = split_holdout_indices(labeled_indices, holdout_bars)
+    x_rows, y_rows = split_labeled_samples_by_indices(feature_rows, labels, train_indices)
     if len(x_rows) < 2 or len(set(y_rows)) < 2:
-        raise ValueError("Insufficient labeled samples to train a model")
+        raise ValueError("Insufficient labeled train samples to train a model")
 
     trained = train_model(model_type, x_rows, y_rows, validated_params)
     predictions = [1 if prob >= 0.5 else 0 for prob in trained.model.predict(x_rows).tolist()]
+    holdout_x, holdout_y = split_labeled_samples_by_indices(
+        feature_rows,
+        labels,
+        holdout_indices,
+    )
+    holdout_predictions = [
+        1 if prob >= 0.5 else 0 for prob in trained.model.predict(holdout_x).tolist()
+    ]
+    holdout_metrics = compute_classification_metrics(holdout_y, holdout_predictions)
+    holdout_metadata = build_holdout_train_metrics(
+        bars=_bars,
+        train_indices=train_indices,
+        holdout_indices=holdout_indices,
+        holdout_bars=holdout_bars,
+        decision_timeframe=timeframe,
+        start=start,
+        end=end,
+    )
     train_metrics = {
         **compute_classification_metrics(y_rows, predictions),
         "train_accuracy": round(trained.train_accuracy, 4),
         "sample_count": len(y_rows),
+        "holdout_accuracy": round(holdout_metrics["accuracy"], 4),
         "training_symbol": instrument["symbol"],
         "timeframe": timeframe,
-        "start": start.isoformat() if start else None,
-        "end": end.isoformat() if end else None,
+        **holdout_metadata,
     }
 
     feature_schema = build_feature_schema(feature_names)
@@ -325,6 +361,14 @@ async def list_saved_ml_models(session: AsyncSession) -> list[dict]:
 
 async def get_saved_ml_model(session: AsyncSession, model_id: UUID) -> dict | None:
     return await ml_model_dal.get_model(session, model_id)
+
+
+async def delete_saved_ml_model(session: AsyncSession, model_id: UUID) -> None:
+    row = await ml_model_dal.delete_model(session, model_id)
+    if not row:
+        raise LookupError(f"Saved model not found: {model_id}")
+    delete_model_artifact(row.get("artifact_path"))
+    await session.commit()
 
 
 async def _run_walk_forward_backtest(
@@ -398,6 +442,8 @@ async def _run_inference_backtest(
     macro_warnings: list[str],
     fundamental_metrics: list[str],
     fundamental_warnings: list[str],
+    eval_start_index: int = 0,
+    evaluation_metadata: dict | None = None,
 ) -> tuple[list[str], dict, str]:
     saved = await ml_model_dal.get_model(session, model_id)
     if not saved:
@@ -430,19 +476,26 @@ async def _run_inference_backtest(
     aligned_y_true: list[int] = []
     aligned_y_pred: list[int] = []
     aligned_y_proba: list[list[float]] = []
-    for features, label, prob, class_pred, class_probs in zip(
-        feature_rows,
-        labels,
-        probabilities,
-        class_predictions,
-        class_probabilities,
+    aligned_x_rows: list[list[float]] = []
+    for index, (features, label, prob, class_pred, class_probs) in enumerate(
+        zip(
+            feature_rows,
+            labels,
+            probabilities,
+            class_predictions,
+            class_probabilities,
+        )
     ):
+        if index < eval_start_index:
+            continue
         if features is None or label is None or class_pred is None or class_probs is None:
             continue
         aligned_y_true.append(label)
         aligned_y_pred.append(int(class_pred))
         aligned_y_proba.append(class_probs)
+        aligned_x_rows.append(features)
 
+    eval_signals = signals[eval_start_index:] if eval_start_index > 0 else signals
     ml_summary = _build_enriched_ml_summary(
         validated_params=validated_params,
         model_type=saved["model_type"],
@@ -451,7 +504,7 @@ async def _run_inference_backtest(
         macro_warnings=macro_warnings,
         fundamental_metrics=fundamental_metrics,
         fundamental_warnings=fundamental_warnings,
-        signals=signals,
+        signals=eval_signals,
         run_mode="inference",
         model_id=str(model_id),
         oos_window_count=0,
@@ -460,9 +513,10 @@ async def _run_inference_backtest(
         y_true=aligned_y_true,
         y_pred=aligned_y_pred,
         y_proba=aligned_y_proba,
-        x_rows_for_shap=[features for features, label in zip(feature_rows, labels) if features is not None and label is not None],
+        x_rows_for_shap=aligned_x_rows,
         model_classes=list(model.classes_),
         importance_model=model,
+        evaluation_metadata=evaluation_metadata,
     )
     return signals, ml_summary, saved["model_type"]
 
@@ -492,6 +546,17 @@ async def run_ml_backtest_for_symbol(
         raise LookupError(f"Instrument not found: {symbol.upper()}")
 
     _validate_fundamentals_entitlement(instrument["symbol"], validated_params["feature_mode"])
+
+    saved_model: dict | None = None
+    if model_id:
+        saved_model = await ml_model_dal.get_model(session, model_id)
+        if not saved_model:
+            raise ValueError(f"Saved model not found: {model_id}")
+        start, end = resolve_inference_bar_load_range(
+            train_metrics=saved_model.get("train_metrics"),
+            request_start=start,
+            request_end=end,
+        )
 
     run = await backtest_dal.create_run(
         session,
@@ -535,7 +600,16 @@ async def run_ml_backtest_for_symbol(
         )
 
         effective_model_type = model_type
+        eval_start_index = 0
         if model_id:
+            if saved_model is None:
+                raise ValueError(f"Saved model not found: {model_id}")
+            inference_eval_scope = resolve_inference_eval_scope(validated_params)
+            eval_start_index, scope_metadata = resolve_inference_window(
+                train_metrics=saved_model.get("train_metrics"),
+                hyperparams=saved_model.get("hyperparams") or validated_params,
+                inference_eval_scope=inference_eval_scope,
+            )
             signals, ml_summary, effective_model_type = await _run_inference_backtest(
                 session=session,
                 model_id=model_id,
@@ -548,6 +622,8 @@ async def run_ml_backtest_for_symbol(
                 macro_warnings=macro_warnings,
                 fundamental_metrics=fundamental_metrics,
                 fundamental_warnings=fundamental_warnings,
+                eval_start_index=eval_start_index,
+                evaluation_metadata=scope_metadata,
             )
         else:
             signals, ml_summary = await _run_walk_forward_backtest(
@@ -562,14 +638,32 @@ async def run_ml_backtest_for_symbol(
                 fundamental_metrics=fundamental_metrics,
                 fundamental_warnings=fundamental_warnings,
             )
+            ml_summary = {**ml_summary, "evaluation_scope": "walk_forward_oos"}
 
         run_mode = "inference" if model_id else "walk_forward"
         bars_for_sim = bars
         signals_for_sim = signals
+        sim_start = 0
         if run_mode == "walk_forward":
             sim_start = walk_forward_simulation_start_index(
                 int(validated_params["train_bars"]),
             )
+            bars_for_sim, signals_for_sim = slice_simulation_window(
+                bars,
+                signals,
+                sim_start,
+            )
+            ml_summary = {
+                **ml_summary,
+                **build_simulation_metadata(
+                    bars=bars,
+                    start_index=sim_start,
+                    decision_timeframe=timeframe,
+                ),
+                "signal_counts": count_signals(signals_for_sim),
+            }
+        elif eval_start_index > 0:
+            sim_start = eval_start_index
             bars_for_sim, signals_for_sim = slice_simulation_window(
                 bars,
                 signals,
@@ -592,12 +686,48 @@ async def run_ml_backtest_for_symbol(
             commission_bps,
             decision_timeframe=timeframe,
         )
-        benchmark_result = run_buy_and_hold_benchmark(
+        eval_offset = resolve_evaluation_start_index(
             bars_for_sim,
-            initial_cash,
-            commission_bps,
+            strategy_result.trades,
             decision_timeframe=timeframe,
         )
+        if eval_offset > 0:
+            eval_bars, eval_signals = slice_simulation_window(
+                bars_for_sim,
+                signals_for_sim,
+                eval_offset,
+            )
+            strategy_result = run_backtest_with_signals(
+                eval_bars,
+                eval_signals,
+                initial_cash,
+                commission_bps,
+                decision_timeframe=timeframe,
+            )
+            benchmark_result = run_buy_and_hold_benchmark(
+                eval_bars,
+                initial_cash,
+                commission_bps,
+                decision_timeframe=timeframe,
+            )
+        else:
+            benchmark_result = run_buy_and_hold_benchmark(
+                bars_for_sim,
+                initial_cash,
+                commission_bps,
+                decision_timeframe=timeframe,
+            )
+
+        eval_reason = "first_trade" if strategy_result.trades else "simulation_start"
+        ml_summary = {
+            **ml_summary,
+            **build_evaluation_metadata(
+                bars=bars,
+                start_index=sim_start + eval_offset,
+                decision_timeframe=timeframe,
+                reason=eval_reason,
+            ),
+        }
         metrics = compute_metrics(strategy_result, benchmark_result, initial_cash, timeframe)
         strategy_payload = serialize_simulation(strategy_result)
         benchmark_payload = serialize_simulation(benchmark_result)
@@ -751,6 +881,24 @@ async def preview_ml_data_for_symbol(
         raise LookupError(f"Instrument not found: {symbol.upper()}")
     _validate_fundamentals_entitlement(instrument["symbol"], validated_params["feature_mode"])
 
+    (
+        bars,
+        _feature_names,
+        feature_rows,
+        macro_warnings,
+        fundamental_warnings,
+        macro_series_ids,
+        fundamental_metrics,
+        context_warnings,
+        strategy_warnings,
+    ) = await _load_bars_and_features(
+        session,
+        instrument=instrument,
+        validated_params=validated_params,
+        timeframe=timeframe,
+        start=start,
+        end=end,
+    )
     bars_by_tf = await _load_bars_by_timeframe(
         session,
         instrument["id"],
@@ -758,20 +906,6 @@ async def preview_ml_data_for_symbol(
         timeframe,
         start,
         end,
-    )
-    (
-        macro_series_ids,
-        macro_warnings,
-        fundamental_metrics,
-        fundamental_warnings,
-        context_warnings,
-        strategy_warnings,
-    ) = await _resolve_preview_warnings(
-        session,
-        instrument_id=instrument["id"],
-        validated_params=validated_params,
-        timeframe=timeframe,
-        bars_by_tf=bars_by_tf,
     )
     preview = await build_data_preview(
         session,
@@ -782,6 +916,8 @@ async def preview_ml_data_for_symbol(
         fundamental_metrics=fundamental_metrics,
         context_warnings=[*context_warnings, *macro_warnings, *fundamental_warnings],
         strategy_warnings=strategy_warnings,
+        bars=bars,
+        feature_rows=feature_rows,
     )
     return preview
 
@@ -1027,5 +1163,100 @@ async def export_training_data_for_symbol(
         "row_count": len(rows),
         "warnings": warnings,
         "content_base64": base64.b64encode(content).decode("ascii"),
+    }
+
+
+async def export_workbook_for_symbol(
+    session: AsyncSession,
+    *,
+    symbol: str,
+    model_type: str,
+    params: dict | None,
+    timeframe: str,
+    start: datetime | None,
+    end: datetime | None,
+    training_scope: str,
+    sample_size: int = 500,
+    run_id=None,
+    data_preview: dict | None = None,
+    label_search_results: list | None = None,
+    threshold_search_results: list | None = None,
+    compare_results: list | None = None,
+    config_snapshot: dict | None = None,
+) -> dict:
+    from features.ml.training_export import build_training_rows
+    from features.ml.workbook_export import WorkbookInput, build_workbook_bytes
+
+    validate_timeframe(timeframe, "decision timeframe")
+    validated_params = validate_ml_params(model_type, params, timeframe)
+    instrument = await instrument_dal.get_by_symbol(session, symbol)
+    if not instrument:
+        raise LookupError(f"Instrument not found: {symbol.upper()}")
+
+    _validate_fundamentals_entitlement(instrument["symbol"], validated_params["feature_mode"])
+
+    (
+        bars,
+        feature_names,
+        feature_rows,
+        *_rest,
+    ) = await _load_bars_and_features(
+        session,
+        instrument=instrument,
+        validated_params=validated_params,
+        timeframe=timeframe,
+        start=start,
+        end=end,
+    )
+    labels = build_labels(
+        bars,
+        int(validated_params["label_horizon"]),
+        label_mode=str(validated_params.get("label_mode") or "binary"),
+        label_threshold=float(validated_params.get("label_threshold") or 0.01),
+        label_method=str(validated_params.get("label_method") or "endpoint"),
+    )
+    rows, warnings = build_training_rows(
+        bars=bars,
+        feature_names=feature_names,
+        feature_rows=feature_rows,
+        labels=labels,
+        label_horizon=int(validated_params["label_horizon"]),
+        label_method=str(validated_params.get("label_method") or "endpoint"),
+        scope=training_scope,  # type: ignore[arg-type]
+        sample_size=sample_size,
+        train_bars=int(validated_params["train_bars"]),
+        test_bars=int(validated_params["test_bars"]),
+        step_bars=int(validated_params["step_bars"]),
+    )
+    if not rows:
+        raise ValueError("No training rows available for export.")
+
+    run_results = None
+    if run_id is not None:
+        run_results = await get_ml_backtest_results(session, run_id)
+        if not run_results:
+            warnings.append(f"Backtest run not found: {run_id}")
+
+    workbook = WorkbookInput(
+        symbol=instrument["symbol"],
+        model_type=model_type,
+        timeframe=timeframe,
+        params=validated_params,
+        config_snapshot=config_snapshot,
+        data_preview=data_preview,
+        label_search_results=label_search_results,
+        threshold_search_results=threshold_search_results,
+        compare_results=compare_results,
+        training_rows=rows,
+        run_results=run_results,
+    )
+    content, sheet_metas = build_workbook_bytes(workbook)
+    filename = f"{instrument['symbol']}_{timeframe}_ml_workbook.xlsx"
+    return {
+        "filename": filename,
+        "row_count": len(rows),
+        "warnings": warnings,
+        "content_base64": base64.b64encode(content).decode("ascii"),
+        "sheets": [{"name": meta.name, "row_count": meta.row_count} for meta in sheet_metas],
     }
 

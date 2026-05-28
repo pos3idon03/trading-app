@@ -21,16 +21,35 @@ from dtos.ml_backtest_dto import (
     MlThresholdSearchRequest,
     MlTrainRequest,
     MlTrainingExportRequest,
+    MlWorkbookExportRequest,
 )
 from features.ml.orchestrator import (
+    delete_saved_ml_model,
     get_ml_backtest_results,
     get_ml_model_catalog,
     get_saved_ml_model,
     list_saved_ml_models,
 )
+from features.ml.saved_model_metadata import extract_saved_model_metadata
 from features.worker.tasks import create_and_enqueue_job
 
 router = APIRouter(prefix="/backtest/ml", tags=["backtest-ml"])
+
+
+def _saved_model_dto(row: dict) -> MlSavedModelDTO:
+    metadata = extract_saved_model_metadata(row)
+    return MlSavedModelDTO(
+        id=row["id"],
+        name=row["name"],
+        model_type=row["model_type"],
+        feature_mode=row["feature_mode"],
+        feature_schema=row.get("feature_schema") or {},
+        hyperparams=row.get("hyperparams") or {},
+        train_metrics=row.get("train_metrics"),
+        symbol=metadata["symbol"],
+        timeframe=metadata["timeframe"],
+        created_at=row["created_at"],
+    )
 
 
 @router.get("/models", response_model=MlModelCatalogResponse)
@@ -59,21 +78,7 @@ async def list_saved_models(
     session: AsyncSession = Depends(get_db),
 ) -> MlSavedModelsResponse:
     rows = await list_saved_ml_models(session)
-    return MlSavedModelsResponse(
-        models=[
-            MlSavedModelDTO(
-                id=row["id"],
-                name=row["name"],
-                model_type=row["model_type"],
-                feature_mode=row["feature_mode"],
-                feature_schema=row.get("feature_schema") or {},
-                hyperparams=row.get("hyperparams") or {},
-                train_metrics=row.get("train_metrics"),
-                created_at=row["created_at"],
-            )
-            for row in rows
-        ]
-    )
+    return MlSavedModelsResponse(models=[_saved_model_dto(row) for row in rows])
 
 
 @router.get("/saved-models/{model_id}", response_model=MlSavedModelDTO)
@@ -84,16 +89,18 @@ async def get_saved_model(
     row = await get_saved_ml_model(session, model_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"Saved model not found: {model_id}")
-    return MlSavedModelDTO(
-        id=row["id"],
-        name=row["name"],
-        model_type=row["model_type"],
-        feature_mode=row["feature_mode"],
-        feature_schema=row.get("feature_schema") or {},
-        hyperparams=row.get("hyperparams") or {},
-        train_metrics=row.get("train_metrics"),
-        created_at=row["created_at"],
-    )
+    return _saved_model_dto(row)
+
+
+@router.delete("/saved-models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_saved_model(
+    model_id: UUID,
+    session: AsyncSession = Depends(get_db),
+) -> None:
+    try:
+        await delete_saved_ml_model(session, model_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail=f"Saved model not found: {model_id}") from None
 
 
 @router.post("/data-preview", status_code=status.HTTP_202_ACCEPTED, response_model=MlJobAcceptedResponse)
@@ -156,6 +163,19 @@ async def ml_training_data_export(
     job = await create_and_enqueue_job(
         session,
         "ml_training_export",
+        body.model_dump(mode="json"),
+    )
+    return MlJobAcceptedResponse(job_id=job["id"])
+
+
+@router.post("/workbook-export", status_code=status.HTTP_202_ACCEPTED, response_model=MlJobAcceptedResponse)
+async def ml_workbook_export(
+    body: MlWorkbookExportRequest,
+    session: AsyncSession = Depends(get_db),
+) -> MlJobAcceptedResponse:
+    job = await create_and_enqueue_job(
+        session,
+        "ml_workbook_export",
         body.model_dump(mode="json"),
     )
     return MlJobAcceptedResponse(job_id=job["id"])

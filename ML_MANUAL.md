@@ -129,7 +129,8 @@ Sparse fundamentals coverage may introduce **survivorship bias** — warnings ar
 | Instrument search | Pick stock/ETF symbol |
 | Decision timeframe | Bar size for features, labels, and trade execution |
 | Date range | Backtest window (same controls as Algos page) |
-| ML panel | Model, feature mode, walk-forward params, run controls |
+| Walk-forward window | Train / test / step bars and label horizon (Universe step; locked when you advance) |
+| ML panel | Model, feature mode, run controls |
 | Results | Metrics cards, equity chart, ML charts, trade list |
 
 **Info tooltips:** Every ML input label has a hover tooltip (`FieldLabel` + `mlBacktestHelp.ts`) explaining the parameter.
@@ -144,7 +145,24 @@ Sparse fundamentals coverage may introduce **survivorship bias** — warnings ar
 
 When macro or fundamentals are enabled, multi-select pickers appear. Coverage warnings show before you run.
 
+### Data Prep (wizard step 2)
+
+Run **Preview data coverage** before label grid search. The preview builds the same feature matrix used by walk-forward training, not just raw price labels.
+
+| Stat | Meaning |
+|------|---------|
+| Label distribution | Up/down counts from raw prices (can look healthy even when training cannot run) |
+| Valid feature rows | Bars with a complete merged feature vector after warmup and optional context/strategy merge |
+| Trainable rows | Bars with both valid features and a label |
+| Viable walk-forward folds | Folds where the train window has enough samples and both classes (mirrors label search skip logic) |
+
+**Structural folds** on the Universe step count windows by bar math only; **viable folds** from preview reflect whether training can actually run. If viable folds are zero, fix coverage (uncheck optional context/strategy features, extend the date range, or increase train bars above the 50-bar warmup) before running label grid search.
+
+Optional context and strategy features merge with price features — if a bar lacks those columns, it is excluded from training.
+
 ### Walk-forward parameters
+
+Set on **Universe (step 1)** alongside the date range. Defaults scale with the decision timeframe (e.g. daily → 252 train / 63 test / 63 step / 5 label horizon) and auto-shrink when the selected range has fewer bars. Use **Reset to timeframe defaults** to restore them after manual edits.
 
 | Field | Meaning |
 |-------|---------|
@@ -192,15 +210,24 @@ Predictions exist **only** on OOS bars. In-sample bars have `null` probabilities
 ### Use saved model (inference)
 
 1. Train once via **Train & save** or `POST /backtest/ml/train`.
-2. Select the saved model and set **Run mode** to **Use saved model**.
-3. Run applies the frozen joblib artifact to all bars with valid features.
+2. Training reserves the last **`test_bars`** labeled rows as a **holdout** set (not used for fitting).
+3. Select the saved model and set **Run mode** to **Use saved model**.
+4. Inference evaluates ML metrics and portfolio simulation **only on the holdout window** by default.
 
 Inference validates:
 
 - `feature_mode` matches the saved model
 - Feature names and order match `feature_schema` exactly
+- Saved model includes holdout metadata (`holdout_start`, `holdout_start_bar_index`). **Legacy models** trained before this split must be retrained.
 
-Inference runs do **not** produce walk-forward OOS accuracy (`oos_window_count: 0`). Classification metrics are computed over all labeled bars with valid predictions.
+Optional `inference_eval_scope`:
+
+| Value | Behavior |
+|-------|----------|
+| `holdout` (default) | Metrics and trades on holdout bars only |
+| `in_sample` | Full training range (diagnostics only; not deployable performance) |
+
+Inference runs do **not** produce walk-forward OOS accuracy (`oos_window_count: 0`). Holdout classification metrics use labeled bars in the reserved window only.
 
 ---
 
@@ -370,14 +397,24 @@ Stored in `ml_summary` on each run (also in `backtest_runs.params.ml_summary`):
 | `mean_oos_accuracy` | Mean accuracy across OOS folds | `null` |
 | `window_accuracies` | Per-fold accuracies | `[]` |
 | `oos_window_count` | Number of folds | `0` |
-| `precision`, `recall`, `f1` | Over all OOS predictions | Over all labeled bars with predictions |
+| `precision`, `recall`, `f1` | Over all OOS predictions | Over **holdout** labeled bars only (default) |
 | `confusion_matrix` | 2×2 matrix `[ [TN, FP], [FN, TP] ]` | Same |
+| `evaluation_scope` | `walk_forward_oos` | `holdout` or `in_sample` |
+| `holdout_start_date`, `holdout_bars` | — | Holdout window metadata (inference) |
 | `feature_importance` | From last fold's model (tree models) | From saved model |
 | `signal_counts` | `{ buy, sell, hold }` | Same |
 | `feature_names` | Ordered column names used | Same |
 | `macro_warnings`, `fundamental_warnings` | Data coverage notes | Same |
 
-Portfolio metrics (return, Sharpe, drawdown, etc.) come from the standard backtest metrics module against buy-and-hold benchmark.
+Portfolio metrics (return, Sharpe, drawdown, alpha vs buy-and-hold, etc.) come from the standard backtest metrics module. They are computed on the **evaluation window**, not the full loaded date range:
+
+| Concept | Field | Meaning |
+|---------|-------|---------|
+| Walk-forward OOS boundary | `simulation_start_date` | First bar after `train_bars`; in-sample bars are excluded from portfolio simulation in walk-forward mode |
+| Portfolio evaluation window | `evaluation_start_date` | Start of the period used for equity curve, trades, and portfolio metrics |
+| Evaluation anchor | `evaluation_reason` | `first_trade` when the strategy enters the market; `simulation_start` when there are no trades |
+
+When the strategy has trades, portfolio simulation is re-run from the signal bar before the first entry so both the strategy and the buy-and-hold benchmark restart at `initial_cash` on the same date. This keeps alpha, CAGR, Sharpe, and the equity chart comparable. ML classification metrics (OOS accuracy, confusion matrix) still use prediction bars and are unchanged.
 
 ---
 
@@ -522,7 +559,7 @@ These rules are enforced throughout the pipeline:
 
 1. **Features at bar `i`** use only data available at or before bar `i`.
 2. **Macro** uses as-of join with optional publication lag — no future observations.
-3. **Fundamentals** align to report **publication time**, not fiscal period end.
+3. **Fundamentals** align to SEC **filing dates** via Tiingo `asReported=true` ingestion (`fundamentals.time`). Re-ingest fundamentals after upgrading to refresh point-in-time rows.
 4. **Labels** use future returns for training targets only — never as input features.
 5. **Walk-forward** produces predictions only on OOS windows; in-sample bars stay `hold`.
 6. **Inference** applies a model trained on past data to current features — no refit during the backtest.
@@ -580,6 +617,14 @@ Raise buy threshold or lower sell threshold so a dead zone exists for `hold` sig
 ### Low OOS accuracy but positive returns
 
 Classification accuracy measures label prediction, not trading P&L. Threshold tuning, horizon choice, and market regime all affect portfolio metrics independently.
+
+### "Retrain this model to enable holdout evaluation"
+
+Models saved before the holdout split lack `holdout_start` metadata. Use **Train & save** again on the same configuration.
+
+### Stale fundamentals / asReported warning
+
+Re-run fundamentals ingestion so ML features use filing-date-aligned Tiingo `asReported` data. Until re-ingested, `fundamental_warnings` may note pre-fix rows.
 
 ### Sparse fundamentals warning
 

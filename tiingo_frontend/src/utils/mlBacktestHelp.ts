@@ -63,7 +63,7 @@ export const ML_FIELD_HELP: Record<MlHelpFieldKey, string> = {
   train_bars:
     'In-sample window size for each walk-forward fold. The model learns only on these bars before predicting the next test window.',
   test_bars:
-    'Out-of-sample window where the model generates predictions that can become buy/sell signals. Backtest trades occur only on these bars.',
+    'Out-of-sample window per walk-forward fold. For saved models, the last test_bars labeled rows are reserved as a holdout set for inference evaluation.',
   step_bars:
     'How many bars the training window advances between folds. Smaller steps produce more overlapping OOS windows; larger steps reduce compute and correlation between folds.',
   buy_threshold:
@@ -75,7 +75,7 @@ export const ML_FIELD_HELP: Record<MlHelpFieldKey, string> = {
   gradient_boosting_max_iter:
     'Maximum boosting iterations for HistGradientBoostingClassifier. Higher values can improve fit but increase training time.',
   run_mode:
-    'Walk-forward retrains in each fold (default). Use saved model applies a frozen trained artifact without retraining.',
+    'Walk-forward retrains in each fold (default). Use saved model runs holdout inference on the last test_bars rows not seen during training.',
   saved_model:
     'Persisted model trained via Train & save. Feature mode and schema must match the saved artifact.',
   initial_cash:

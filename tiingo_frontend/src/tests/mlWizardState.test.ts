@@ -21,6 +21,29 @@ const BASE_COMPLETE_INPUT = {
 };
 
 describe('validateWizardStepGate', () => {
+  it('validates walk-forward params on universe step', () => {
+    const error = validateWizardStepGate(
+      'universe',
+      { ...DEFAULT_ML_PARAMS, train_bars: 9 },
+      undefined,
+      'AAPL',
+      EMPTY_WIZARD_ARTIFACTS,
+    );
+    expect(error).toMatch(/train bars/i);
+  });
+
+  it('blocks universe when date range has insufficient bars', () => {
+    const error = validateWizardStepGate(
+      'universe',
+      DEFAULT_ML_PARAMS,
+      undefined,
+      'AAPL',
+      EMPTY_WIZARD_ARTIFACTS,
+      100,
+    );
+    expect(error).toMatch(/bars/i);
+  });
+
   it('requires data preview before leaving data prep', () => {
     const error = validateWizardStepGate(
       'data_prep',
@@ -64,13 +87,48 @@ describe('validateWizardStepGate', () => {
       DEFAULT_ML_PARAMS,
       undefined,
       'AAPL',
-      { ...EMPTY_WIZARD_ARTIFACTS, hasThresholdSearch: true },
+      EMPTY_WIZARD_ARTIFACTS,
     );
     expect(error).toMatch(/threshold/i);
+  });
+
+  it('allows leaving signals without threshold sweep when applied', () => {
+    const error = validateWizardStepGate(
+      'signals',
+      DEFAULT_ML_PARAMS,
+      undefined,
+      'AAPL',
+      { ...EMPTY_WIZARD_ARTIFACTS, hasThresholdApplied: true },
+    );
+    expect(error).toBeNull();
   });
 });
 
 describe('resolveCompleteStepAdvance', () => {
+  it('snapshots walk-forward params when completing universe', () => {
+    const result = resolveCompleteStepAdvance({
+      step: 'universe',
+      artifacts: EMPTY_WIZARD_ARTIFACTS,
+      ...BASE_COMPLETE_INPUT,
+      mlParams: {
+        ...DEFAULT_ML_PARAMS,
+        train_bars: 10,
+        test_bars: 20,
+        step_bars: 20,
+        label_horizon: 2,
+      },
+      availableBarCount: 200,
+    });
+
+    expect(result.error).toBeNull();
+    if (result.error !== null) {
+      return;
+    }
+    expect(result.snapshot.mlParams?.train_bars).toBe(10);
+    expect(result.snapshot.mlParams?.test_bars).toBe(20);
+    expect(result.snapshot.mlParams?.label_horizon).toBe(2);
+  });
+
   it('advances labeling to model when apply patch is provided', () => {
     const result = resolveCompleteStepAdvance({
       step: 'labeling',
@@ -107,7 +165,7 @@ describe('resolveCompleteStepAdvance', () => {
   it('advances signals to run when threshold patch is provided', () => {
     const result = resolveCompleteStepAdvance({
       step: 'signals',
-      artifacts: { ...EMPTY_WIZARD_ARTIFACTS, hasThresholdSearch: true },
+      artifacts: EMPTY_WIZARD_ARTIFACTS,
       artifactPatch: { hasThresholdApplied: true },
       configOverride: {
         mlParams: { ...DEFAULT_ML_PARAMS, buy_threshold: 0.55 },

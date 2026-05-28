@@ -142,12 +142,19 @@ def build_fundamental_feature_matrix(
     feature_names: list[str] = []
     column_data: list[list[Optional[float]]] = []
     warnings: list[str] = []
+    stale_fundamentals = False
 
     for metric_code in metric_codes:
         rows = metric_data.get(metric_code, [])
         if not rows:
             warnings.append(f"No observations for fundamental metric {metric_code}; columns omitted.")
             continue
+        if not stale_fundamentals and not (rows[0].get("raw_data") or {}).get("as_reported"):
+            stale_fundamentals = True
+            warnings.append(
+                "Fundamental rows may predate asReported ingestion; re-ingest fundamentals "
+                "for point-in-time ML features.",
+            )
         observations = _rows_to_observations(rows)
         names, columns = _build_metric_columns(bar_dates, metric_code, observations, period_type)
         feature_names.extend(names)

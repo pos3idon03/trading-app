@@ -64,6 +64,17 @@ async def update_artifact_path(
     return await get_model(session, model_id)
 
 
+async def delete_model(session: AsyncSession, model_id: UUID) -> dict | None:
+    q = select(MlModel).where(MlModel.id == model_id)
+    row = (await session.execute(q)).scalar_one_or_none()
+    if not row:
+        return None
+    deleted = _to_dict(row)
+    await session.delete(row)
+    await session.flush()
+    return deleted
+
+
 def _to_dict(row: MlModel) -> dict:
     return {
         "id": row.id,

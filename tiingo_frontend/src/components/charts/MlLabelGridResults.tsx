@@ -1,12 +1,18 @@
-import type { MlLabelSearchResult } from '../../api/mlBacktestTypes';
+import type { MlLabelSearchResult, MlWalkForwardReadiness } from '../../api/mlBacktestTypes';
 import { formatMetricPercent, formatOosAccuracy } from '../../utils/mlBacktestConfig';
+import { formatZeroOosGuidance } from '../../utils/mlWalkForwardDiagnostics';
 
 interface MlLabelGridResultsProps {
   results: MlLabelSearchResult[];
   onApply?: (result: MlLabelSearchResult) => void;
+  readiness?: MlWalkForwardReadiness;
 }
 
-export default function MlLabelGridResults({ results, onApply }: MlLabelGridResultsProps) {
+export default function MlLabelGridResults({
+  results,
+  onApply,
+  readiness,
+}: MlLabelGridResultsProps) {
   if (!results.length) {
     return (
       <p className="text-sm text-slate-500">
@@ -16,13 +22,19 @@ export default function MlLabelGridResults({ results, onApply }: MlLabelGridResu
   }
 
   const zeroOosWindows = results.every((row) => (row.oos_window_count ?? 0) === 0);
+  const sampleDistribution = results[0]?.class_distribution;
+  const guidance = zeroOosWindows
+    ? formatZeroOosGuidance(readiness, sampleDistribution)
+    : [];
 
   return (
     <div className="space-y-2">
       {zeroOosWindows && (
-        <p className="text-xs text-amber-200/80">
-          No out-of-sample windows completed — check macro coverage, date range, and walk-forward bar settings.
-        </p>
+        <ul className="space-y-1 text-xs text-amber-200/80 list-disc list-inside">
+          {guidance.map((message) => (
+            <li key={message}>{message}</li>
+          ))}
+        </ul>
       )}
       <div className="overflow-x-auto border border-slate-800 rounded-lg">
         <table className="min-w-full text-sm">

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   DATE_RANGE_PRESETS,
   type DateRangePreset,
@@ -10,6 +10,8 @@ interface DateRangeControlsProps {
   value: DateRangeValue;
   onChange: (value: DateRangeValue) => void;
   mode?: 'datetime' | 'date';
+  autoApply?: boolean;
+  autoApplyDelayMs?: number;
 }
 
 function toLocalInputValue(iso: string | undefined, mode: 'datetime' | 'date'): string {
@@ -26,15 +28,39 @@ function fromLocalInputValue(local: string, mode: 'datetime' | 'date'): string {
   return new Date(local).toISOString();
 }
 
+function buildCustomRange(
+  customStart: string,
+  customEnd: string,
+  mode: 'datetime' | 'date',
+): DateRangeValue {
+  if (!customStart && !customEnd) {
+    return { preset: 'MAX' };
+  }
+  return {
+    preset: 'MAX',
+    start: customStart ? fromLocalInputValue(customStart, mode) : undefined,
+    end: customEnd ? fromLocalInputValue(customEnd, mode) : undefined,
+  };
+}
+
 export default function DateRangeControls({
   value,
   onChange,
   mode = 'datetime',
+  autoApply = false,
+  autoApplyDelayMs = 300,
 }: DateRangeControlsProps) {
   const [customStart, setCustomStart] = useState(toLocalInputValue(value.start, mode));
   const [customEnd, setCustomEnd] = useState(toLocalInputValue(value.end, mode));
+  const skipAutoApplyRef = useRef(false);
+
+  useEffect(() => {
+    setCustomStart(toLocalInputValue(value.start, mode));
+    setCustomEnd(toLocalInputValue(value.end, mode));
+  }, [value.start, value.end, mode]);
 
   const handlePreset = (preset: DateRangePreset) => {
+    skipAutoApplyRef.current = true;
     const next = computePresetRange(preset, mode);
     onChange(next);
     setCustomStart(toLocalInputValue(next.start, mode));
@@ -42,18 +68,35 @@ export default function DateRangeControls({
   };
 
   const handleCustomApply = () => {
+    skipAutoApplyRef.current = true;
     if (!customStart && !customEnd) {
       setCustomStart('');
       setCustomEnd('');
       onChange({ preset: 'MAX' });
       return;
     }
-    onChange({
-      preset: 'MAX',
-      start: customStart ? fromLocalInputValue(customStart, mode) : undefined,
-      end: customEnd ? fromLocalInputValue(customEnd, mode) : undefined,
-    });
+    onChange(buildCustomRange(customStart, customEnd, mode));
   };
+
+  useEffect(() => {
+    if (!autoApply || skipAutoApplyRef.current) {
+      skipAutoApplyRef.current = false;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const next = buildCustomRange(customStart, customEnd, mode);
+      const samePreset = next.preset === value.preset;
+      const sameStart = (next.start ?? '') === (value.start ?? '');
+      const sameEnd = (next.end ?? '') === (value.end ?? '');
+      if (samePreset && sameStart && sameEnd) {
+        return;
+      }
+      onChange(next);
+    }, autoApplyDelayMs);
+
+    return () => window.clearTimeout(timer);
+  }, [autoApply, autoApplyDelayMs, customStart, customEnd, mode, onChange, value]);
 
   return (
     <div className="flex flex-wrap items-end gap-3">

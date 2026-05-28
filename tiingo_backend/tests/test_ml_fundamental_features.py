@@ -112,6 +112,23 @@ def test_missing_metric_emits_warning():
     assert warnings
 
 
+def test_stale_fundamentals_without_as_reported_flag_warns():
+    bars = _daily_bars(10, start=date(2024, 2, 12))
+    rows = _quarterly_rows(
+        "revenue",
+        [(date(2024, 2, 15), "2023-Q4", 1000.0)],
+    )
+    for row in rows:
+        row["raw_data"] = {"period": row["period"]}
+    _, _, warnings = build_fundamental_feature_matrix(
+        bars,
+        {"revenue": rows},
+        ["revenue"],
+        "quarterly",
+    )
+    assert any("asReported ingestion" in warning for warning in warnings)
+
+
 def test_column_names_include_derived_and_meta():
     bars = _daily_bars(30, start=date(2024, 3, 1))
     rows = _quarterly_rows(

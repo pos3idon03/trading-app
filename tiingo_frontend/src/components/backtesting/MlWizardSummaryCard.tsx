@@ -1,15 +1,32 @@
+import type { MlDataPreviewResponse, MlWalkForwardReadiness } from '../../api/mlBacktestTypes';
 import type { MlLockedConfig } from '../../utils/mlWizardState';
 import { ML_FEATURE_MODES } from '../../utils/mlBacktestConfig';
+import { formatMlDateRangeLabel } from '../../utils/mlUniverseBudget';
 
 interface MlWizardSummaryCardProps {
   symbol: string;
   decisionTimeframe: string;
   lockedConfig: MlLockedConfig;
   modelLabel?: string;
+  dataPreview?: MlDataPreviewResponse | null;
 }
 
 function featureModeLabel(value?: string): string {
   return ML_FEATURE_MODES.find((item) => item.value === value)?.label ?? value ?? '—';
+}
+
+function formatOptionalList(items: string[] | undefined): string | null {
+  if (!items?.length) {
+    return null;
+  }
+  return items.join(', ');
+}
+
+function readinessSummary(readiness: MlWalkForwardReadiness | undefined): string | null {
+  if (!readiness || readiness.total_bars === 0) {
+    return null;
+  }
+  return `${readiness.viable_folds} viable / ${readiness.structural_folds} structural folds`;
 }
 
 export default function MlWizardSummaryCard({
@@ -17,9 +34,16 @@ export default function MlWizardSummaryCard({
   decisionTimeframe,
   lockedConfig,
   modelLabel,
+  dataPreview,
 }: MlWizardSummaryCardProps) {
   const params = lockedConfig.mlParams;
   const resolvedModel = modelLabel ?? lockedConfig.modelLabel ?? lockedConfig.modelType ?? '—';
+  const contextTimeframes =
+    formatOptionalList(params?.context_timeframes) ??
+    formatOptionalList(dataPreview?.context_timeframes);
+  const strategyFeatures =
+    formatOptionalList(params?.strategy_feature_ids) ??
+    formatOptionalList(dataPreview?.strategy_feature_ids);
 
   return (
     <section className="rounded-xl border border-slate-800 bg-surface-950/60 p-4">
@@ -35,6 +59,17 @@ export default function MlWizardSummaryCard({
           <dt className="text-slate-500 text-xs">Timeframe</dt>
           <dd className="text-slate-100">{decisionTimeframe}</dd>
         </div>
+        {lockedConfig.dateRange && (
+          <div>
+            <dt className="text-slate-500 text-xs">Simulation period</dt>
+            <dd className="text-slate-100">
+              {formatMlDateRangeLabel(lockedConfig.dateRange)}
+              {dataPreview?.walk_forward_readiness?.total_bars
+                ? ` (~${dataPreview.walk_forward_readiness.total_bars.toLocaleString()} bars)`
+                : ''}
+            </dd>
+          </div>
+        )}
         {params?.feature_mode && (
           <div>
             <dt className="text-slate-500 text-xs">Feature mode</dt>
@@ -47,10 +82,48 @@ export default function MlWizardSummaryCard({
             <dd className="text-slate-100">{resolvedModel}</dd>
           </div>
         )}
+        {params?.train_bars != null && (
+          <div>
+            <dt className="text-slate-500 text-xs">Train bars</dt>
+            <dd className="text-slate-100">{params.train_bars}</dd>
+          </div>
+        )}
+        {params?.test_bars != null && (
+          <div>
+            <dt className="text-slate-500 text-xs">Test bars</dt>
+            <dd className="text-slate-100">{params.test_bars}</dd>
+          </div>
+        )}
+        {params?.step_bars != null && (
+          <div>
+            <dt className="text-slate-500 text-xs">Step bars</dt>
+            <dd className="text-slate-100">{params.step_bars}</dd>
+          </div>
+        )}
         {params?.label_horizon != null && (
           <div>
             <dt className="text-slate-500 text-xs">Label horizon</dt>
             <dd className="text-slate-100">{params.label_horizon} bars</dd>
+          </div>
+        )}
+        {contextTimeframes && (
+          <div>
+            <dt className="text-slate-500 text-xs">Context timeframes</dt>
+            <dd className="text-slate-100">{contextTimeframes}</dd>
+          </div>
+        )}
+        {strategyFeatures && (
+          <div>
+            <dt className="text-slate-500 text-xs">Strategy features</dt>
+            <dd className="text-slate-100">{strategyFeatures}</dd>
+          </div>
+        )}
+        {readinessSummary(dataPreview?.walk_forward_readiness) && (
+          <div>
+            <dt className="text-slate-500 text-xs">Walk-forward readiness</dt>
+            <dd className="text-slate-100">
+              {readinessSummary(dataPreview?.walk_forward_readiness)}
+            </dd>
           </div>
         )}
         {params?.buy_threshold != null && params?.sell_threshold != null && (

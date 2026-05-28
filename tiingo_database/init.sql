@@ -13,3 +13,5 @@ CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 \i /docker-entrypoint-initdb.d/migrations/009_create_backtest_runs.sql
 \i /docker-entrypoint-initdb.d/migrations/011_create_ml_models.sql
 \i /docker-entrypoint-initdb.d/migrations/012_macro_release_dates.sql
+\i /docker-entrypoint-initdb.d/migrations/013_create_trading_execution.sql
+\i /docker-entrypoint-initdb.d/migrations/014_execution_evaluations.sql

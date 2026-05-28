@@ -1,4 +1,7 @@
 from datetime import datetime, timezone
+from typing import Any
+
+from features.backtesting.simulator import TradeRecord
 
 _DAILY_PLUS_TIMEFRAMES = frozenset({"1d", "1w", "1mo"})
 
@@ -52,4 +55,68 @@ def build_simulation_metadata(
             decision_timeframe,
         ),
         "pre_oos_bars_excluded": start_index,
+    }
+
+
+def _bar_date_key(bar: dict, decision_timeframe: str) -> str:
+    return format_simulation_start_date(bar, decision_timeframe)[:10]
+
+
+def _trade_entry_date_key(entry_date: str) -> str:
+    return entry_date[:10]
+
+
+def find_bar_index_by_date(
+    bars: list[dict],
+    date_str: str,
+    decision_timeframe: str,
+) -> int | None:
+    target = date_str[:10]
+    for index, bar in enumerate(bars):
+        if _bar_date_key(bar, decision_timeframe) == target:
+            return index
+    return None
+
+
+def _first_trade_entry_date(trades: list[TradeRecord | dict[str, Any]]) -> str | None:
+    if not trades:
+        return None
+    first = trades[0]
+    if isinstance(first, TradeRecord):
+        return first.entry_date
+    return str(first.get("entry_date", "")) or None
+
+
+def resolve_evaluation_start_index(
+    bars: list[dict],
+    trades: list[TradeRecord | dict[str, Any]],
+    *,
+    decision_timeframe: str,
+) -> int:
+    entry_date = _first_trade_entry_date(trades)
+    if not entry_date or not bars:
+        return 0
+
+    entry_index = find_bar_index_by_date(bars, entry_date, decision_timeframe)
+    if entry_index is None:
+        return 0
+    if entry_index == 0:
+        return 0
+    return entry_index - 1
+
+
+def build_evaluation_metadata(
+    *,
+    bars: list[dict],
+    start_index: int,
+    decision_timeframe: str,
+    reason: str,
+) -> dict:
+    return {
+        "evaluation_start_bar_index": start_index,
+        "evaluation_start_date": format_simulation_start_date(
+            bars[start_index],
+            decision_timeframe,
+        ),
+        "evaluation_reason": reason,
     }

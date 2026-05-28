@@ -1,27 +1,28 @@
-import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { ingestionApi } from '../../api/endpoints';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ingestionApi, mlBacktestApi } from '../../api/endpoints';
 import type { Instrument } from '../../api/types';
 import type { MlWizardStep } from '../../api/mlBacktestTypes';
 import { ML_WIZARD_STEPS } from '../../api/mlBacktestTypes';
 import MLBacktestPanel, { type MlWizardBridge } from '../../components/backtesting/MLBacktestPanel';
-import DateRangeControls from '../../components/DateRangeControls';
 import FieldLabel from '../../components/FieldLabel';
 import InstrumentSearch from '../../components/InstrumentSearch';
 import {
   OHLCV_TIMEFRAMES,
   type DateRangeValue,
-  dateRangeModeForTimeframe,
   defaultDateRangeForTimeframe,
 } from '../../constants/timeframes';
 import { mlFieldHelp, mlFieldLabel } from '../../utils/mlBacktestHelp';
 import { nextWizardStep, prevWizardStep } from '../../utils/mlWizardState';
+import { dateRangeFromTrainMetrics } from '../../utils/tradingModels';
 
 const BASE_PATH = '/backtesting/ml';
 const ASSET_TYPE_FILTER = ['stock', 'etf'];
 
 export default function MLPage() {
   const { symbol } = useParams<{ symbol?: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialEditModelIdRef = useRef(searchParams.get('editModelId') ?? undefined);
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Instrument | null>(null);
   const [decisionTimeframe, setDecisionTimeframe] = useState('1d');
@@ -30,6 +31,8 @@ export default function MLPage() {
   );
   const [wizardBridge, setWizardBridge] = useState<MlWizardBridge | null>(null);
   const [navError, setNavError] = useState<string | null>(null);
+  const appliedEditContextRef = useRef<string | null>(null);
+  const editUrlCleanedRef = useRef(false);
 
   const wizardStep = wizardBridge?.wizardStep ?? 'universe';
 
@@ -73,6 +76,47 @@ export default function MLPage() {
       cancelled = true;
     };
   }, [symbol]);
+
+  useEffect(() => {
+    const editModelId = initialEditModelIdRef.current;
+    if (!editModelId || !symbol) return;
+
+    const contextKey = `${symbol}:${editModelId}`;
+    if (appliedEditContextRef.current === contextKey) return;
+
+    let cancelled = false;
+    mlBacktestApi
+      .getSavedModel(editModelId)
+      .then((model) => {
+        if (cancelled) return;
+        if (model.timeframe) {
+          setDecisionTimeframe(model.timeframe);
+        }
+        const range = dateRangeFromTrainMetrics(model.train_metrics);
+        if (range) {
+          setDateRange(range);
+        } else if (model.timeframe) {
+          setDateRange(defaultDateRangeForTimeframe(model.timeframe));
+        }
+        appliedEditContextRef.current = contextKey;
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setNavError('Failed to load saved model settings.');
+        }
+      });
+
+    if (!editUrlCleanedRef.current && searchParams.has('editModelId')) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('editModelId');
+      setSearchParams(nextParams, { replace: true });
+      editUrlCleanedRef.current = true;
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, searchParams, setSearchParams]);
 
   const handleSelect = (instrument: Instrument | null) => {
     setSelected(instrument);
@@ -143,46 +187,39 @@ export default function MLPage() {
       </nav>
 
       {!universeLocked && (
-        <>
-          <div className="flex flex-wrap items-end gap-4">
-            <InstrumentSearch
-              selected={selected}
-              onSelect={handleSelect}
-              assetTypeFilter={ASSET_TYPE_FILTER}
-              placeholder="Search ingested stocks and ETFs"
-            />
-            <label className="space-y-1 text-sm">
-              <FieldLabel
-                label={mlFieldLabel('decision_timeframe')}
-                help={mlFieldHelp('decision_timeframe')}
-                htmlFor="ml-decision-timeframe"
-              />
-              <select
-                id="ml-decision-timeframe"
-                value={decisionTimeframe}
-                onChange={(e) => handleDecisionTimeframeChange(e.target.value)}
-                className="bg-surface-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"
-              >
-                {OHLCV_TIMEFRAMES.map((item) => (
-                  <option key={item.value} value={item.value}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <DateRangeControls
-            value={dateRange}
-            onChange={setDateRange}
-            mode={dateRangeModeForTimeframe(decisionTimeframe)}
+        <div className="flex flex-wrap items-end gap-4">
+          <InstrumentSearch
+            selected={selected}
+            onSelect={handleSelect}
+            assetTypeFilter={ASSET_TYPE_FILTER}
+            placeholder="Search ingested stocks and ETFs"
           />
-        </>
+          <label className="space-y-1 text-sm">
+            <FieldLabel
+              label={mlFieldLabel('decision_timeframe')}
+              help={mlFieldHelp('decision_timeframe')}
+              htmlFor="ml-decision-timeframe"
+            />
+            <select
+              id="ml-decision-timeframe"
+              value={decisionTimeframe}
+              onChange={(e) => handleDecisionTimeframeChange(e.target.value)}
+              className="bg-surface-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"
+            >
+              {OHLCV_TIMEFRAMES.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       )}
 
       {universeLocked && (
         <p className="text-xs text-slate-500">
-          Universe controls are locked. Go back to Step 1 to change symbol, timeframe, or date range.
+          Universe controls are locked. Go back to Step 1 to change symbol, timeframe, date range,
+          or walk-forward window settings.
         </p>
       )}
 
@@ -191,8 +228,10 @@ export default function MLPage() {
           <MLBacktestPanel
             symbol={symbol}
             dateRange={dateRange}
+            onDateRangeChange={setDateRange}
             decisionTimeframe={decisionTimeframe}
             onWizardBridge={setWizardBridge}
+            initialEditModelId={initialEditModelIdRef.current}
           />
           <div className="flex justify-between items-center gap-4">
             <button

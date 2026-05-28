@@ -117,6 +117,43 @@ export function buildEquityChartData(
   return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
+export function buildIndexedEquityChartData(
+  strategy: BacktestEquityPoint[],
+  benchmark: BacktestEquityPoint[],
+): Array<{ date: string; strategy?: number; benchmark?: number }> {
+  const merged = buildEquityChartData(strategy, benchmark);
+  if (!merged.length) {
+    return [];
+  }
+
+  let strategyBase: number | undefined;
+  let benchmarkBase: number | undefined;
+
+  for (const row of merged) {
+    if (strategyBase == null && row.strategy != null && row.strategy > 0) {
+      strategyBase = row.strategy;
+    }
+    if (benchmarkBase == null && row.benchmark != null && row.benchmark > 0) {
+      benchmarkBase = row.benchmark;
+    }
+    if (strategyBase != null && benchmarkBase != null) {
+      break;
+    }
+  }
+
+  return merged.map((row) => ({
+    date: row.date,
+    strategy:
+      row.strategy != null && strategyBase != null && strategyBase > 0
+        ? (row.strategy / strategyBase) * 100
+        : undefined,
+    benchmark:
+      row.benchmark != null && benchmarkBase != null && benchmarkBase > 0
+        ? (row.benchmark / benchmarkBase) * 100
+        : undefined,
+  }));
+}
+
 export function buildBacktestQuery(params: {
   start?: string;
   end?: string;
@@ -146,6 +183,12 @@ export function summarizeReturnMetrics(metrics?: BacktestMetrics | null): Array<
       label: 'Alpha vs B&H',
       value: formatBacktestPct(metrics.alpha_pct),
       tone: metrics.alpha_pct,
+    },
+    {
+      key: 'benchmark_return_pct',
+      label: 'Buy & Hold Return',
+      value: formatBacktestPct(metrics.benchmark_return_pct),
+      tone: metrics.benchmark_return_pct,
     },
     {
       key: 'cagr_pct',

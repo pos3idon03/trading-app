@@ -43,6 +43,7 @@ DEFAULT_ML_PARAMS: dict[str, Any] = {
     "step_bars": 63,
     "buy_threshold": 0.55,
     "sell_threshold": 0.45,
+    "inference_eval_scope": "holdout",
     "random_forest_estimators": 100,
     "gradient_boosting_max_iter": 100,
 }
@@ -58,8 +59,8 @@ ML_MODEL_CATALOG: dict[str, dict[str, Any]] = {
         "constraints": {
             "label_horizon": (1, 60),
             "label_threshold": (0.001, 0.1),
-            "train_bars": (30, 2000),
-            "test_bars": (5, 500),
+            "train_bars": (10, 2000),
+            "test_bars": (1, 500),
             "step_bars": (1, 500),
             "buy_threshold": (0.51, 0.99),
             "sell_threshold": (0.01, 0.49),
@@ -75,8 +76,8 @@ ML_MODEL_CATALOG: dict[str, dict[str, Any]] = {
         "constraints": {
             "label_horizon": (1, 60),
             "label_threshold": (0.001, 0.1),
-            "train_bars": (30, 2000),
-            "test_bars": (5, 500),
+            "train_bars": (10, 2000),
+            "test_bars": (1, 500),
             "step_bars": (1, 500),
             "buy_threshold": (0.51, 0.99),
             "sell_threshold": (0.01, 0.49),
@@ -93,8 +94,8 @@ ML_MODEL_CATALOG: dict[str, dict[str, Any]] = {
         "constraints": {
             "label_horizon": (1, 60),
             "label_threshold": (0.001, 0.1),
-            "train_bars": (30, 2000),
-            "test_bars": (5, 500),
+            "train_bars": (10, 2000),
+            "test_bars": (1, 500),
             "step_bars": (1, 500),
             "buy_threshold": (0.51, 0.99),
             "sell_threshold": (0.01, 0.49),
@@ -108,8 +109,8 @@ ML_MODEL_CATALOG: dict[str, dict[str, Any]] = {
         "constraints": {
             "label_horizon": (1, 60),
             "label_threshold": (0.001, 0.1),
-            "train_bars": (30, 2000),
-            "test_bars": (5, 500),
+            "train_bars": (10, 2000),
+            "test_bars": (1, 500),
             "step_bars": (1, 500),
             "buy_threshold": (0.51, 0.99),
             "sell_threshold": (0.01, 0.49),
@@ -125,8 +126,8 @@ ML_MODEL_CATALOG: dict[str, dict[str, Any]] = {
         "constraints": {
             "label_horizon": (1, 60),
             "label_threshold": (0.001, 0.1),
-            "train_bars": (30, 2000),
-            "test_bars": (5, 500),
+            "train_bars": (10, 2000),
+            "test_bars": (1, 500),
             "step_bars": (1, 500),
             "buy_threshold": (0.51, 0.99),
             "sell_threshold": (0.01, 0.49),
@@ -160,8 +161,8 @@ def resolve_ml_model(model_type: str) -> dict[str, Any]:
 
 def default_walk_forward_params(timeframe: str) -> dict[str, int]:
     bpy = bars_per_year(timeframe)
-    train = max(30, min(2000, round(bpy)))
-    test = max(5, min(500, round(bpy * 63 / 252)))
+    train = max(10, min(2000, round(bpy)))
+    test = max(1, min(500, round(bpy * 63 / 252)))
     step = test
     label_horizon = 5
     if timeframe == "1w":
@@ -219,8 +220,18 @@ def validate_ml_params(
 
     _validate_context_timeframes(merged.get("context_timeframes"), timeframe)
     _validate_strategy_feature_ids(merged.get("strategy_feature_ids"))
+    _validate_inference_eval_scope(merged.get("inference_eval_scope"))
 
     return merged
+
+
+def _validate_inference_eval_scope(raw: Any) -> None:
+    from features.ml.inference_holdout import SUPPORTED_INFERENCE_EVAL_SCOPES
+
+    scope = str(raw or "holdout")
+    if scope not in SUPPORTED_INFERENCE_EVAL_SCOPES:
+        supported = ", ".join(sorted(SUPPORTED_INFERENCE_EVAL_SCOPES))
+        raise ValueError(f"inference_eval_scope must be one of: {supported}")
 
 
 def _validate_context_timeframes(raw: Any, decision_timeframe: str) -> None:

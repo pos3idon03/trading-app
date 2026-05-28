@@ -3,6 +3,7 @@ from typing import Any, Optional
 
 from features.ml.splitter import build_walk_forward_windows
 from features.ml.trainer import (
+    min_train_samples_for_model,
     predict_class_probabilities,
     predict_labels_from_proba,
     predict_proba_up,
@@ -127,7 +128,8 @@ def run_walk_forward_prediction(
             feature_rows,
             labels,
         )
-        if len(x_train) < 2 or len(set(y_train)) < 2:
+        min_samples = min_train_samples_for_model(model_type, params)
+        if len(x_train) < min_samples or len(set(y_train)) < 2:
             continue
         if not x_test:
             continue

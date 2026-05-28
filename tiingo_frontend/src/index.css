@@ -1,3 +1,57 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@media print {
+  body.trading-model-results-printing {
+    background: #0f172a !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body.trading-model-results-printing * {
+    visibility: hidden;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body.trading-model-results-printing #trading-model-results-print-root,
+  body.trading-model-results-printing #trading-model-results-print-root * {
+    visibility: visible;
+  }
+
+  body.trading-model-results-printing #trading-model-results-print-root {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 1rem;
+    background: #0f172a !important;
+    color: #e2e8f0 !important;
+  }
+
+  body.trading-model-results-printing #trading-model-results-print-root .bg-surface-900 {
+    background-color: #0f172a !important;
+  }
+
+  body.trading-model-results-printing #trading-model-results-print-root .bg-surface-800 {
+    background-color: #1e293b !important;
+  }
+
+  body.trading-model-results-printing #trading-model-results-print-root .border-slate-800 {
+    border-color: #1e293b !important;
+  }
+
+  body.trading-model-results-printing #trading-model-results-print-root .border-slate-700 {
+    border-color: #334155 !important;
+  }
+
+  body.trading-model-results-printing #trading-model-results-print-root svg {
+    background: transparent !important;
+  }
+
+  body.trading-model-results-printing #trading-model-results-print-root .recharts-cartesian-grid line,
+  body.trading-model-results-printing #trading-model-results-print-root .recharts-curve {
+    stroke: inherit;
+  }
+}
