@@ -17,7 +17,7 @@ import { nextWizardStep, prevWizardStep } from '../../utils/mlWizardState';
 import { dateRangeFromTrainMetrics } from '../../utils/tradingModels';
 
 const BASE_PATH = '/backtesting/ml';
-const ASSET_TYPE_FILTER = ['stock', 'etf'];
+const ASSET_TYPE_FILTER = ['stock', 'etf', 'crypto'];
 
 export default function MLPage() {
   const { symbol } = useParams<{ symbol?: string }>();
@@ -230,6 +230,7 @@ export default function MLPage() {
             dateRange={dateRange}
             onDateRangeChange={setDateRange}
             decisionTimeframe={decisionTimeframe}
+            assetType={selected?.asset_type ?? 'stock'}
             onWizardBridge={setWizardBridge}
             initialEditModelId={initialEditModelIdRef.current}
           />

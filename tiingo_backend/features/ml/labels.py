@@ -68,6 +68,39 @@ def build_ternary_labels(
     return labels
 
 
+def build_meta_label_targets(
+    bars: list[dict],
+    params: dict,
+) -> tuple[list[bool], list[Optional[int]]]:
+    from features.ml.meta_label_events import build_event_mask
+    from features.ml.meta_labels import build_meta_labels
+
+    event_mask = build_event_mask(bars, params)
+    labels = build_meta_labels(
+        bars,
+        event_mask,
+        profit_atr_mult=float(params.get("profit_atr_mult", 2.0)),
+        stop_atr_mult=float(params.get("stop_atr_mult", 1.5)),
+        max_horizon_bars=int(params.get("max_horizon_bars", 48)),
+        atr_period=int(params.get("atr_period", 14)),
+    )
+    return event_mask, labels
+
+
+def build_labels_for_ml_params(
+    bars: list[dict],
+    validated_params: dict,
+) -> list[Optional[int]]:
+    return build_labels(
+        bars,
+        int(validated_params["label_horizon"]),
+        label_mode=str(validated_params.get("label_mode") or "binary"),
+        label_threshold=float(validated_params.get("label_threshold") or 0.01),
+        label_method=str(validated_params.get("label_method") or "endpoint"),
+        params=validated_params,
+    )
+
+
 def build_labels(
     bars: list[dict],
     label_horizon: int,
@@ -75,7 +108,12 @@ def build_labels(
     label_mode: str = "binary",
     label_threshold: float = 0.01,
     label_method: str = "endpoint",
+    params: dict | None = None,
 ) -> list[Optional[int]]:
+    if label_mode == "meta_label":
+        _, labels = build_meta_label_targets(bars, params or {})
+        return labels
+
     if label_horizon < 1:
         raise ValueError("label_horizon must be at least 1")
     if label_mode == "ternary":

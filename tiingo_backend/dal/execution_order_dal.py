@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from features.execution.deployment_position import compute_net_qty, effective_filled_qty, is_open_order_status
 from models.execution_order import ExecutionOrder
 
 
@@ -72,6 +73,70 @@ async def list_orders(
     return [_to_dict(row) for row in rows]
 
 
+async def list_filled_orders_for_deployments(
+    session: AsyncSession,
+    deployment_ids: list[UUID],
+) -> list[dict]:
+    if not deployment_ids:
+        return []
+    q = (
+        select(ExecutionOrder)
+        .where(ExecutionOrder.deployment_id.in_(deployment_ids))
+        .order_by(ExecutionOrder.submitted_at.asc())
+    )
+    rows = (await session.execute(q)).scalars().all()
+    return [_to_dict(row) for row in rows if effective_filled_qty(_to_dict(row)) > 0]
+
+
+async def list_orders_for_deployment(
+    session: AsyncSession,
+    deployment_id: UUID,
+    *,
+    limit: int | None = None,
+) -> list[dict]:
+    q = (
+        select(ExecutionOrder)
+        .where(ExecutionOrder.deployment_id == deployment_id)
+        .order_by(ExecutionOrder.submitted_at.desc())
+    )
+    if limit is not None:
+        q = q.limit(limit)
+    rows = (await session.execute(q)).scalars().all()
+    return [_to_dict(row) for row in rows]
+
+
+async def sum_filled_qty_by_deployment(session: AsyncSession, deployment_id: UUID) -> float:
+    orders = await list_orders_for_deployment(session, deployment_id)
+    return compute_net_qty(orders)
+
+
+async def has_open_order(session: AsyncSession, deployment_id: UUID) -> bool:
+    orders = await list_orders_for_deployment(session, deployment_id, limit=50)
+    return any(is_open_order_status(order["status"]) for order in orders)
+
+
+async def count_orders_by_deployment(session: AsyncSession, deployment_id: UUID) -> int:
+    q = select(func.count()).select_from(ExecutionOrder).where(
+        ExecutionOrder.deployment_id == deployment_id,
+    )
+    result = await session.execute(q)
+    return int(result.scalar_one() or 0)
+
+
+async def count_open_orders_by_deployment(session: AsyncSession, deployment_id: UUID) -> int:
+    orders = await list_orders_for_deployment(session, deployment_id)
+    return sum(1 for order in orders if is_open_order_status(order.get("status")))
+
+
+async def list_syncable_orders(session: AsyncSession, deployment_id: UUID) -> list[dict]:
+    orders = await list_orders_for_deployment(session, deployment_id, limit=100)
+    return [
+        order
+        for order in orders
+        if order.get("alpaca_order_id") and is_open_order_status(order.get("status"))
+    ]
+
+
 async def update_order_status(
     session: AsyncSession,
     order_id: UUID,
@@ -79,6 +144,7 @@ async def update_order_status(
     status: str,
     filled_avg_price: float | None = None,
     filled_at: datetime | None = None,
+    filled_qty: float | None = None,
     error_message: str | None = None,
 ) -> dict | None:
     values: dict = {"status": status}
@@ -86,6 +152,8 @@ async def update_order_status(
         values["filled_avg_price"] = filled_avg_price
     if filled_at is not None:
         values["filled_at"] = filled_at
+    if filled_qty is not None:
+        values["filled_qty"] = filled_qty
     if error_message is not None:
         values["error_message"] = error_message
     await session.execute(
@@ -103,6 +171,7 @@ def _to_dict(row: ExecutionOrder) -> dict:
         "symbol": row.symbol,
         "side": row.side,
         "qty": float(row.qty),
+        "filled_qty": float(row.filled_qty) if row.filled_qty is not None else None,
         "order_type": row.order_type,
         "status": row.status,
         "signal": row.signal,

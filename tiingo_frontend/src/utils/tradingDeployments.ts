@@ -1,4 +1,5 @@
-import type { TradingDeployment } from '../api/executionTypes';
+import type { ExecutionTimeframe, TradingDeployment } from '../api/executionTypes';
+import { EXECUTION_TIMEFRAMES } from '../api/executionTypes';
 
 export function deploymentStatusClass(status: string): string {
   switch (status) {
@@ -63,6 +64,28 @@ export function formatDateTime(value: string | null | undefined): string {
   });
 }
 
+export function formatDateTimeWithTimezone(value: string | null | undefined): {
+  value: string;
+  timezone: string;
+} {
+  if (!value) {
+    return { value: '—', timezone: '' };
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return { value: '—', timezone: '' };
+  }
+  const formatted = formatDateTime(value);
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const shortName = new Intl.DateTimeFormat(undefined, {
+    timeZoneName: 'short',
+  })
+    .formatToParts(date)
+    .find((part) => part.type === 'timeZoneName')?.value;
+  const timezone = shortName ? `${timeZone} (${shortName})` : timeZone;
+  return { value: formatted, timezone };
+}
+
 export function formatCurrency(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return '—';
   return value.toLocaleString(undefined, {
@@ -72,13 +95,24 @@ export function formatCurrency(value: number | null | undefined): string {
   });
 }
 
+export function formatPositionSide(side: string | null | undefined, qty?: number | null): string {
+  if (qty != null && qty > 0) {
+    return `${side?.toLowerCase() === 'long' ? 'Long' : side ?? 'Long'} ${qty.toFixed(4)}`;
+  }
+  if (!side || side === 'flat') return 'Flat';
+  return side.charAt(0).toUpperCase() + side.slice(1);
+}
+
 export interface DeploymentRow {
   id: string;
   deployment: TradingDeployment;
   symbol: string;
+  timeframe: string;
   modelName: string;
   status: string;
   allocationPct: string;
+  positionLabel: string;
+  positionSort: number;
   lastSignal: string;
   lastOutcome: string;
   lastBlockedReason: string;
@@ -95,9 +129,12 @@ export function toDeploymentRow(deployment: TradingDeployment): DeploymentRow {
     id: deployment.id,
     deployment,
     symbol: deployment.symbol,
+    timeframe: deployment.timeframe,
     modelName: deployment.model_name ?? '—',
     status: deployment.status,
     allocationPct: `${deployment.allocation_pct}%`,
+    positionLabel: formatPositionSide(deployment.position_side, deployment.position_qty),
+    positionSort: deployment.position_qty ?? 0,
     lastSignal: formatSignal(deployment.last_signal),
     lastOutcome: formatOutcome(deployment.last_outcome),
     lastBlockedReason: deployment.last_blocked_reason ?? '—',
@@ -109,6 +146,15 @@ export function toDeploymentRow(deployment: TradingDeployment): DeploymentRow {
 
 export function mapDeploymentRows(deployments: TradingDeployment[]): DeploymentRow[] {
   return deployments.map(toDeploymentRow);
+}
+
+export function isExecutionTimeframe(value: string | null | undefined): value is ExecutionTimeframe {
+  if (!value) return false;
+  return (EXECUTION_TIMEFRAMES as readonly string[]).includes(value);
+}
+
+export function filterDeployableModels<T extends { timeframe?: string | null }>(models: T[]): T[] {
+  return models.filter((model) => isExecutionTimeframe(model.timeframe ?? '1d'));
 }
 
 export function mergeActivityEvents<T extends { id: string }>(existing: T[], incoming: T[]): T[] {

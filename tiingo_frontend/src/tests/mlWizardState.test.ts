@@ -127,6 +127,7 @@ describe('resolveCompleteStepAdvance', () => {
     expect(result.snapshot.mlParams?.train_bars).toBe(10);
     expect(result.snapshot.mlParams?.test_bars).toBe(20);
     expect(result.snapshot.mlParams?.label_horizon).toBe(2);
+    expect(result.snapshot.availableBarCountAtLock).toBe(200);
   });
 
   it('advances labeling to model when apply patch is provided', () => {

@@ -72,6 +72,23 @@ def predictions_to_signals(
     return probabilities_to_signals(probabilities, buy_threshold, sell_threshold)
 
 
+def meta_gate_signals(
+    event_mask: list[bool],
+    probabilities: list[Optional[float]],
+    threshold: float,
+) -> list[str]:
+    if len(event_mask) != len(probabilities):
+        raise ValueError("event_mask and probabilities must have the same length")
+
+    signals: list[str] = []
+    for is_event, prob in zip(event_mask, probabilities):
+        if not is_event or prob is None:
+            signals.append("hold")
+            continue
+        signals.append("buy" if prob >= threshold else "hold")
+    return signals
+
+
 def count_signals(signals: list[str]) -> dict[str, int]:
     counts = {"buy": 0, "sell": 0, "hold": 0}
     for signal in signals:

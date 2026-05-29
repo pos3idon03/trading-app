@@ -2,7 +2,7 @@ import { ingestionApi } from '../api/endpoints';
 import type { Job } from '../api/types';
 
 const POLL_MS = 3000;
-const TERMINAL = new Set(['completed', 'failed', 'partial']);
+const TERMINAL = new Set(['completed', 'failed', 'partial', 'cancelled']);
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -20,6 +20,9 @@ export async function pollIngestionJob(
     if (TERMINAL.has(job.status)) {
       if (job.status === 'failed') {
         throw new Error(job.error_message ?? 'Background job failed.');
+      }
+      if (job.status === 'cancelled') {
+        throw new Error(job.error_message ?? 'Job was cancelled.');
       }
       return job;
     }

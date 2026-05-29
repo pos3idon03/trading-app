@@ -11,6 +11,7 @@ from dtos.market_data_dto import (
     MacroObservationsResponseDTO,
     MacroSeriesDTO,
 )
+from features.fred.catalog import validate_series_ids
 from features.worker.tasks import create_and_enqueue_job
 
 router = APIRouter(prefix="/ingestion/macro", tags=["macro"])
@@ -33,7 +34,15 @@ async def macro_backfill(
     body: MacroBackfillRequest,
     session: AsyncSession = Depends(get_db),
 ):
-    job = await create_and_enqueue_job(session, "macro_backfill", body.model_dump())
+    try:
+        series_ids = validate_series_ids(body.series_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    job = await create_and_enqueue_job(
+        session,
+        "macro_backfill",
+        {"series_ids": series_ids},
+    )
     return {"job_id": str(job["id"]), "status": "accepted"}
 
 
@@ -48,13 +57,27 @@ async def macro_alfred_backfill(
     body: MacroBackfillRequest,
     session: AsyncSession = Depends(get_db),
 ):
-    job = await create_and_enqueue_job(session, "macro_alfred_backfill", body.model_dump())
+    try:
+        series_ids = validate_series_ids(body.series_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    job = await create_and_enqueue_job(
+        session,
+        "macro_alfred_backfill",
+        {"series_ids": series_ids},
+    )
     return {"job_id": str(job["id"]), "status": "accepted"}
 
 
 @router.post("/refresh", status_code=202)
 async def macro_refresh(session: AsyncSession = Depends(get_db)):
     job = await create_and_enqueue_job(session, "macro_refresh", {})
+    return {"job_id": str(job["id"]), "status": "accepted"}
+
+
+@router.post("/brief/run", status_code=202)
+async def macro_brief_run(session: AsyncSession = Depends(get_db)):
+    job = await create_and_enqueue_job(session, "macro_brief", {})
     return {"job_id": str(job["id"]), "status": "accepted"}
 
 

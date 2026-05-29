@@ -12,6 +12,8 @@ def compute_metrics(
     benchmark: SimulationResult,
     initial_cash: float,
     decision_timeframe: str = "1d",
+    *,
+    asset_type: str = "equity",
 ) -> dict:
     strategy_curve = strategy.equity_curve
     if not strategy_curve:
@@ -20,7 +22,7 @@ def compute_metrics(
     total_return_pct = _total_return(initial_cash, strategy.final_equity)
     benchmark_return_pct = _total_return(initial_cash, benchmark.final_equity)
     years = _years_between(strategy_curve[0].date, strategy_curve[-1].date)
-    annualization = bars_per_year(decision_timeframe)
+    annualization = bars_per_year(decision_timeframe, asset_type=asset_type)
     cagr_pct = _cagr(initial_cash, strategy.final_equity, years)
     max_drawdown_pct = _max_drawdown(strategy_curve)
 
@@ -41,9 +43,9 @@ def compute_metrics(
     }
 
 
-def bars_per_year(timeframe: str) -> float:
+def bars_per_year(timeframe: str, *, asset_type: str = "equity") -> float:
     if timeframe == "1d":
-        return 252.0
+        return 252.0 if asset_type != "crypto" else 365.0
     if timeframe == "1w":
         return 52.0
     if timeframe == "1mo":
@@ -60,6 +62,8 @@ def bars_per_year(timeframe: str) -> float:
     bucket = minutes_map.get(timeframe)
     if bucket is None:
         return 252.0
+    if asset_type == "crypto":
+        return (24.0 * 365.0 * 60.0) / bucket
     bars_per_day = TRADING_MINUTES_PER_DAY / bucket
     return 252.0 * bars_per_day
 

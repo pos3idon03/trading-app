@@ -5,6 +5,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.ingestion_job import IngestionJob
+from utils.exceptions import JobCancelledError
+from utils.json_serialization import json_safe
+
+_ACTIVE_STATUSES = ("pending", "running")
 
 
 async def create_job(session: AsyncSession, job_type: str, params: dict | None = None) -> dict:
@@ -31,10 +35,41 @@ async def start_job(session: AsyncSession, job_id: UUID) -> None:
     )
 
 
+async def ensure_job_active(session: AsyncSession, job_id: UUID) -> None:
+    status = (
+        await session.execute(
+            select(IngestionJob.status).where(IngestionJob.id == job_id)
+        )
+    ).scalar_one_or_none()
+    if status == "cancelled":
+        raise JobCancelledError()
+
+
 async def update_job_progress(session: AsyncSession, job_id: UUID, progress: int) -> None:
+    await ensure_job_active(session, job_id)
     await session.execute(
         update(IngestionJob).where(IngestionJob.id == job_id).values(progress=progress)
     )
+
+
+async def cancel_job(session: AsyncSession, job_id: UUID) -> dict | None:
+    now = datetime.now(timezone.utc)
+    row = (
+        await session.execute(
+            update(IngestionJob)
+            .where(
+                IngestionJob.id == job_id,
+                IngestionJob.status.in_(_ACTIVE_STATUSES),
+            )
+            .values(
+                status="cancelled",
+                error_message="Cancelled by user",
+                finished_at=now,
+            )
+            .returning(IngestionJob)
+        )
+    ).scalar_one_or_none()
+    return _to_dict(row) if row else None
 
 
 async def finish_job(
@@ -49,7 +84,7 @@ async def finish_job(
         .where(IngestionJob.id == job_id)
         .values(
             status=status,
-            result=result,
+            result=json_safe(result) if result is not None else None,
             error_message=error,
             progress=100 if status in ("completed", "partial") else 0,
             finished_at=datetime.now(timezone.utc),

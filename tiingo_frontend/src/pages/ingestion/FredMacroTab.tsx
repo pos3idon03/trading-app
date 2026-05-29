@@ -4,8 +4,7 @@ import { ingestionApi } from '../../api/endpoints';
 import type { MacroSeries } from '../../api/types';
 import Spinner from '../../components/Spinner';
 import Toast from '../../components/Toast';
-
-const CATEGORIES = ['growth', 'labor', 'inflation', 'consumer', 'rates', 'housing', 'energy', 'goods'];
+import { MACRO_CATEGORIES } from '../../utils/macroCatalog';
 
 type ToastState = { message: string; variant: 'success' | 'error' };
 
@@ -126,7 +125,7 @@ export default function FredMacroTab() {
       </div>
       <div className="flex gap-2 flex-wrap">
         <button type="button" onClick={() => setFilter('all')} className="text-xs px-2 py-1 rounded bg-surface-800">All</button>
-        {CATEGORIES.map((c) => (
+        {MACRO_CATEGORIES.map((c) => (
           <button key={c} type="button" onClick={() => setFilter(c)} className="text-xs px-2 py-1 rounded bg-surface-800 capitalize">
             {c}
           </button>

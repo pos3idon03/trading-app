@@ -2,6 +2,31 @@ from config import get_settings
 from features.foundation.adapters.base import ForecastResult
 
 
+def load_timesfm_model(
+    checkpoint: str,
+    *,
+    torch_compile: bool,
+    cache_dir: str | None = None,
+):
+    """Load TimesFM 2.5, bypassing Hub mixin ``from_pretrained``.
+
+    ``huggingface_hub`` 0.36+ passes ``proxies`` into ``__init__``, which TimesFM
+    does not accept. Calling ``_from_pretrained`` directly avoids that bug.
+    """
+    from timesfm.timesfm_2p5.timesfm_2p5_torch import TimesFM_2p5_200M_torch
+
+    return TimesFM_2p5_200M_torch._from_pretrained(
+        model_id=checkpoint,
+        revision=None,
+        cache_dir=cache_dir,
+        force_download=False,
+        local_files_only=False,
+        token=None,
+        config=None,
+        torch_compile=torch_compile,
+    )
+
+
 class TimesFmAdapter:
     adapter_id = "timesfm"
 
@@ -16,9 +41,10 @@ class TimesFmAdapter:
 
         settings = get_settings()
         device = settings.foundation_device
-        self._model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(
+        self._model = load_timesfm_model(
             self._checkpoint,
             torch_compile=device != "cpu",
+            cache_dir=settings.foundation_model_cache_dir,
         )
         max_context = min(1024, int(settings.foundation_max_context))
         max_horizon = min(256, int(settings.foundation_max_horizon))

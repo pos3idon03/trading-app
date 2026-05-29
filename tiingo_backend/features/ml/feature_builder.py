@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +10,10 @@ from features.ml.catalog import resolve_fundamental_metrics, resolve_macro_serie
 from features.ml.context_features import build_context_feature_matrix
 from features.ml.fundamental_features import build_fundamental_feature_matrix
 from features.ml.fundamental_loader import load_fundamental_observations
+from features.ml.liquidity_features import (
+    build_liquidity_feature_matrix,
+    liquidity_series_requested,
+)
 from features.ml.macro_features import build_macro_feature_matrix
 from features.ml.macro_loader import load_macro_observations
 from features.ml.price_features import build_price_feature_matrix
@@ -61,9 +65,36 @@ async def _build_macro_features(
         validated_params.get("macro_publication_lag_days"),
     )
     warnings = [*resolve_warnings, *build_warnings]
+    if liquidity_series_requested(resolved_series_ids):
+        liq_names, liq_rows, liq_warnings = build_liquidity_feature_matrix(
+            bars,
+            series_data,
+            validated_params.get("macro_publication_lag_days"),
+        )
+        warnings.extend(liq_warnings)
+        if liq_names:
+            macro_names = [*macro_names, *liq_names]
+            macro_rows = _merge_optional_rows(macro_rows, liq_rows)
     if not macro_names:
         raise ValueError("No macro feature columns could be built for the selected series")
     return macro_names, macro_rows, warnings, resolved_series_ids
+
+
+def _merge_optional_rows(
+    left: list,
+    right: list,
+) -> list:
+    if not left:
+        return right
+    if not right:
+        return left
+    merged: list = []
+    for left_row, right_row in zip(left, right):
+        if left_row is None or right_row is None:
+            merged.append(None)
+            continue
+        merged.append([*left_row, *right_row])
+    return merged
 
 
 async def _build_fundamental_features(
@@ -141,12 +172,42 @@ def _build_optional_blocks(
     )
 
 
+async def _build_news_features(
+    session: AsyncSession,
+    symbol: str,
+    bars: list[dict],
+    validated_params: dict,
+) -> tuple[list[str], list, list[str]]:
+    from config import get_settings
+    from dal import news_sentiment_dal
+    from features.ml.news_features import build_news_feature_matrix
+
+    if not validated_params.get("include_news_sentiment"):
+        return [], [], []
+
+    settings = get_settings()
+    if not settings.sentiment_enabled:
+        return [], [], ["News sentiment is disabled (SENTIMENT_ENABLED=false)."]
+
+    bar_start, bar_end = _bar_date_range(bars)
+    daily_rows = await news_sentiment_dal.list_daily_sentiment_for_symbol(
+        session,
+        symbol=symbol,
+        model_name=settings.sentiment_model_name,
+        model_version=settings.sentiment_model_version,
+        start=bar_start - timedelta(days=14),
+        end=bar_end,
+    )
+    return build_news_feature_matrix(bars, daily_rows)
+
+
 async def build_ml_feature_matrix(
     session: AsyncSession,
     bars: list[dict],
     validated_params: dict,
     *,
     instrument_id: int | None = None,
+    symbol: str | None = None,
     decision_timeframe: str = "1d",
     bar_context: MultiTimeframeContext | None = None,
 ) -> tuple[list[str], list, list[str], list[str], list[str], list[str], list[str], list[str]]:
@@ -158,6 +219,17 @@ async def build_ml_feature_matrix(
     strategy_warnings: list[str] = []
     resolved_series_ids: list[str] = []
     resolved_fundamental_metrics: list[str] = []
+
+    news_names: list[str] = []
+    news_rows: list = []
+    if symbol and validated_params.get("include_news_sentiment"):
+        news_names, news_rows, news_warnings = await _build_news_features(
+            session,
+            symbol,
+            bars,
+            validated_params,
+        )
+        macro_warnings.extend(news_warnings)
 
     (
         context_names,
@@ -173,6 +245,8 @@ async def build_ml_feature_matrix(
             feature_mode,
             price_names,
             price_rows,
+            news_names=news_names,
+            news_rows=news_rows,
             context_names=context_names,
             context_rows=context_rows,
             strategy_names=strategy_names,
@@ -189,11 +263,12 @@ async def build_ml_feature_matrix(
             strategy_warnings,
         )
 
-    macro_names, macro_rows, macro_warnings, resolved_series_ids = await _build_macro_features(
+    macro_names, macro_rows, macro_feature_warnings, resolved_series_ids = await _build_macro_features(
         session,
         bars,
         validated_params,
     )
+    macro_warnings.extend(macro_feature_warnings)
 
     if feature_mode == "prices_macro":
         feature_names, feature_rows = assemble_feature_matrix(
@@ -202,6 +277,8 @@ async def build_ml_feature_matrix(
             price_rows,
             macro_names,
             macro_rows,
+            news_names=news_names,
+            news_rows=news_rows,
             context_names=context_names,
             context_rows=context_rows,
             strategy_names=strategy_names,
@@ -232,6 +309,8 @@ async def build_ml_feature_matrix(
         macro_rows,
         fund_names,
         fund_rows,
+        news_names=news_names,
+        news_rows=news_rows,
         context_names=context_names,
         context_rows=context_rows,
         strategy_names=strategy_names,

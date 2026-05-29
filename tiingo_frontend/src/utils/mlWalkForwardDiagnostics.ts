@@ -1,12 +1,14 @@
 import type { MlParams, MlWalkForwardReadiness } from '../api/mlBacktestTypes';
 import type { DateRangeValue } from '../constants/timeframes';
 
-export function previewConfigFingerprint(
+/** Inputs that affect feature assembly and walk-forward bar windows in data preview. */
+export function dataPrepPreviewFingerprint(
   params: MlParams,
   dateRange?: DateRangeValue,
 ): string {
   return JSON.stringify({
     feature_mode: params.feature_mode,
+    include_news_sentiment: params.include_news_sentiment ?? false,
     context_timeframes: params.context_timeframes ?? [],
     strategy_feature_ids: params.strategy_feature_ids ?? [],
     macro_series_ids: params.macro_series_ids ?? [],
@@ -14,11 +16,18 @@ export function previewConfigFingerprint(
     train_bars: params.train_bars,
     test_bars: params.test_bars,
     step_bars: params.step_bars,
-    label_horizon: params.label_horizon,
     date_start: dateRange?.start ?? null,
     date_end: dateRange?.end ?? null,
     date_preset: dateRange?.preset ?? 'MAX',
   });
+}
+
+/** @deprecated Use {@link dataPrepPreviewFingerprint} for preview staleness checks. */
+export function previewConfigFingerprint(
+  params: MlParams,
+  dateRange?: DateRangeValue,
+): string {
+  return dataPrepPreviewFingerprint(params, dateRange);
 }
 
 export function isReadinessReady(readiness: MlWalkForwardReadiness | undefined): boolean {

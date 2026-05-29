@@ -23,5 +23,6 @@ def evaluation_row_to_activity(row: dict) -> dict:
         "blocked_reason": row.get("blocked_reason"),
         "order_id": str(row["order_id"]) if row.get("order_id") else None,
         "warnings": row.get("warnings") or [],
+        "explainability": row.get("explainability") or {},
         "created_at": created_at.isoformat() if isinstance(created_at, datetime) else str(created_at),
     }

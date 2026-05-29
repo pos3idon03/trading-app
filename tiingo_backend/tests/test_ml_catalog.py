@@ -18,6 +18,14 @@ def test_validate_ml_params_defaults_inference_eval_scope():
     assert params["inference_eval_scope"] == "holdout"
 
 
+def test_validate_ml_params_accepts_include_news_sentiment():
+    params = validate_ml_params(
+        "ml_logistic",
+        {"feature_mode": "prices_only", "include_news_sentiment": True},
+    )
+    assert params["include_news_sentiment"] is True
+
+
 def test_validate_ml_params_rejects_unknown_feature_mode():
     with pytest.raises(ValueError, match="Unsupported feature_mode"):
         validate_ml_params("ml_logistic", {"feature_mode": "prices_only_macro"})
@@ -114,6 +122,15 @@ def test_minimum_bars_differs_by_timeframe_defaults():
     daily_params = validate_ml_params("ml_logistic", {}, timeframe="1d")
     hourly_params = validate_ml_params("ml_logistic", {}, timeframe="1h")
     assert minimum_bars_required(hourly_params) > minimum_bars_required(daily_params)
+
+
+def test_minimum_bars_for_inference_uses_warmup_not_train_window():
+    from features.ml.catalog import minimum_bars_for_inference
+    from features.ml.price_features import FEATURE_WARMUP_BARS
+
+    hourly_params = validate_ml_params("ml_logistic", {}, timeframe="1h")
+    assert minimum_bars_for_inference(hourly_params) == FEATURE_WARMUP_BARS + 1
+    assert minimum_bars_for_inference(hourly_params) < minimum_bars_required(hourly_params)
 
 
 def test_validate_ml_params_accepts_gradient_boosting_hyperparam():

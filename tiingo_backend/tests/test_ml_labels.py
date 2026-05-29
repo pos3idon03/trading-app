@@ -44,3 +44,13 @@ def test_forward_return_at_exposes_public_helper():
 def test_label_horizon_must_be_positive():
     with pytest.raises(ValueError):
         build_labels(_bars([100, 101]), label_horizon=0)
+
+
+def test_meta_label_without_params_does_not_raise():
+    closes = [100.0 + i * 0.05 for i in range(300)]
+    bars = [
+        {"time": f"2024-01-{idx:02d}", "open": c, "high": c + 1, "low": c - 1, "close": c}
+        for idx, c in enumerate(closes, start=1)
+    ]
+    labels = build_labels(bars, label_horizon=5, label_mode="meta_label")
+    assert len(labels) == len(bars)

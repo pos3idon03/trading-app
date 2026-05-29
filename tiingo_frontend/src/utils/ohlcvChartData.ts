@@ -2,6 +2,7 @@ import type { SeriesMarker, Time, UTCTimestamp } from 'lightweight-charts';
 import type { BacktestTrade } from '../api/backtestTypes';
 import type { OHLCVBar } from '../api/types';
 import { DAILY_PLUS_TIMEFRAMES, INTRADAY_TIMEFRAMES } from '../constants/timeframes';
+import { getStyleColors, type CandleStylePreset } from './ohlcvChartConfig';
 
 export type ChartBar = {
   time: string | UTCTimestamp;
@@ -15,6 +16,11 @@ export type VolumeBar = {
   time: string | UTCTimestamp;
   value: number;
   color: string;
+};
+
+export type CloseLinePoint = {
+  time: string | UTCTimestamp;
+  value: number;
 };
 
 const UP_COLOR = '#22c55e';
@@ -49,7 +55,21 @@ export function buildCandleData(records: OHLCVBar[], timeframe: string): ChartBa
   return [...byTime.values()].sort((a, b) => (a.time > b.time ? 1 : a.time < b.time ? -1 : 0));
 }
 
-export function buildVolumeData(records: OHLCVBar[], timeframe: string): VolumeBar[] {
+export function buildCloseLineData(records: OHLCVBar[], timeframe: string): CloseLinePoint[] {
+  return buildCandleData(records, timeframe).map((bar) => ({
+    time: bar.time,
+    value: bar.close,
+  }));
+}
+
+export function buildVolumeData(
+  records: OHLCVBar[],
+  timeframe: string,
+  stylePreset?: CandleStylePreset,
+): VolumeBar[] {
+  const colors = stylePreset ? getStyleColors(stylePreset) : null;
+  const upColor = colors?.upColor ?? UP_COLOR;
+  const downColor = colors?.downColor ?? DOWN_COLOR;
   const sorted = [...records].sort((a, b) => a.time.localeCompare(b.time));
   const byTime = new Map<string | number, VolumeBar>();
 
@@ -59,7 +79,7 @@ export function buildVolumeData(records: OHLCVBar[], timeframe: string): VolumeB
     byTime.set(time, {
       time,
       value: r.volume,
-      color: up ? `${UP_COLOR}99` : `${DOWN_COLOR}99`,
+      color: up ? `${upColor}99` : `${downColor}99`,
     });
   }
 

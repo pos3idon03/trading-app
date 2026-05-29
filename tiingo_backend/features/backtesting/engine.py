@@ -27,6 +27,7 @@ def run_backtest(
     commission_bps: float,
     bar_context: MultiTimeframeContext | None = None,
     decision_timeframe: str = "1d",
+    slippage_bps: float = 0.0,
 ) -> SimulationResult:
     signal_fn = get_signal_fn(strategy_id)
     state = PortfolioState(cash=initial_cash)
@@ -40,11 +41,11 @@ def run_backtest(
 
     for index, bar in enumerate(decision_bars):
         apply_corporate_actions(state, bar)
-        _execute_pending(state, bar, pending_action, commission_bps, trades)
+        _execute_pending(state, bar, pending_action, commission_bps, trades, slippage_bps)
         pending_action = None
 
         if strategy_id in IMMEDIATE_ENTRY_STRATEGIES and index == 0 and state.shares == 0:
-            buy_all_in(state, float(bar["open"]), bar, commission_bps)
+            buy_all_in(state, float(bar["open"]), bar, commission_bps, slippage_bps)
 
         signal = _generate_signal(
             strategy_id,
@@ -82,6 +83,7 @@ def run_backtest_with_signals(
     initial_cash: float,
     commission_bps: float,
     decision_timeframe: str = "1d",
+    slippage_bps: float = 0.0,
 ) -> SimulationResult:
     if len(signals) != len(bars):
         raise ValueError(
@@ -96,7 +98,7 @@ def run_backtest_with_signals(
 
     for index, bar in enumerate(bars):
         apply_corporate_actions(state, bar)
-        _execute_pending(state, bar, pending_action, commission_bps, trades)
+        _execute_pending(state, bar, pending_action, commission_bps, trades, slippage_bps)
         pending_action = None
 
         pending_action = _resolve_pending(signals[index], state)
@@ -125,6 +127,7 @@ def run_buy_and_hold_benchmark(
     initial_cash: float,
     commission_bps: float,
     decision_timeframe: str = "1d",
+    slippage_bps: float = 0.0,
 ) -> SimulationResult:
     state = PortfolioState(cash=initial_cash)
     trades: list[TradeRecord] = []
@@ -135,7 +138,7 @@ def run_buy_and_hold_benchmark(
     for bar in bars:
         apply_corporate_actions(state, bar)
         if not entered and float(bar["open"]) > 0:
-            buy_all_in(state, float(bar["open"]), bar, commission_bps)
+            buy_all_in(state, float(bar["open"]), bar, commission_bps, slippage_bps)
             entered = True
 
         equity, drawdown = mark_equity(state, bar, peak_equity)
@@ -202,12 +205,13 @@ def _execute_pending(
     pending_action: str | None,
     commission_bps: float,
     trades: list[TradeRecord],
+    slippage_bps: float = 0.0,
 ) -> None:
     price = float(bar["open"])
     if pending_action == "buy" and state.shares == 0:
-        buy_all_in(state, price, bar, commission_bps)
+        buy_all_in(state, price, bar, commission_bps, slippage_bps)
     elif pending_action == "sell" and state.shares > 0:
-        sell_all(state, price, bar, commission_bps, trades)
+        sell_all(state, price, bar, commission_bps, trades, slippage_bps)
 
 
 def _resolve_pending(signal: str, state: PortfolioState) -> str | None:

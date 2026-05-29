@@ -7,6 +7,7 @@ from config import get_settings
 from dal import instrument_dal, job_dal, ohlcv_dal
 from dtos.market_data_dto import OHLCVBackfillRequest
 from features.ingestion.intraday_aggregate import persist_derived_intraday_bars
+from features.alpaca import crypto_bars_client as alpaca_crypto_client
 from features.tiingo import crypto_client, eod_client, iex_client
 from utils.logging import get_logger
 from utils.rate_limiter import RateLimitExceeded, check_and_increment
@@ -16,7 +17,9 @@ logger = get_logger(__name__)
 
 def _effective_sources(asset_type: str, sources: list[str]) -> list[str]:
     effective = list(sources)
-    if asset_type == "crypto" and "tiingo_crypto" not in effective:
+    if asset_type != "crypto":
+        return effective
+    if "tiingo_crypto" not in effective and "alpaca_crypto" not in effective:
         effective.append("tiingo_crypto")
     return effective
 
@@ -88,11 +91,12 @@ async def _resolve_crypto_start(
     session: AsyncSession,
     instrument_id: int,
     timeframe: str,
+    source: str,
     start_override: str | None,
     intraday_days: int,
 ) -> tuple[datetime, datetime | None]:
     latest = await ohlcv_dal.get_latest_timestamp(
-        session, instrument_id, timeframe, "tiingo_crypto"
+        session, instrument_id, timeframe, source
     )
     if latest:
         step = timedelta(days=1) if timeframe == "1d" else timedelta(minutes=1)
@@ -113,7 +117,7 @@ async def _resolve_crypto_start(
     return start, datetime.now(timezone.utc)
 
 
-async def _backfill_crypto(
+async def _backfill_tiingo_crypto(
     session: AsyncSession,
     symbol: str,
     iid: int,
@@ -123,10 +127,27 @@ async def _backfill_crypto(
     intraday_days: int,
 ) -> int:
     start, end = await _resolve_crypto_start(
-        session, iid, timeframe, request.start_date, intraday_days
+        session, iid, timeframe, "tiingo_crypto", request.start_date, intraday_days
     )
     await check_and_increment(session)
     recs = await crypto_client.fetch_crypto_bars(ticker, iid, timeframe, start, end)
+    return await ohlcv_dal.bulk_insert_ohlcv(session, recs)
+
+
+async def _backfill_alpaca_crypto(
+    session: AsyncSession,
+    symbol: str,
+    iid: int,
+    timeframe: str,
+    request: OHLCVBackfillRequest,
+    intraday_days: int,
+) -> int:
+    start, end = await _resolve_crypto_start(
+        session, iid, timeframe, "alpaca_crypto", request.start_date, intraday_days
+    )
+    recs = await alpaca_crypto_client.fetch_crypto_bars(
+        symbol, iid, timeframe, start, end
+    )
     return await ohlcv_dal.bulk_insert_ohlcv(session, recs)
 
 
@@ -142,11 +163,12 @@ async def _backfill_timeframe(
     sources: list[str],
     intraday_days: int,
 ) -> tuple[int, str | None, bool]:
-    use_crypto = asset_type == "crypto" and "tiingo_crypto" in sources
+    use_tiingo_crypto = asset_type == "crypto" and "tiingo_crypto" in sources
+    use_alpaca_crypto = asset_type == "crypto" and "alpaca_crypto" in sources
     try:
         if timeframe == "1d":
-            if use_crypto:
-                inserted = await _backfill_crypto(
+            if use_tiingo_crypto:
+                inserted = await _backfill_tiingo_crypto(
                     session, symbol, iid, ticker, "1d", request, intraday_days
                 )
                 return inserted, None, False
@@ -160,8 +182,13 @@ async def _backfill_timeframe(
                 return inserted, None, True
             return 0, None, False
 
-        if use_crypto:
-            inserted = await _backfill_crypto(
+        if use_alpaca_crypto:
+            inserted = await _backfill_alpaca_crypto(
+                session, symbol, iid, timeframe, request, intraday_days
+            )
+            return inserted, None, False
+        if use_tiingo_crypto:
+            inserted = await _backfill_tiingo_crypto(
                 session, symbol, iid, ticker, timeframe, request, intraday_days
             )
             return inserted, None, False
@@ -192,6 +219,50 @@ async def _backfill_timeframe(
             error=str(exc),
         )
         return 0, str(exc), False
+
+
+async def incremental_backfill_symbol_timeframe(
+    session: AsyncSession,
+    *,
+    symbol: str,
+    instrument_id: int,
+    ticker: str,
+    native_timeframe: str,
+    source: str,
+    asset_type: str,
+    request: OHLCVBackfillRequest,
+    end: datetime,
+    intraday_days: int,
+    derive_4h: bool = False,
+) -> tuple[int, str | None]:
+    """Incremental backfill for one symbol/timeframe used by deployment-driven refresh."""
+    sources = _effective_sources(asset_type, [source])
+    count, err, _did_eod = await _backfill_timeframe(
+        session,
+        symbol,
+        instrument_id,
+        ticker,
+        native_timeframe,
+        request,
+        end,
+        asset_type,
+        sources,
+        intraday_days,
+    )
+    if derive_4h and native_timeframe == "1h" and count > 0:
+        start = await _resolve_start(
+            session, instrument_id, "1h", source, request.start_date, days=intraday_days
+        )
+        derived = await persist_derived_intraday_bars(
+            session,
+            instrument_id,
+            source_timeframe="1h",
+            source=source,
+            start=start,
+            end=end,
+        )
+        count += derived
+    return count, err
 
 
 async def _backfill_one(

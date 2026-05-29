@@ -28,6 +28,86 @@ def _sort_results(results: list[dict]) -> list[dict]:
     return results
 
 
+def label_search_combos(
+    label_mode: str,
+    horizons: list[int],
+    thresholds: list[float],
+) -> list[tuple[int, float]]:
+    threshold_values = thresholds if label_mode == "ternary" else [0.0]
+    return [(horizon, threshold) for horizon in horizons for threshold in threshold_values]
+
+
+def evaluate_label_combo(
+    *,
+    bars: list[dict],
+    feature_rows: list,
+    label_mode: str,
+    horizon: int,
+    threshold: float,
+    label_method: str,
+    train_bars: int,
+    test_bars: int,
+    step_bars: int,
+    model_type: str,
+    model_label: str | None = None,
+) -> dict:
+    labels = build_labels(
+        bars,
+        horizon,
+        label_mode=label_mode,
+        label_threshold=threshold,
+        label_method=label_method,
+    )
+    params = {
+        "label_mode": label_mode,
+        "label_horizon": horizon,
+        "label_threshold": threshold,
+        "label_method": label_method,
+        "train_bars": train_bars,
+        "test_bars": test_bars,
+        "step_bars": step_bars,
+    }
+    walk_forward = run_walk_forward_prediction(
+        model_type=model_type,
+        params=params,
+        feature_rows=feature_rows,
+        labels=labels,
+        train_bars=train_bars,
+        test_bars=test_bars,
+        step_bars=step_bars,
+    )
+    distribution = label_distribution(labels)
+    f1_macro = None
+    if walk_forward.oos_y_true:
+        labels_sorted = sorted(set(walk_forward.oos_y_true) | set(walk_forward.oos_y_pred))
+        f1_macro = round(float(f1_score(
+            walk_forward.oos_y_true,
+            walk_forward.oos_y_pred,
+            average="macro",
+            zero_division=0,
+            labels=labels_sorted,
+        )), 4)
+
+    resolved_label = model_label or ML_MODEL_CATALOG.get(model_type, {}).get("label", model_type)
+    base_key = _label_key(label_mode, horizon, threshold if label_mode == "ternary" else None)
+    return {
+        "label_key": f"{model_type}_{base_key}",
+        "model_type": model_type,
+        "model_label": resolved_label,
+        "label_mode": label_mode,
+        "label_horizon": horizon,
+        "label_threshold": threshold if label_mode == "ternary" else None,
+        "accuracy": (
+            round(walk_forward.mean_oos_accuracy, 4)
+            if walk_forward.mean_oos_accuracy is not None
+            else None
+        ),
+        "f1_macro": f1_macro,
+        "oos_window_count": walk_forward.oos_window_count,
+        "class_distribution": distribution,
+    }
+
+
 def run_label_grid_search(
     *,
     bars: list[dict],
@@ -42,67 +122,22 @@ def run_label_grid_search(
     model_type: str = "ml_logistic",
     model_label: str | None = None,
 ) -> list[dict]:
-    results: list[dict] = []
-    threshold_values = thresholds if label_mode == "ternary" else [0.0]
-    resolved_label = model_label or ML_MODEL_CATALOG.get(model_type, {}).get("label", model_type)
-
-    for horizon in horizons:
-        for threshold in threshold_values:
-            labels = build_labels(
-                bars,
-                horizon,
-                label_mode=label_mode,
-                label_threshold=threshold,
-                label_method=label_method,
-            )
-            params = {
-                "label_mode": label_mode,
-                "label_horizon": horizon,
-                "label_threshold": threshold,
-                "label_method": label_method,
-                "train_bars": train_bars,
-                "test_bars": test_bars,
-                "step_bars": step_bars,
-            }
-            walk_forward = run_walk_forward_prediction(
-                model_type=model_type,
-                params=params,
-                feature_rows=feature_rows,
-                labels=labels,
-                train_bars=train_bars,
-                test_bars=test_bars,
-                step_bars=step_bars,
-            )
-            distribution = label_distribution(labels)
-            f1_macro = None
-            if walk_forward.oos_y_true:
-                labels_sorted = sorted(set(walk_forward.oos_y_true) | set(walk_forward.oos_y_pred))
-                f1_macro = round(float(f1_score(
-                    walk_forward.oos_y_true,
-                    walk_forward.oos_y_pred,
-                    average="macro",
-                    zero_division=0,
-                    labels=labels_sorted,
-                )), 4)
-
-            base_key = _label_key(label_mode, horizon, threshold if label_mode == "ternary" else None)
-            results.append({
-                "label_key": f"{model_type}_{base_key}",
-                "model_type": model_type,
-                "model_label": resolved_label,
-                "label_mode": label_mode,
-                "label_horizon": horizon,
-                "label_threshold": threshold if label_mode == "ternary" else None,
-                "accuracy": (
-                    round(walk_forward.mean_oos_accuracy, 4)
-                    if walk_forward.mean_oos_accuracy is not None
-                    else None
-                ),
-                "f1_macro": f1_macro,
-                "oos_window_count": walk_forward.oos_window_count,
-                "class_distribution": distribution,
-            })
-
+    results = [
+        evaluate_label_combo(
+            bars=bars,
+            feature_rows=feature_rows,
+            label_mode=label_mode,
+            horizon=horizon,
+            threshold=threshold,
+            label_method=label_method,
+            train_bars=train_bars,
+            test_bars=test_bars,
+            step_bars=step_bars,
+            model_type=model_type,
+            model_label=model_label,
+        )
+        for horizon, threshold in label_search_combos(label_mode, horizons, thresholds)
+    ]
     return _sort_results(results)
 
 

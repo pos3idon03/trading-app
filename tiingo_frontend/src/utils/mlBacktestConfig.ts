@@ -3,7 +3,10 @@ import { FUNDAMENTAL_METRIC_CODES } from '../constants/fundamentalsMetrics';
 import { INTRADAY_BAR_LIMIT, INTRADAY_TIMEFRAMES } from '../constants/timeframes';
 import { ML_FIELD_LABELS } from './mlBacktestHelp';
 
-export const FEATURE_WARMUP_BARS = 50;
+export const FEATURE_WARMUP_BARS = 200;
+export const CRYPTO_FEATURE_WARMUP_BARS = 200;
+
+export const CRYPTO_MACRO_SERIES_IDS = ['T10Y2Y', 'WALCL', 'WTREGEN'];
 
 const TRADING_MINUTES_PER_DAY = 6.5 * 60;
 const MIN_TRAIN_BARS = 10;
@@ -39,8 +42,21 @@ export function pickWalkForwardParams(params: MlParams): WalkForwardParams {
   };
 }
 
-export function barsPerYear(timeframe: string): number {
-  if (timeframe === '1d') return 252;
+export const LABEL_SEARCH_HORIZON_OFFSETS = [-4, -2, 0, 2, 4] as const;
+
+export function labelSearchHorizons(
+  center: number,
+  min = WALK_FORWARD_CONSTRAINTS.label_horizon.min,
+  max = WALK_FORWARD_CONSTRAINTS.label_horizon.max,
+): number[] {
+  const values = LABEL_SEARCH_HORIZON_OFFSETS.map((offset) => center + offset).filter(
+    (h) => h >= min && h <= max,
+  );
+  return [...new Set(values)].sort((a, b) => a - b);
+}
+
+export function barsPerYear(timeframe: string, assetType: string = 'equity'): number {
+  if (timeframe === '1d') return assetType === 'crypto' ? 365 : 252;
   if (timeframe === '1w') return 52;
   if (timeframe === '1mo') return 12;
 
@@ -54,14 +70,45 @@ export function barsPerYear(timeframe: string): number {
   };
   const bucket = minutesMap[timeframe];
   if (bucket == null) return 252;
+  if (assetType === 'crypto') {
+    return (24 * 365 * 60) / bucket;
+  }
   return 252 * (TRADING_MINUTES_PER_DAY / bucket);
 }
 
-export function defaultWalkForwardParams(timeframe: string): Pick<
-  MlParams,
-  'train_bars' | 'test_bars' | 'step_bars' | 'label_horizon'
-> {
-  const bpy = barsPerYear(timeframe);
+export function getCryptoMlPreset(timeframe: string = '1h'): MlParams {
+  const wfo = defaultWalkForwardParams(timeframe, 'crypto');
+  return {
+    ...DEFAULT_ML_PARAMS,
+    feature_mode: 'prices_macro',
+    macro_series_ids: CRYPTO_MACRO_SERIES_IDS,
+    macro_publication_lag_days: { rates: 1 },
+    include_news_sentiment: true,
+    strategy_feature_ids: [],
+    label_mode: 'meta_label',
+    base_strategy_id: 'crypto_trend_entry',
+    base_strategy_params: { slow_period: 50, rsi_period: 14, rsi_max: 65 },
+    profit_atr_mult: 2,
+    stop_atr_mult: 1.5,
+    max_horizon_bars: 48,
+    meta_gate_threshold: 0.65,
+    slippage_bps: 5,
+    buy_threshold: 0.65,
+    sell_threshold: 0.35,
+    ...wfo,
+  };
+}
+
+export function defaultWalkForwardParams(
+  timeframe: string,
+  assetType: string = 'equity',
+): Pick<MlParams, 'train_bars' | 'test_bars' | 'step_bars' | 'label_horizon'> {
+  const bpy = barsPerYear(timeframe, assetType);
+  if (assetType === 'crypto' && timeframe === '1h') {
+    const train = Math.max(MIN_TRAIN_BARS, Math.min(2000, Math.round(bpy / 2)));
+    const test = Math.max(MIN_TEST_BARS, Math.min(500, Math.round(bpy / 12)));
+    return { train_bars: train, test_bars: test, step_bars: test, label_horizon: 5 };
+  }
   let train = Math.max(MIN_TRAIN_BARS, Math.min(2000, Math.round(bpy)));
   let test = Math.max(MIN_TEST_BARS, Math.min(500, Math.round((bpy * 63) / 252)));
   let step = test;
@@ -104,8 +151,9 @@ export function fitWalkForwardParamsToBarCount(
 export function resolveWalkForwardParams(
   timeframe: string,
   barCount?: number | null,
+  assetType: string = 'equity',
 ): Pick<MlParams, 'train_bars' | 'test_bars' | 'step_bars' | 'label_horizon'> {
-  const ideal = defaultWalkForwardParams(timeframe);
+  const ideal = defaultWalkForwardParams(timeframe, assetType);
   if (barCount == null || barCount <= 0) {
     return ideal;
   }
@@ -145,6 +193,10 @@ export const DEFAULT_ML_PARAMS: MlParams = {
   buy_threshold: 0.55,
   sell_threshold: 0.45,
   inference_eval_scope: 'holdout',
+  include_news_sentiment: false,
+  slippage_bps: 0,
+  max_horizon_bars: 48,
+  meta_gate_threshold: 0.65,
   random_forest_estimators: 100,
   gradient_boosting_max_iter: 100,
   knn_neighbors: 5,
@@ -181,7 +233,12 @@ export function parseMlParams(raw: Record<string, unknown>): MlParams {
     strategy_feature_params:
       (raw.strategy_feature_params as Record<string, Record<string, unknown>> | undefined) ??
       DEFAULT_ML_PARAMS.strategy_feature_params,
-    label_mode: raw.label_mode === 'ternary' ? 'ternary' : 'binary',
+    label_mode:
+      raw.label_mode === 'meta_label'
+        ? 'meta_label'
+        : raw.label_mode === 'ternary'
+          ? 'ternary'
+          : 'binary',
     label_threshold: Number(raw.label_threshold ?? DEFAULT_ML_PARAMS.label_threshold),
     label_method: raw.label_method === 'mean' ? 'mean' : 'endpoint',
     label_horizon: Number(raw.label_horizon ?? DEFAULT_ML_PARAMS.label_horizon),
@@ -192,6 +249,7 @@ export function parseMlParams(raw: Record<string, unknown>): MlParams {
     sell_threshold: Number(raw.sell_threshold ?? DEFAULT_ML_PARAMS.sell_threshold),
     inference_eval_scope:
       raw.inference_eval_scope === 'in_sample' ? 'in_sample' : 'holdout',
+    include_news_sentiment: Boolean(raw.include_news_sentiment),
     random_forest_estimators: Number(
       raw.random_forest_estimators ?? DEFAULT_ML_PARAMS.random_forest_estimators,
     ),
@@ -207,11 +265,32 @@ export function parseMlParams(raw: Record<string, unknown>): MlParams {
     min_class_probability: raw.min_class_probability != null
       ? Number(raw.min_class_probability)
       : undefined,
+    slippage_bps: Number(raw.slippage_bps ?? DEFAULT_ML_PARAMS.slippage_bps ?? 0),
+    base_strategy_id: raw.base_strategy_id != null ? String(raw.base_strategy_id) : undefined,
+    base_strategy_params:
+      (raw.base_strategy_params as Record<string, unknown> | undefined) ??
+      undefined,
+    profit_atr_mult: raw.profit_atr_mult != null ? Number(raw.profit_atr_mult) : undefined,
+    stop_atr_mult: raw.stop_atr_mult != null ? Number(raw.stop_atr_mult) : undefined,
+    max_horizon_bars:
+      raw.max_horizon_bars != null
+        ? Number(raw.max_horizon_bars)
+        : DEFAULT_ML_PARAMS.max_horizon_bars,
+    meta_gate_threshold:
+      raw.meta_gate_threshold != null
+        ? Number(raw.meta_gate_threshold)
+        : DEFAULT_ML_PARAMS.meta_gate_threshold,
   };
 }
 
-export function minimumBarsRequired(params: Pick<MlParams, WalkForwardParamKey>): number {
-  return FEATURE_WARMUP_BARS + params.train_bars + params.test_bars + params.label_horizon;
+export function minimumBarsRequired(
+  params: Pick<MlParams, WalkForwardParamKey> & { label_mode?: MlParams['label_mode']; max_horizon_bars?: number },
+): number {
+  const horizon =
+    params.label_mode === 'meta_label'
+      ? Number(params.max_horizon_bars ?? 48)
+      : params.label_horizon;
+  return FEATURE_WARMUP_BARS + params.train_bars + params.test_bars + horizon;
 }
 
 export function estimateWalkForwardFoldCount(

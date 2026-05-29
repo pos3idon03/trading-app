@@ -19,7 +19,7 @@ export const DAILY_PLUS_TIMEFRAMES = new Set<string>(['1d', '1w', '1mo']);
 export const INTRADAY_BAR_LIMIT = 3000;
 export const DAILY_PLUS_BAR_LIMIT = 10000;
 
-export type DateRangePreset = '1D' | '5D' | '1M' | '3M' | '6M' | '1Y' | 'MAX';
+export type DateRangePreset = '1D' | '5D' | '1M' | '3M' | '6M' | 'YTD' | '1Y' | 'MAX';
 
 export interface DateRangeValue {
   preset: DateRangePreset;
@@ -51,6 +51,10 @@ export function computePresetRange(preset: DateRangePreset, mode: 'datetime' | '
       break;
     case '6M':
       startDate.setMonth(startDate.getMonth() - 6);
+      break;
+    case 'YTD':
+      startDate.setMonth(0);
+      startDate.setDate(1);
       break;
     case '1Y':
       startDate.setFullYear(startDate.getFullYear() - 1);
@@ -121,4 +125,15 @@ export function defaultDateRangeForTimeframe(_timeframe: string): DateRangeValue
   return { preset: 'MAX' };
 }
 
-export const DATE_RANGE_PRESETS: DateRangePreset[] = ['1D', '5D', '1M', '3M', '6M', '1Y', 'MAX'];
+export const DATE_RANGE_PRESETS: DateRangePreset[] = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', 'MAX'];
+
+export function defaultPortfolioDateRange(): DateRangeValue {
+  return computePresetRange('YTD', 'date');
+}
+
+export function toPortfolioApiRange(value: DateRangeValue): { start?: string; end?: string } {
+  if (value.preset === 'MAX' && !value.start && !value.end) {
+    return { start: '2000-01-01T00:00:00Z' };
+  }
+  return toDailyApiRange(value);
+}

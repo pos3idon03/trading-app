@@ -40,7 +40,8 @@ def _require_foundation_route() -> None:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
                 "Foundation model dependencies are not installed. "
-                "Install tiingo_backend/requirements-foundation.txt."
+                "Install tiingo_backend/requirements-foundation.txt "
+                "(TimesFM requires git; see FOUNDATION_MANUAL.md)."
             ),
         )
 

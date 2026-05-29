@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_ML_PARAMS,
   FEATURE_WARMUP_BARS,
+  barsPerYear,
+  getCryptoMlPreset,
   defaultWalkForwardParams,
   fitWalkForwardParamsToBarCount,
   formatOosAccuracy,
@@ -28,6 +30,21 @@ describe('mlBacktestConfig', () => {
     expect(params.feature_mode).toBe('prices_only');
     expect(params.train_bars).toBe(252);
     expect(params.label_horizon).toBe(5);
+    expect(params.include_news_sentiment).toBe(false);
+  });
+
+  it('parses include_news_sentiment flag', () => {
+    const params = parseMlParams({ include_news_sentiment: true });
+    expect(params.include_news_sentiment).toBe(true);
+  });
+
+  it('crypto preset uses meta_label and 24/7 hourly walk-forward', () => {
+    const preset = getCryptoMlPreset('1h');
+    expect(preset.label_mode).toBe('meta_label');
+    expect(preset.feature_mode).toBe('prices_macro');
+    expect(preset.include_news_sentiment).toBe(true);
+    expect(preset.train_bars).toBeGreaterThan(1000);
+    expect(barsPerYear('1h', 'crypto')).toBeGreaterThan(barsPerYear('1h', 'equity'));
   });
 
   it('computes minimum bars including warmup and label horizon', () => {
@@ -61,7 +78,7 @@ describe('mlBacktestConfig', () => {
       step_bars: 20,
       label_horizon: 2,
     };
-    expect(validateWalkForwardParams(params, 100)).toBeNull();
+    expect(validateWalkForwardParams(params, 250)).toBeNull();
   });
 
   it('validateWalkForwardParams rejects train_bars below minimum', () => {

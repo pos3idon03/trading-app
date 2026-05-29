@@ -1,6 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import ProbabilityExplainabilityPanel from '../../components/trading/ProbabilityExplainabilityPanel';
 import { useExecutionActivityStream } from '../../hooks/useExecutionActivityStream';
+import { PROBABILITY_UP_LABEL } from '../../utils/probabilityExplainability';
 import {
   formatDateTime,
   formatOutcome,
@@ -19,6 +21,7 @@ export default function ActivityPage() {
     deploymentId,
     symbol: symbolFilter || null,
   });
+  const [expandedExplainability, setExpandedExplainability] = useState<Record<string, boolean>>({});
 
   const filteredEvents = useMemo(() => {
     if (!symbolFilter) return events;
@@ -76,7 +79,7 @@ export default function ActivityPage() {
         {filteredEvents.length === 0 ? (
           <div className="rounded-xl border border-slate-800 bg-surface-900 p-6 text-sm text-slate-400">
             No evaluation activity yet. Activate a deployment and run Evaluate now, or wait for the
-            scheduled post-EOD job.
+            scheduled evaluation cycle (intraday models refresh every 5 minutes during market hours).
           </div>
         ) : (
           filteredEvents.map((event) => (
@@ -100,8 +103,22 @@ export default function ActivityPage() {
                   <dd className="text-slate-100">{formatSignal(event.signal)}</dd>
                 </div>
                 <div>
-                  <dt className="text-slate-500">Probability</dt>
+                  <dt className="text-slate-500">{PROBABILITY_UP_LABEL}</dt>
                   <dd className="text-slate-100">{formatProbability(event.probability)}</dd>
+                  {event.explainability && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedExplainability((current) => ({
+                          ...current,
+                          [event.id]: !current[event.id],
+                        }))
+                      }
+                      className="mt-1 text-xs text-brand-300 hover:text-brand-200"
+                    >
+                      {expandedExplainability[event.id] ? 'Hide drivers' : 'Why?'}
+                    </button>
+                  )}
                 </div>
                 <div>
                   <dt className="text-slate-500">Thresholds</dt>
@@ -130,6 +147,11 @@ export default function ActivityPage() {
                   <dd className="text-slate-100">{event.blocked_reason ?? '—'}</dd>
                 </div>
               </dl>
+              {expandedExplainability[event.id] && (
+                <div className="rounded-lg border border-slate-800 bg-surface-950/60 px-3 py-2">
+                  <ProbabilityExplainabilityPanel explainability={event.explainability} compact />
+                </div>
+              )}
               {event.warnings.length > 0 && (
                 <p className="text-xs text-amber-400/90">
                   Warnings: {event.warnings.join('; ')}

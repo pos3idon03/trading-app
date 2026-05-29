@@ -1,3 +1,7 @@
+SERIES_ID_ALIASES: dict[str, str] = {
+    "USRECNBER": "USRECM",
+}
+
 SERIES_CATALOG: dict[str, dict] = {
     "GDPC1": {"title": "Real Gross Domestic Product", "frequency": "Quarterly", "category": "growth"},
     "INDPRO": {"title": "Industrial Production Index", "frequency": "Monthly", "category": "growth"},
@@ -18,6 +22,11 @@ SERIES_CATALOG: dict[str, dict] = {
     "T10Y2Y": {"title": "10Y-2Y Spread", "frequency": "Daily", "category": "rates"},
     "STLFSI4": {"title": "St. Louis Fed Financial Stress Index", "frequency": "Weekly", "category": "rates"},
     "WALCL": {"title": "Fed Total Assets (Balance Sheet)", "frequency": "Weekly", "category": "rates"},
+    "WTREGEN": {
+        "title": "Treasury General Account (TGA)",
+        "frequency": "Weekly",
+        "category": "rates",
+    },
     "CSUSHPINSA": {"title": "Case-Shiller Home Price", "frequency": "Monthly", "category": "housing"},
     "HOUST": {"title": "Housing Starts", "frequency": "Monthly", "category": "housing"},
     "MSACSR": {"title": "Housing Inventory", "frequency": "Monthly", "category": "housing"},
@@ -25,6 +34,25 @@ SERIES_CATALOG: dict[str, dict] = {
     "GASREGW": {"title": "US Regular Gas Price", "frequency": "Weekly", "category": "energy"},
     "PPIACO": {"title": "PPI All Commodities", "frequency": "Monthly", "category": "goods"},
 }
+
+
+def normalize_series_id(series_id: str) -> str:
+    key = series_id.strip().upper()
+    return SERIES_ID_ALIASES.get(key, key)
+
+
+def validate_series_ids(series_ids: list[str]) -> list[str]:
+    if not series_ids:
+        return []
+    normalized = [normalize_series_id(item) for item in series_ids if item.strip()]
+    unknown = [sid for sid in normalized if sid not in SERIES_CATALOG]
+    if unknown:
+        hints = [f"{sid} (did you mean USRECM?)" for sid in unknown if "USREC" in sid]
+        detail = f" Unknown: {', '.join(unknown)}."
+        if hints:
+            detail += f" Hints: {', '.join(hints)}."
+        raise ValueError(f"Invalid FRED series id(s).{detail}")
+    return normalized
 
 
 def catalog_rows() -> list[dict]:

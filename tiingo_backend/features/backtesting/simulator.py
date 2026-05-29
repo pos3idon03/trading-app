@@ -56,24 +56,35 @@ def _commission_amount(notional: float, commission_bps: float) -> float:
     return notional * (commission_bps / 10_000.0)
 
 
+def _slippage_adjusted_price(price: float, slippage_bps: float, *, side: str) -> float:
+    if slippage_bps <= 0 or price <= 0:
+        return price
+    factor = slippage_bps / 10_000.0
+    if side == "buy":
+        return price * (1.0 + factor)
+    return price * (1.0 - factor)
+
+
 def buy_all_in(
     state: PortfolioState,
     price: float,
     bar: dict,
     commission_bps: float,
+    slippage_bps: float = 0.0,
 ) -> None:
     if price <= 0 or state.cash <= 0:
         return
 
+    fill_price = _slippage_adjusted_price(price, slippage_bps, side="buy")
     commission = _commission_amount(state.cash, commission_bps)
     spendable = max(state.cash - commission, 0.0)
-    shares = spendable / price
+    shares = spendable / fill_price
     if shares <= 0:
         return
 
     state.shares = shares
-    state.cash = state.cash - commission - (shares * price)
-    state.entry_price = price
+    state.cash = state.cash - commission - (shares * fill_price)
+    state.entry_price = fill_price
     state.entry_date = _format_trade_date(bar)
 
 
@@ -83,14 +94,16 @@ def sell_all(
     bar: dict,
     commission_bps: float,
     trades: list[TradeRecord],
+    slippage_bps: float = 0.0,
 ) -> None:
     if state.shares <= 0 or price <= 0:
         return
 
-    notional = state.shares * price
+    fill_price = _slippage_adjusted_price(price, slippage_bps, side="sell")
+    notional = state.shares * fill_price
     commission = _commission_amount(notional, commission_bps)
     proceeds = notional - commission
-    entry_price = state.entry_price or price
+    entry_price = state.entry_price or fill_price
     entry_date = state.entry_date or _format_trade_date(bar)
     pnl = proceeds - (state.shares * entry_price)
     pnl_pct = (pnl / (state.shares * entry_price)) * 100.0 if entry_price > 0 else 0.0
@@ -100,7 +113,7 @@ def sell_all(
             entry_date=entry_date,
             exit_date=_format_trade_date(bar),
             entry_price=round(entry_price, 4),
-            exit_price=round(price, 4),
+            exit_price=round(fill_price, 4),
             shares=round(state.shares, 6),
             pnl=round(pnl, 2),
             pnl_pct=round(pnl_pct, 2),

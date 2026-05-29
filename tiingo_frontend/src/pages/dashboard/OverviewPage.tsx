@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { marketDataApi } from '../../api/endpoints';
 import type { AssetOverviewRow, MacroOverviewRow } from '../../api/types';
+import MacroBriefPanel from '../../components/dashboard/MacroBriefPanel';
 import DataTable, {
   formatMaBadge,
   formatPctCell,
@@ -350,6 +351,7 @@ function MacroOverviewSection() {
           FRED macro series with period changes and moving-average position.
         </p>
       </div>
+      <MacroBriefPanel />
       <TabBar tabs={MACRO_TABS} active={macroTab} onChange={setMacroTab} />
       {error && <ErrorAlert message={error} />}
       {loading ? (

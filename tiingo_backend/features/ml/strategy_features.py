@@ -1,6 +1,14 @@
 from typing import Any, Optional
 
-from features.backtesting.indicators import compute_ema, compute_rsi, compute_sma
+from features.backtesting.indicators import (
+    compute_bollinger_bands,
+    compute_donchian,
+    compute_ema,
+    compute_mfi,
+    compute_rsi,
+    compute_sma,
+    compute_stochastic,
+)
 from features.backtesting.strategies.registry import ENSEMBLE_LEG_STRATEGIES, STRATEGY_CATALOG
 
 _SIGNAL_ENCODING = {"sell": -1.0, "hold": 0.0, "buy": 1.0}
@@ -17,6 +25,82 @@ def _validate_strategy_ids(strategy_ids: list[str]) -> None:
         )
 
 
+def _channel_position(close: float, upper: float, lower: float) -> float:
+    span = upper - lower
+    if span == 0:
+        return 0.5
+    return float((close - lower) / span)
+
+
+def _donchian_cont(bars: list[dict], params: dict[str, Any], index: int) -> list[Optional[float]]:
+    period = int(params["channel_period"])
+    highs = [float(b["high"]) for b in bars]
+    lows = [float(b["low"]) for b in bars]
+    upper, lower = compute_donchian(highs, lows, period)
+    if upper[index] is None or lower[index] is None:
+        return [None]
+    return [_channel_position(float(bars[index]["close"]), upper[index], lower[index])]
+
+
+def _bollinger_cont(bars: list[dict], params: dict[str, Any], index: int) -> list[Optional[float]]:
+    closes = [float(b["close"]) for b in bars]
+    period = int(params["period"])
+    std_dev = float(params["std_dev"])
+    _, upper, lower = compute_bollinger_bands(closes, period, std_dev)
+    if upper[index] is None or lower[index] is None:
+        return [None]
+    return [_channel_position(closes[index], upper[index], lower[index])]
+
+
+def _stochastic_cont(bars: list[dict], params: dict[str, Any], index: int) -> list[Optional[float]]:
+    highs = [float(b["high"]) for b in bars]
+    lows = [float(b["low"]) for b in bars]
+    closes = [float(b["close"]) for b in bars]
+    k_values, _ = compute_stochastic(
+        highs,
+        lows,
+        closes,
+        int(params["k_period"]),
+        int(params["d_period"]),
+    )
+    value = k_values[index]
+    if value is None:
+        return [None]
+    return [float(value)]
+
+
+def _mfi_cont(bars: list[dict], params: dict[str, Any], index: int) -> list[Optional[float]]:
+    highs = [float(b["high"]) for b in bars]
+    lows = [float(b["low"]) for b in bars]
+    closes = [float(b["close"]) for b in bars]
+    volumes = [float(b.get("volume") or 0.0) for b in bars]
+    mfi = compute_mfi(highs, lows, closes, volumes, int(params["period"]))
+    value = mfi[index]
+    if value is None:
+        return [None]
+    return [float(value)]
+
+
+def _crossover_cont(
+    strategy_id: str,
+    closes: list[float],
+    params: dict[str, Any],
+    index: int,
+) -> list[Optional[float]]:
+    fast_key = "fast_period"
+    slow_key = "slow_period"
+    if strategy_id == "sma_crossover":
+        fast = compute_sma(closes, int(params[fast_key]))
+        slow = compute_sma(closes, int(params[slow_key]))
+    else:
+        fast = compute_ema(closes, int(params[fast_key]))
+        slow = compute_ema(closes, int(params[slow_key]))
+    if fast[index] is None or slow[index] is None or slow[index] == 0:
+        return [None, None]
+    spread = (fast[index] - slow[index]) / slow[index]
+    return [float(spread), float(fast[index] / slow[index] - 1.0)]
+
+
 def _continuous_features(
     strategy_id: str,
     bars: list[dict],
@@ -25,18 +109,7 @@ def _continuous_features(
 ) -> list[Optional[float]]:
     closes = [float(b["close"]) for b in bars]
     if strategy_id in ("sma_crossover", "ema_crossover"):
-        fast_key = "fast_period"
-        slow_key = "slow_period"
-        if strategy_id == "sma_crossover":
-            fast = compute_sma(closes, int(params[fast_key]))
-            slow = compute_sma(closes, int(params[slow_key]))
-        else:
-            fast = compute_ema(closes, int(params[fast_key]))
-            slow = compute_ema(closes, int(params[slow_key]))
-        if fast[index] is None or slow[index] is None or slow[index] == 0:
-            return [None, None]
-        spread = (fast[index] - slow[index]) / slow[index]
-        return [float(spread), float(fast[index] / slow[index] - 1.0)]
+        return _crossover_cont(strategy_id, closes, params, index)
 
     if strategy_id == "rsi_reversion":
         rsi = compute_rsi(closes, int(params["period"]))
@@ -51,6 +124,18 @@ def _continuous_features(
             return [None]
         momentum = (closes[index] / closes[index - lookback]) - 1.0
         return [float(momentum)]
+
+    if strategy_id == "donchian_breakout":
+        return _donchian_cont(bars, params, index)
+
+    if strategy_id == "bollinger_breakout":
+        return _bollinger_cont(bars, params, index)
+
+    if strategy_id == "stochastic_reversion":
+        return _stochastic_cont(bars, params, index)
+
+    if strategy_id == "mfi_reversion":
+        return _mfi_cont(bars, params, index)
 
     return []
 

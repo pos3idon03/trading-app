@@ -32,4 +32,5 @@ class ExecutionEvaluation(Base):
         ForeignKey("execution_orders.id", ondelete="SET NULL"),
     )
     warnings: Mapped[list] = mapped_column(JSONB, default=list)
+    explainability: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -5,12 +5,14 @@ from db import get_db
 from dtos.market_data_dto import (
     AssetOverviewResponseDTO,
     AssetOverviewRowDTO,
+    MacroBriefResponseDTO,
     MacroOverviewResponseDTO,
     MacroOverviewRowDTO,
     MetricGrowthDTO,
 )
 from features.market_data.overview_assets import load_asset_overview
 from features.market_data.overview_macro import load_macro_overview
+from features.agents.macro_crew.macro_crew_orchestrator import get_stored_macro_brief
 
 router = APIRouter(prefix="/market-data/overview", tags=["overview"])
 
@@ -91,3 +93,11 @@ async def get_macro_overview(
         as_of=payload["as_of"],
         rows=[MacroOverviewRowDTO(**row) for row in payload["rows"]],
     )
+
+
+@router.get("/macro/brief", response_model=MacroBriefResponseDTO)
+async def get_macro_brief(
+    session: AsyncSession = Depends(get_db),
+) -> MacroBriefResponseDTO:
+    payload = await get_stored_macro_brief(session)
+    return MacroBriefResponseDTO(**payload)

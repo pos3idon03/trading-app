@@ -5,6 +5,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
 from features.ml.artifacts import (
+    align_feature_matrix_to_schema,
     build_feature_schema,
     load_model_artifact,
     save_model_artifact,
@@ -56,3 +57,31 @@ def test_validate_feature_schema_rejects_mismatch():
 def test_validate_feature_schema_accepts_match():
     saved = build_feature_schema(["a", "b"])
     validate_feature_schema(saved, ["a", "b"])
+
+
+def test_align_feature_matrix_to_schema_selects_saved_order():
+    saved = build_feature_schema(["a", "c"])
+    names, rows = align_feature_matrix_to_schema(
+        saved,
+        ["a", "b", "c"],
+        [[1.0, 2.0, 3.0], None, [4.0, 5.0, 6.0]],
+    )
+    assert names == ["a", "c"]
+    assert rows == [[1.0, 3.0], None, [4.0, 6.0]]
+
+
+def test_align_feature_matrix_to_schema_raises_when_feature_missing():
+    saved = build_feature_schema(["a", "missing"])
+    with pytest.raises(ValueError, match="missing from current build"):
+        align_feature_matrix_to_schema(saved, ["a", "b"], [[1.0, 2.0]])
+
+
+def test_align_feature_matrix_to_schema_nulls_short_rows():
+    saved = build_feature_schema(["a", "c"])
+    names, rows = align_feature_matrix_to_schema(
+        saved,
+        ["a", "b", "c"],
+        [[1.0, 2.0], [1.0]],
+    )
+    assert names == ["a", "c"]
+    assert rows == [None, None]

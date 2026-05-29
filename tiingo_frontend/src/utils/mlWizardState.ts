@@ -42,6 +42,8 @@ export interface MlLockedConfig {
   initialCash?: number;
   commissionBps?: number;
   runMode?: string;
+  /** Bar count from Universe step when walk-forward settings were locked. */
+  availableBarCountAtLock?: number | null;
 }
 
 export const EMPTY_WIZARD_ARTIFACTS: MlWizardArtifacts = {
@@ -96,6 +98,7 @@ export function buildWizardStepSnapshot(
     runMode: string;
     initialCash: number;
     commissionBps: number;
+    availableBarCount?: number | null;
   },
 ): MlLockedConfig {
   switch (step) {
@@ -105,6 +108,7 @@ export function buildWizardStepSnapshot(
         decisionTimeframe: config.decisionTimeframe,
         dateRange: config.dateRange,
         mlParams: pickWalkForwardParams(config.mlParams),
+        availableBarCountAtLock: config.availableBarCount ?? null,
       };
     case 'data_prep':
       return { mlParams: { ...config.mlParams } };
@@ -167,6 +171,7 @@ export function resolveCompleteStepAdvance(
     runMode: input.runMode,
     initialCash: input.initialCash,
     commissionBps: input.commissionBps,
+    availableBarCount: input.availableBarCount,
   });
 
   return {

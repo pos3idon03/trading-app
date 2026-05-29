@@ -22,7 +22,11 @@ export type MlHelpFieldKey =
   | 'run_mode'
   | 'saved_model'
   | 'initial_cash'
-  | 'commission_bps';
+  | 'commission_bps'
+  | 'include_news_sentiment'
+  | 'label_mode'
+  | 'meta_gate_threshold'
+  | 'slippage_bps';
 
 export const ML_FIELD_LABELS: Record<MlHelpFieldKey, string> = {
   decision_timeframe: 'Decision timeframe',
@@ -43,6 +47,10 @@ export const ML_FIELD_LABELS: Record<MlHelpFieldKey, string> = {
   saved_model: 'Saved model',
   initial_cash: 'Initial cash',
   commission_bps: 'Commission (bps)',
+  include_news_sentiment: 'News sentiment features',
+  label_mode: 'Label mode',
+  meta_gate_threshold: 'Meta gate threshold',
+  slippage_bps: 'Slippage (bps)',
 };
 
 export const ML_FIELD_HELP: Record<MlHelpFieldKey, string> = {
@@ -67,7 +75,7 @@ export const ML_FIELD_HELP: Record<MlHelpFieldKey, string> = {
   step_bars:
     'How many bars the training window advances between folds. Smaller steps produce more overlapping OOS windows; larger steps reduce compute and correlation between folds.',
   buy_threshold:
-    'Minimum predicted probability of an upward move required to emit a buy signal. Must be greater than the sell threshold.',
+    'For binary/ternary modes: minimum predicted probability of an upward move required to emit a buy. Must be greater than sell threshold. Meta-label mode uses meta gate threshold instead.',
   sell_threshold:
     'Maximum predicted probability of an upward move allowed before emitting a sell signal. Values between sell and buy thresholds hold the current position.',
   random_forest_estimators:
@@ -82,6 +90,14 @@ export const ML_FIELD_HELP: Record<MlHelpFieldKey, string> = {
     'Starting cash balance for the simulated portfolio before any trades are executed.',
   commission_bps:
     'Commission charged per trade in basis points (1 bps = 0.01%). Applied on each buy and sell execution at the next bar open.',
+  include_news_sentiment:
+    'Adds FinBERT sentiment aggregates in a rolling 24h window ending at each bar (plus 7-day rolling metrics) without look-ahead.',
+  label_mode:
+    'Binary/ternary: labels from forward returns; the model predicts direction directly. Meta-label: a base rule (crypto trend entry) marks events; labels are ATR profit/stop outcomes; the model gates whether to take each event.',
+  meta_gate_threshold:
+    'Meta-label only: minimum P(success) required to emit a buy on a base-rule event. Typical crypto preset: 0.65.',
+  slippage_bps:
+    'Extra execution slippage applied on simulated fills (buy pays more, sell receives less). Crypto preset often uses 5 bps on top of commission.',
 };
 
 export function mlFieldLabel(key: MlHelpFieldKey): string {

@@ -45,6 +45,32 @@ export interface Job {
   created_at: string;
 }
 
+export interface NewsSentiment {
+  label: string;
+  score_positive: number;
+  score_negative: number;
+  score_neutral: number;
+  confidence: number;
+  model_name?: string;
+  model_version?: string;
+  source?: string;
+}
+
+export interface NewsSentimentRefined {
+  label: string;
+  refined_label?: string;
+  refined_confidence: number;
+  rationale?: string | null;
+  citations?: { title?: string | null; url?: string | null }[];
+  source?: string;
+}
+
+export interface NewsEffectiveSentiment {
+  label: string;
+  confidence: number;
+  source: string;
+}
+
 export interface NewsArticle {
   id: number;
   published_at: string;
@@ -53,6 +79,10 @@ export interface NewsArticle {
   description?: string;
   tickers: string[];
   tags: string[];
+  sentiment?: NewsSentiment | null;
+  sentiment_refined?: NewsSentimentRefined | null;
+  effective_label?: string | null;
+  effective_sentiment?: NewsEffectiveSentiment | null;
 }
 
 export interface MacroSeries {
@@ -205,6 +235,25 @@ export interface MacroOverviewResponse {
   as_of: string | null;
   rows: MacroOverviewRow[];
 }
+
+export interface MacroBriefResponse {
+  as_of: string | null;
+  situation: string | null;
+  outlook: string | null;
+  situation_phase?: MacroCyclePhase | null;
+  outlook_phase?: MacroCyclePhase | null;
+  generated_at: string | null;
+  available: boolean;
+  message?: string | null;
+}
+
+export type MacroCyclePhase =
+  | 'Expansion'
+  | 'Peak'
+  | 'Slowdown'
+  | 'Recession'
+  | 'Trough'
+  | 'Stagnation';
 
 export type SeriesSource = 'macro' | 'instrument';
 

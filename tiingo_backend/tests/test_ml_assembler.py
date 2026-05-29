@@ -20,9 +20,26 @@ def test_prices_macro_concatenates_columns():
         [[0.1], [0.2]],
         ["DFF_level"],
         [[4.0], None],
+        news_names=["news_sent_avg_score_1d"],
+        news_rows=[[0.5], [0.6]],
+    )
+    assert names == ["ret_1", "DFF_level", "news_sent_avg_score_1d"]
+    assert rows == [[0.1, 4.0, 0.5], None]
+
+
+def test_omitted_news_placeholder_does_not_nullify_rows():
+    """Empty news names with all-None rows must not participate in merge."""
+    names, rows = assemble_feature_matrix(
+        "prices_macro",
+        ["ret_1"],
+        [[0.1], [0.2]],
+        ["DFF_level"],
+        [[4.0], [4.1]],
+        news_names=[],
+        news_rows=[None, None],
     )
     assert names == ["ret_1", "DFF_level"]
-    assert rows == [[0.1, 4.0], None]
+    assert rows == [[0.1, 4.0], [0.2, 4.1]]
 
 
 def test_prices_macro_fundamentals_concatenates_all_blocks():

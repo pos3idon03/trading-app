@@ -162,6 +162,18 @@ export default function ControlsPage() {
                   <dt className="text-slate-500">Max orders / minute</dt>
                   <dd className="text-slate-100">{risk.max_orders_per_minute}</dd>
                 </div>
+                <div>
+                  <dt className="text-slate-500">Deployment max drawdown %</dt>
+                  <dd className="text-slate-100">{risk.deployment_max_drawdown_pct}%</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Stale data block</dt>
+                  <dd className="text-slate-100">
+                    {risk.stale_data_block_orders
+                      ? `Yes (≥ ${risk.stale_data_max_missed_slots} missed slots)`
+                      : 'No'}
+                  </dd>
+                </div>
               </dl>
             </div>
           )}

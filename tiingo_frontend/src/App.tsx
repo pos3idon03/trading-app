@@ -12,12 +12,13 @@ import FredMacroTab from './pages/ingestion/FredMacroTab';
 import StocksDashboardPage from './pages/dashboard/StocksDashboardPage';
 import CryptoDashboardPage from './pages/dashboard/CryptoDashboardPage';
 import MacroDashboardPage from './pages/dashboard/MacroDashboardPage';
-import OverviewPage from './pages/dashboard/OverviewPage';
+import DashboardOverviewPage from './pages/dashboard/OverviewPage';
 import AlgosPage from './pages/backtesting/AlgosPage';
 import MLPage from './pages/backtesting/MLPage';
 import TradingModelsPage from './pages/backtesting/TradingModelsPage';
 import FoundationPage from './pages/backtesting/FoundationPage';
 import DeploymentsPage from './pages/trading/DeploymentsPage';
+import TradingOverviewPage from './pages/trading/OverviewPage';
 import PortfolioPage from './pages/trading/PortfolioPage';
 import OrdersPage from './pages/trading/OrdersPage';
 import ControlsPage from './pages/trading/ControlsPage';
@@ -39,7 +40,7 @@ export default function App() {
             <Route path="fundamentals" element={<FundamentalsTab />} />
             <Route path="fred" element={<FredMacroTab />} />
           </Route>
-          <Route path="dashboard/overview" element={<OverviewPage />} />
+          <Route path="dashboard/overview" element={<DashboardOverviewPage />} />
           <Route path="dashboard/stocks" element={<StocksDashboardPage />} />
           <Route path="dashboard/stocks/:symbol" element={<StocksDashboardPage />} />
           <Route path="dashboard/crypto" element={<CryptoDashboardPage />} />
@@ -54,7 +55,8 @@ export default function App() {
           <Route path="backtesting/foundation" element={<FoundationPage />} />
           <Route path="backtesting/foundation/:symbol" element={<FoundationPage />} />
           <Route path="backtesting/trading-models" element={<TradingModelsPage />} />
-          <Route path="trading" element={<Navigate to="/trading/deployments" replace />} />
+          <Route path="trading" element={<Navigate to="/trading/overview" replace />} />
+          <Route path="trading/overview" element={<TradingOverviewPage />} />
           <Route path="trading/deployments" element={<DeploymentsPage />} />
           <Route path="trading/activity" element={<ActivityPage />} />
           <Route path="trading/portfolio" element={<PortfolioPage />} />

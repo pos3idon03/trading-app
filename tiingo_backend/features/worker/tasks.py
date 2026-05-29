@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal import job_dal
 from features.worker.pool import get_arq_pool
+from features.worker.queue_routing import resolve_arq_queue_name
 
 
 async def run_ingestion_job(ctx: dict, job_id: str, job_type: str, params: dict | None) -> None:
@@ -20,7 +21,17 @@ async def enqueue_ingestion_job(
 ) -> None:
     await session.commit()
     pool = await get_arq_pool()
-    await pool.enqueue_job("run_ingestion_job", str(job_id), job_type, params or {})
+    queue_name = resolve_arq_queue_name(job_type)
+    kwargs: dict = {}
+    if queue_name is not None:
+        kwargs["_queue_name"] = queue_name
+    await pool.enqueue_job(
+        "run_ingestion_job",
+        str(job_id),
+        job_type,
+        params or {},
+        **kwargs,
+    )
 
 
 async def create_and_enqueue_job(

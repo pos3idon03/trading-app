@@ -15,8 +15,7 @@ def test_compute_buy_budget_uses_min_of_allocation_and_risk():
 def test_signal_to_order_respects_max_position_pct():
     intent = signal_to_order_intent(
         "buy",
-        symbol="AAPL",
-        positions=[],
+        deployment_net_qty=0,
         buying_power=10_000,
         account_equity=10_000,
         allocation_pct=100,

@@ -23,6 +23,7 @@ async def create_evaluation(
     blocked_reason: str | None,
     order_id: UUID | None,
     warnings: list[str],
+    explainability: dict | None = None,
 ) -> dict:
     now = datetime.now(timezone.utc)
     row = ExecutionEvaluation(
@@ -40,6 +41,7 @@ async def create_evaluation(
         blocked_reason=blocked_reason,
         order_id=order_id,
         warnings=warnings,
+        explainability=explainability or {},
         created_at=now,
     )
     session.add(row)
@@ -87,6 +89,7 @@ def _to_dict(row: ExecutionEvaluation, *, deployment: object | None = None) -> d
         "blocked_reason": row.blocked_reason,
         "order_id": row.order_id,
         "warnings": row.warnings or [],
+        "explainability": row.explainability or {},
         "created_at": row.created_at,
     }
     if deployment is not None:

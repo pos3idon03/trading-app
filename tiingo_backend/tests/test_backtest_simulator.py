@@ -53,6 +53,14 @@ def test_sell_all_records_trade():
     assert state.shares == 0.0
 
 
+def test_buy_all_in_applies_slippage():
+    state = PortfolioState(cash=1000.0)
+    bar = _bar(1, 100.0, 100.0)
+    buy_all_in(state, 100.0, bar, commission_bps=0.0, slippage_bps=10.0)
+    assert state.entry_price == pytest.approx(100.1, rel=1e-6)
+    assert state.shares < 10.0
+
+
 def test_mark_equity_tracks_drawdown():
     state = PortfolioState(cash=0.0, shares=10.0)
     equity, drawdown = mark_equity(state, _bar(1, 100.0, 90.0), peak_equity=1000.0)

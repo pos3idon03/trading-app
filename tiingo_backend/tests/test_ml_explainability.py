@@ -4,8 +4,10 @@ from sklearn.pipeline import Pipeline
 
 from features.ml.explainability import (
     _build_explainer,
+    _extract_signed_shap_row,
     _format_shap_values,
     _to_scalar_float,
+    compute_instance_contributions,
     compute_shap_importance,
 )
 from features.ml.trainer import train_model
@@ -70,6 +72,121 @@ def test_build_explainer_accepts_scaled_logistic_pipeline():
     x_array = np.array(x_rows)
     explainer = _build_explainer(trained.model, shap, x_array)
     assert explainer is not None
+
+
+def test_compute_instance_contributions_logistic():
+    x_rows = [
+        [0.01, 50.0],
+        [0.02, 60.0],
+        [-0.01, 40.0],
+        [0.03, 70.0],
+        [0.04, 65.0],
+    ]
+    y_rows = [0, 1, 0, 1, 1]
+    trained = train_model("ml_logistic", x_rows, y_rows, {})
+    classes = list(trained.model.named_steps["classifier"].classes_)
+
+    try:
+        import shap
+    except ImportError:  # pragma: no cover
+        pytest.skip("shap not installed")
+
+    result = compute_instance_contributions(
+        trained.model,
+        x_rows[-1],
+        x_rows,
+        ["ret_1", "rsi_14"],
+        classes,
+        top_n=2,
+    )
+    assert result["method"] == "shap_linear"
+    assert len(result["top_contributors"]) <= 2
+    assert all("feature" in row and "contribution" in row for row in result["top_contributors"])
+
+
+def test_compute_instance_contributions_tree_model():
+    x_rows = [
+        [0.01, 0.2],
+        [0.02, 0.3],
+        [-0.01, 0.1],
+        [0.03, 0.4],
+        [0.04, 0.35],
+        [0.05, 0.25],
+        [0.02, 0.15],
+        [0.01, 0.18],
+    ]
+    y_rows = [0, 1, 0, 1, 1, 0, 1, 0]
+    trained = train_model("ml_random_forest", x_rows, y_rows, {})
+    classes = list(trained.model.classes_)
+
+    try:
+        import shap
+    except ImportError:  # pragma: no cover
+        pytest.skip("shap not installed")
+
+    result = compute_instance_contributions(
+        trained.model,
+        x_rows[-1],
+        x_rows,
+        ["ret_1", "vol_20"],
+        classes,
+    )
+    assert result["method"] == "shap_tree"
+    assert result["top_contributors"]
+
+
+def test_compute_instance_contributions_unavailable_for_knn():
+    x_rows = [[0.1, 0.2], [0.2, 0.3], [0.3, 0.4], [0.4, 0.5]]
+    y_rows = [0, 1, 0, 1]
+    trained = train_model("ml_knn", x_rows, y_rows, {"knn_neighbors": 2})
+    classes = list(trained.model.named_steps["classifier"].classes_)
+    result = compute_instance_contributions(
+        trained.model,
+        x_rows[-1],
+        x_rows,
+        ["ret_1", "vol_20"],
+        classes,
+    )
+    assert result["method"] == "unavailable"
+    assert result["top_contributors"] == []
+
+
+def test_extract_signed_shap_row_handles_1d_feature_vector():
+    values = [np.array([0.1, -0.2, 0.3])]
+    row = _extract_signed_shap_row(values, [0, 1], 1)
+    assert row == [0.1, -0.2, 0.3]
+
+
+def test_extract_signed_shap_row_clamps_3d_class_dimension():
+    values = np.array([[[0.1, 0.2], [0.3, 0.4], [-0.1, -0.2]]])
+    row = _extract_signed_shap_row(values, [0, 1], 1)
+    assert row == [0.2, 0.4, -0.2]
+
+
+def test_compute_instance_contributions_returns_unavailable_on_bad_shap_shape(monkeypatch):
+    x_rows = [[0.01, 50.0], [0.02, 60.0], [-0.01, 40.0], [0.03, 70.0]]
+    y_rows = [0, 1, 0, 1]
+    trained = train_model("ml_logistic", x_rows, y_rows, {})
+    classes = list(trained.model.named_steps["classifier"].classes_)
+
+    class BrokenExplainer:
+        def shap_values(self, _x):
+            return []
+
+    monkeypatch.setattr(
+        "features.ml.explainability._build_explainer",
+        lambda *_args, **_kwargs: BrokenExplainer(),
+    )
+
+    result = compute_instance_contributions(
+        trained.model,
+        x_rows[-1],
+        x_rows,
+        ["ret_1", "rsi_14"],
+        classes,
+    )
+    assert result["method"] == "unavailable"
+    assert any("parse failed" in warning for warning in result["warnings"])
 
 
 def test_compute_shap_importance_scales_large_feature():

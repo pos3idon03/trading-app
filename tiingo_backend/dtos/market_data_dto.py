@@ -262,3 +262,14 @@ class MacroOverviewResponseDTO(BaseModel):
     category: str
     as_of: Optional[date] = None
     rows: list[MacroOverviewRowDTO]
+
+
+class MacroBriefResponseDTO(BaseModel):
+    as_of: Optional[date] = None
+    situation: Optional[str] = None
+    outlook: Optional[str] = None
+    situation_phase: Optional[str] = None
+    outlook_phase: Optional[str] = None
+    generated_at: Optional[datetime] = None
+    available: bool
+    message: Optional[str] = None

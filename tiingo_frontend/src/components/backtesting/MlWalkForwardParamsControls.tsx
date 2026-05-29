@@ -1,23 +1,30 @@
+import { useMemo } from 'react';
 import FieldLabel from '../FieldLabel';
 import {
-  minimumBarsRequired,
   WALK_FORWARD_CONSTRAINTS,
   WALK_FORWARD_PARAM_KEYS,
   type WalkForwardParamKey,
   type WalkForwardParams,
 } from '../../utils/mlBacktestConfig';
 import { maxWalkForwardParamValue, type WalkForwardBudget } from '../../utils/mlUniverseBudget';
+import { assessWalkForwardBarReadiness } from '../../utils/mlWalkForwardBarReadiness';
 import { mlFieldHelp, mlFieldLabel } from '../../utils/mlBacktestHelp';
+import MlWalkForwardBarReadinessBanner from './MlWalkForwardBarReadinessBanner';
 
 interface MlWalkForwardParamsControlsProps {
   params: WalkForwardParams;
   onChange: (key: WalkForwardParamKey, value: number) => void;
   onResetDefaults: () => void;
   barCount: number | null;
+  barCountLoading?: boolean;
   budget: WalkForwardBudget | null;
   validationError: string | null;
   disabled?: boolean;
   viableFolds?: number | null;
+  assetType?: string;
+  timeframe?: string;
+  labelMode?: 'binary' | 'ternary' | 'meta_label';
+  maxHorizonBars?: number;
 }
 
 export default function MlWalkForwardParamsControls({
@@ -25,12 +32,37 @@ export default function MlWalkForwardParamsControls({
   onChange,
   onResetDefaults,
   barCount,
+  barCountLoading = false,
   budget,
   validationError,
   disabled = false,
   viableFolds = null,
+  assetType,
+  timeframe,
+  labelMode,
+  maxHorizonBars,
 }: MlWalkForwardParamsControlsProps) {
-  const minBars = minimumBarsRequired(params);
+  const readiness = useMemo(
+    () =>
+      assessWalkForwardBarReadiness(barCount, params, {
+        loading: barCountLoading,
+        budget,
+        assetType,
+        timeframe,
+        labelMode,
+        maxHorizonBars,
+      }),
+    [
+      barCount,
+      barCountLoading,
+      params,
+      budget,
+      assetType,
+      timeframe,
+      labelMode,
+      maxHorizonBars,
+    ],
+  );
 
   return (
     <section className="rounded-xl border border-slate-800 bg-surface-950/40 p-4 space-y-4">
@@ -47,6 +79,11 @@ export default function MlWalkForwardParamsControls({
           Reset to timeframe defaults
         </button>
       </div>
+
+      <MlWalkForwardBarReadinessBanner
+        readiness={readiness}
+        validationError={validationError}
+      />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {WALK_FORWARD_PARAM_KEYS.map((key) => {
@@ -80,6 +117,7 @@ export default function MlWalkForwardParamsControls({
               {barCount != null && (
                 <p className={`text-xs ${exceedsRange ? 'text-amber-200/90' : 'text-slate-500'}`}>
                   Max for this range: {rangeMax}
+                  {exceedsRange && ' — exceeds available bars'}
                 </p>
               )}
             </label>
@@ -87,20 +125,11 @@ export default function MlWalkForwardParamsControls({
         })}
       </div>
 
-      <p className="text-xs text-slate-500">
-        Minimum bars required: {minBars} (includes 50-bar feature warmup).
-        {budget != null && (
-          <>
-            {' '}
-            Walk-forward budget: {budget.walkForwardBudget} bars · structural folds: ~
-            {budget.structuralFolds}.
-          </>
-        )}
-        {viableFolds != null && <> Viable folds from last preview: {viableFolds}.</>}
-      </p>
-
-      {validationError && (
-        <p className="text-xs text-amber-200/80">{validationError}</p>
+      {viableFolds != null && (
+        <p className="text-xs text-slate-500">
+          After Data Prep preview: {viableFolds} viable fold{viableFolds === 1 ? '' : 's'} (bars
+          with valid features and labels). Structural folds above count geometry only.
+        </p>
       )}
     </section>
   );

@@ -109,6 +109,41 @@ async def test_build_data_preview_includes_walk_forward_readiness():
 
 
 @pytest.mark.asyncio
+async def test_build_data_preview_meta_label_uses_validated_params():
+    bars = _sample_bars(300)
+    bars_by_tf = {"1h": bars}
+    validated_params = {
+        "feature_mode": "prices_only",
+        "label_horizon": 5,
+        "train_bars": 120,
+        "test_bars": 60,
+        "step_bars": 60,
+        "label_mode": "meta_label",
+        "label_threshold": 0.01,
+        "label_method": "endpoint",
+        "base_strategy_id": "crypto_trend_entry",
+        "base_strategy_params": {"slow_period": 50, "rsi_period": 14, "rsi_max": 65},
+        "profit_atr_mult": 2.0,
+        "stop_atr_mult": 1.5,
+        "max_horizon_bars": 48,
+    }
+
+    result = await build_data_preview(
+        AsyncMock(),
+        bars_by_timeframe=bars_by_tf,
+        decision_timeframe="1h",
+        validated_params=validated_params,
+        macro_series_ids=[],
+        fundamental_metrics=[],
+        context_warnings=[],
+        strategy_warnings=[],
+    )
+
+    assert result["label_preview"]["label_mode"] == "meta_label"
+    assert sum(result["label_preview"]["class_distribution"].values()) >= 0
+
+
+@pytest.mark.asyncio
 async def test_build_data_preview_warns_when_all_features_null():
     bars = _sample_bars(120)
     bars_by_tf = {"1d": bars}

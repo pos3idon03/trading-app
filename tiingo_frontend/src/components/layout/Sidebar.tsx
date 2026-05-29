@@ -78,6 +78,9 @@ export default function Sidebar() {
             Trading
           </p>
           <div className="space-y-1">
+            <NavLink to="/trading/overview" className={subLinkClass}>
+              Overview
+            </NavLink>
             <NavLink to="/trading/deployments" className={subLinkClass}>
               Deployments
             </NavLink>

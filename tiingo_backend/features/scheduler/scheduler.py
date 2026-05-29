@@ -1,4 +1,4 @@
-from datetime import timezone
+from datetime import datetime, timezone
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -6,7 +6,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from config import get_settings
 from db import AsyncSessionLocal
-from dtos.market_data_dto import OHLCVBackfillRequest
+from features.execution.deployment_timeframes import floor_to_cron_slot
 from features.worker.tasks import create_and_enqueue_job
 from utils.logging import get_logger
 
@@ -31,13 +31,29 @@ async def _enqueue_scheduled_job(job_type: str, params: dict) -> None:
             logger.error("scheduler_enqueue_failed", job_type=job_type, error=str(exc))
 
 
-async def _eod_job() -> None:
-    req = OHLCVBackfillRequest(
-        symbols=[],
-        timeframes=["1d"],
-        sources=["tiingo_eod"],
+async def _deployment_eod_job() -> None:
+    scheduled_at = floor_to_cron_slot(datetime.now(timezone.utc)).isoformat()
+    await _enqueue_scheduled_job(
+        "deployment_market_data_refresh",
+        {"timeframes": ["1d", "1w", "1mo"], "scheduled_at": scheduled_at},
     )
-    await _enqueue_scheduled_job("ohlcv_backfill", req.model_dump())
+
+
+async def _deployment_cycle_job() -> None:
+    scheduled_at = floor_to_cron_slot(datetime.now(timezone.utc)).isoformat()
+    await _enqueue_scheduled_job("execution_deployment_cycle", {"scheduled_at": scheduled_at})
+
+
+async def _deployment_reconciliation_job() -> None:
+    await _enqueue_scheduled_job("execution_deployment_reconciliation", {})
+
+
+async def _news_sentiment_enrichment_job() -> None:
+    await _enqueue_scheduled_job("news_sentiment_enrichment", {})
+
+
+async def _news_sentiment_job() -> None:
+    await _enqueue_scheduled_job("news_sentiment", {"backfill": True})
 
 
 async def _news_job() -> None:
@@ -46,10 +62,6 @@ async def _news_job() -> None:
 
 async def _fundamentals_job() -> None:
     await _enqueue_scheduled_job("fundamentals_ingest", {"symbols": []})
-
-
-async def _execution_evaluate_job() -> None:
-    await _enqueue_scheduled_job("execution_evaluate_all", {})
 
 
 async def _fred_seed_job() -> None:
@@ -68,14 +80,39 @@ def start_scheduler() -> None:
     sched = get_scheduler()
     minutes = settings.news_interval_minutes
 
-    sched.add_job(_eod_job, CronTrigger(hour=22, minute=0), id="eod_incremental", replace_existing=True)
     sched.add_job(
-        _execution_evaluate_job,
-        CronTrigger(hour=22, minute=15),
-        id="execution_evaluate_all",
+        _deployment_eod_job,
+        CronTrigger(hour=22, minute=0),
+        id="deployment_eod_refresh",
+        replace_existing=True,
+    )
+    sched.add_job(
+        _deployment_cycle_job,
+        CronTrigger(minute="*/5"),
+        id="execution_deployment_cycle",
+        replace_existing=True,
+    )
+    sched.add_job(
+        _deployment_reconciliation_job,
+        IntervalTrigger(minutes=settings.deployment_reconciliation_interval_minutes),
+        id="execution_deployment_reconciliation",
         replace_existing=True,
     )
     sched.add_job(_news_job, IntervalTrigger(minutes=minutes), id="news_ingest", replace_existing=True)
+    if settings.sentiment_enabled:
+        sched.add_job(
+            _news_sentiment_job,
+            IntervalTrigger(minutes=settings.sentiment_interval_minutes),
+            id="news_sentiment",
+            replace_existing=True,
+        )
+    if settings.sentiment_llm_enabled:
+        sched.add_job(
+            _news_sentiment_enrichment_job,
+            IntervalTrigger(minutes=settings.sentiment_interval_minutes),
+            id="news_sentiment_enrichment",
+            replace_existing=True,
+        )
     sched.add_job(_fundamentals_job, CronTrigger(hour=6, minute=0), id="fundamentals_ingest", replace_existing=True)
     sched.add_job(_fred_seed_job, CronTrigger(hour=6, minute=30), id="fred_seed_catalog", replace_existing=True)
     sched.add_job(_fred_job, CronTrigger(hour=7, minute=0), id="fred_refresh", replace_existing=True)

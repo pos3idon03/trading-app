@@ -25,6 +25,27 @@ DEFAULT_MACRO_SERIES_IDS: list[str] = [
     if meta.get("category") in ("rates", "inflation")
 ]
 
+CRYPTO_MACRO_SERIES_IDS = ["T10Y2Y", "WALCL", "WTREGEN"]
+
+CRYPTO_ML_PRESET: dict[str, Any] = {
+    "feature_mode": "prices_macro",
+    "macro_series_ids": CRYPTO_MACRO_SERIES_IDS,
+    "macro_publication_lag_days": {"rates": 1},
+    "include_news_sentiment": True,
+    "strategy_feature_ids": [],
+    "label_mode": "meta_label",
+    "base_strategy_id": "crypto_trend_entry",
+    "base_strategy_params": {"slow_period": 50, "rsi_period": 14, "rsi_max": 65.0},
+    "profit_atr_mult": 2.0,
+    "stop_atr_mult": 1.5,
+    "max_horizon_bars": 48,
+    "meta_gate_threshold": 0.65,
+    "commission_bps": 20.0,
+    "slippage_bps": 5.0,
+    "buy_threshold": 0.65,
+    "sell_threshold": 0.35,
+}
+
 DEFAULT_ML_PARAMS: dict[str, Any] = {
     "feature_mode": "prices_only",
     "macro_series_ids": DEFAULT_MACRO_SERIES_IDS,
@@ -44,6 +65,14 @@ DEFAULT_ML_PARAMS: dict[str, Any] = {
     "buy_threshold": 0.55,
     "sell_threshold": 0.45,
     "inference_eval_scope": "holdout",
+    "include_news_sentiment": False,
+    "slippage_bps": 0.0,
+    "base_strategy_id": "crypto_trend_entry",
+    "base_strategy_params": {},
+    "profit_atr_mult": 2.0,
+    "stop_atr_mult": 1.5,
+    "max_horizon_bars": 48,
+    "meta_gate_threshold": 0.65,
     "random_forest_estimators": 100,
     "gradient_boosting_max_iter": 100,
 }
@@ -159,8 +188,46 @@ def resolve_ml_model(model_type: str) -> dict[str, Any]:
     return ML_MODEL_CATALOG[model_type]
 
 
-def default_walk_forward_params(timeframe: str) -> dict[str, int]:
-    bpy = bars_per_year(timeframe)
+def get_crypto_ml_preset(timeframe: str = "1h") -> dict[str, Any]:
+    wfo = default_walk_forward_params(timeframe, asset_type="crypto")
+    return {**DEFAULT_ML_PARAMS, **CRYPTO_ML_PRESET, **wfo}
+
+
+LABEL_SEARCH_HORIZON_OFFSETS = (-4, -2, 0, 2, 4)
+
+
+def label_search_horizons(
+    center: int,
+    *,
+    min_horizon: int = 1,
+    max_horizon: int = 60,
+) -> list[int]:
+    values = sorted({
+        center + offset
+        for offset in LABEL_SEARCH_HORIZON_OFFSETS
+        if min_horizon <= center + offset <= max_horizon
+    })
+    return values
+
+
+def default_walk_forward_params(
+    timeframe: str,
+    *,
+    asset_type: str = "equity",
+) -> dict[str, int]:
+    bpy = bars_per_year(timeframe, asset_type=asset_type)
+    if asset_type == "crypto" and timeframe == "1h":
+        train = max(10, min(2000, round(bpy / 2)))
+        test = max(1, min(500, round(bpy / 12)))
+        step = test
+        label_horizon = 5
+        return {
+            "train_bars": train,
+            "test_bars": test,
+            "step_bars": step,
+            "label_horizon": label_horizon,
+        }
+
     train = max(10, min(2000, round(bpy)))
     test = max(1, min(500, round(bpy * 63 / 252)))
     step = test
@@ -181,9 +248,11 @@ def validate_ml_params(
     model_type: str,
     params: dict | None,
     timeframe: str = "1d",
+    *,
+    asset_type: str = "equity",
 ) -> dict:
     meta = resolve_ml_model(model_type)
-    tf_defaults = default_walk_forward_params(timeframe)
+    tf_defaults = default_walk_forward_params(timeframe, asset_type=asset_type)
     merged = {**DEFAULT_ML_PARAMS, **tf_defaults, **(params or {})}
     constraints = meta.get("constraints", {})
 
@@ -211,8 +280,11 @@ def validate_ml_params(
         _validate_fundamental_period_type(merged.get("fundamental_period_type"))
 
     label_mode = str(merged.get("label_mode") or "binary")
-    if label_mode not in ("binary", "ternary"):
-        raise ValueError("label_mode must be 'binary' or 'ternary'")
+    if label_mode not in ("binary", "ternary", "meta_label"):
+        raise ValueError("label_mode must be 'binary', 'ternary', or 'meta_label'")
+
+    if label_mode == "meta_label":
+        _validate_meta_label_params(merged)
 
     label_method = str(merged.get("label_method") or "endpoint")
     if label_method not in ("endpoint", "mean"):
@@ -223,6 +295,20 @@ def validate_ml_params(
     _validate_inference_eval_scope(merged.get("inference_eval_scope"))
 
     return merged
+
+
+def _validate_meta_label_params(params: dict) -> None:
+    threshold = float(params.get("meta_gate_threshold", 0.65))
+    if threshold < 0.51 or threshold > 0.99:
+        raise ValueError("meta_gate_threshold must be between 0.51 and 0.99")
+    max_horizon = int(params.get("max_horizon_bars", 48))
+    if max_horizon < 1 or max_horizon > 500:
+        raise ValueError("max_horizon_bars must be between 1 and 500")
+    from features.backtesting.strategies.registry import STRATEGY_CATALOG
+
+    base_id = str(params.get("base_strategy_id") or "crypto_trend_entry")
+    if base_id not in STRATEGY_CATALOG:
+        raise ValueError(f"Unknown base_strategy_id: {base_id}")
 
 
 def _validate_inference_eval_scope(raw: Any) -> None:
@@ -355,5 +441,21 @@ def minimum_bars_required(params: dict) -> int:
 
     train = int(params["train_bars"])
     test = int(params["test_bars"])
-    horizon = int(params["label_horizon"])
+    label_mode = str(params.get("label_mode") or "binary")
+    if label_mode == "meta_label":
+        horizon = int(params.get("max_horizon_bars", 48))
+    else:
+        horizon = int(params["label_horizon"])
     return FEATURE_WARMUP_BARS + train + test + horizon
+
+
+def minimum_bars_for_inference(params: dict) -> int:
+    """Bars needed to compute features for one live prediction (not full walk-forward)."""
+    from features.backtesting.strategies.registry import STRATEGY_CATALOG
+    from features.ml.price_features import FEATURE_WARMUP_BARS
+
+    minimum = FEATURE_WARMUP_BARS
+    for strategy_id in params.get("strategy_feature_ids") or []:
+        meta = STRATEGY_CATALOG.get(str(strategy_id), {})
+        minimum = max(minimum, int(meta.get("min_bars", 1)))
+    return minimum + 1

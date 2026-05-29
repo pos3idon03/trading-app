@@ -33,6 +33,7 @@ const BACKTESTING_ROUTES = [
 ];
 
 const TRADING_ROUTES = [
+  { path: '/trading/overview', label: 'Overview' },
   { path: '/trading/deployments', label: 'Deployments' },
   { path: '/trading/activity', label: 'Activity' },
   { path: '/trading/portfolio', label: 'Portfolio' },

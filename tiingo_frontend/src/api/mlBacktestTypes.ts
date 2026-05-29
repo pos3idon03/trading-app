@@ -1,7 +1,7 @@
 import type { BacktestEquityPoint, BacktestMetrics, BacktestTrade } from './backtestTypes';
 
 export type FundamentalPeriodType = 'quarterly' | 'annual';
-export type MlLabelMode = 'binary' | 'ternary';
+export type MlLabelMode = 'binary' | 'ternary' | 'meta_label';
 export type MlLabelMethod = 'endpoint' | 'mean';
 export type MlRunMode = 'walk_forward' | 'inference';
 
@@ -50,6 +50,14 @@ export interface MlParams {
   xgboost_learning_rate?: number;
   model_id?: string;
   inference_eval_scope?: 'holdout' | 'in_sample';
+  include_news_sentiment?: boolean;
+  slippage_bps?: number;
+  base_strategy_id?: string;
+  base_strategy_params?: Record<string, unknown>;
+  profit_atr_mult?: number;
+  stop_atr_mult?: number;
+  max_horizon_bars?: number;
+  meta_gate_threshold?: number;
 }
 
 export interface MlRunRequest {

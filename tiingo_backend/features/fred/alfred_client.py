@@ -4,6 +4,7 @@ import httpx
 
 from config import get_settings
 from features.fred.fred_client import FRED_BASE, PAGE_SIZE, _api_key
+from utils.http_errors import format_external_api_error, redact_secrets
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -58,7 +59,16 @@ async def _fetch_vintage_page(
     }
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.get(f"{FRED_BASE}/series/observations", params=params)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(
+                format_external_api_error(
+                    exc,
+                    context=f"FRED ALFRED observations for {series_id}",
+                    secret_values=[_api_key()],
+                ),
+            ) from exc
         data = resp.json()
 
     raw = data.get("observations", [])

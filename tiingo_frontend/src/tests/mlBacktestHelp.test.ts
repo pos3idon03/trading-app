@@ -27,6 +27,10 @@ const EXPECTED_KEYS = [
   'saved_model',
   'initial_cash',
   'commission_bps',
+  'include_news_sentiment',
+  'label_mode',
+  'meta_gate_threshold',
+  'slippage_bps',
 ] as const;
 
 describe('mlBacktestHelp', () => {

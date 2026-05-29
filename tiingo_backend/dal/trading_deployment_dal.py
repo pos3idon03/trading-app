@@ -77,6 +77,43 @@ async def list_active_deployments(session: AsyncSession) -> list[dict]:
     return [_to_dict(row) for row in rows]
 
 
+async def list_active_deployments_with_instrument(session: AsyncSession) -> list[dict]:
+    from models.instrument import Instrument
+
+    q = (
+        select(TradingDeployment, Instrument)
+        .join(Instrument, TradingDeployment.symbol == Instrument.symbol)
+        .where(TradingDeployment.status == "active")
+    )
+    rows = (await session.execute(q)).all()
+    result: list[dict] = []
+    for dep, inst in rows:
+        base = _to_dict(dep)
+        base["asset_type"] = inst.asset_type
+        result.append(base)
+    return result
+
+
+async def list_active_deployment_requirements(session: AsyncSession) -> list[dict]:
+    from models.instrument import Instrument
+
+    q = (
+        select(TradingDeployment, Instrument)
+        .join(Instrument, TradingDeployment.symbol == Instrument.symbol)
+        .where(TradingDeployment.status == "active")
+    )
+    rows = (await session.execute(q)).all()
+    return [
+        {
+            "deployment_id": dep.id,
+            "symbol": dep.symbol,
+            "timeframe": dep.timeframe,
+            "asset_type": inst.asset_type,
+        }
+        for dep, inst in rows
+    ]
+
+
 async def update_deployment_status(
     session: AsyncSession,
     deployment_id: UUID,
@@ -101,6 +138,22 @@ async def update_deployment_status(
     return await get_deployment(session, deployment_id)
 
 
+async def update_peak_strategy_profit_pct(
+    session: AsyncSession,
+    deployment_id: UUID,
+    peak_strategy_profit_pct: float | None,
+) -> None:
+    await session.execute(
+        update(TradingDeployment)
+        .where(TradingDeployment.id == deployment_id)
+        .values(
+            peak_strategy_profit_pct=peak_strategy_profit_pct,
+            updated_at=datetime.now(timezone.utc),
+        ),
+    )
+    await session.flush()
+
+
 async def update_deployment_evaluation(
     session: AsyncSession,
     deployment_id: UUID,
@@ -110,6 +163,7 @@ async def update_deployment_evaluation(
     last_error: str | None = None,
     last_blocked_reason: str | None = None,
     last_probability: float | None = None,
+    last_explainability: dict | None = None,
     last_outcome: str | None = None,
     status: str | None = None,
 ) -> dict | None:
@@ -122,6 +176,8 @@ async def update_deployment_evaluation(
         "last_outcome": last_outcome,
         "updated_at": datetime.now(timezone.utc),
     }
+    if last_explainability is not None:
+        values["last_explainability"] = last_explainability
     if status:
         values["status"] = status
     await session.execute(
@@ -131,6 +187,16 @@ async def update_deployment_evaluation(
     )
     await session.flush()
     return await get_deployment(session, deployment_id)
+
+
+async def delete_deployment(session: AsyncSession, deployment_id: UUID) -> bool:
+    q = select(TradingDeployment).where(TradingDeployment.id == deployment_id)
+    row = (await session.execute(q)).scalar_one_or_none()
+    if not row:
+        return False
+    await session.delete(row)
+    await session.flush()
+    return True
 
 
 async def list_deployments_enriched(
@@ -176,7 +242,13 @@ def _to_dict(row: TradingDeployment) -> dict:
         "last_error": row.last_error,
         "last_blocked_reason": row.last_blocked_reason,
         "last_probability": float(row.last_probability) if row.last_probability is not None else None,
+        "last_explainability": row.last_explainability or {},
         "last_outcome": row.last_outcome,
+        "peak_strategy_profit_pct": (
+            float(row.peak_strategy_profit_pct)
+            if getattr(row, "peak_strategy_profit_pct", None) is not None
+            else None
+        ),
         "activated_at": row.activated_at,
         "created_at": row.created_at,
         "updated_at": row.updated_at,

@@ -1,9 +1,9 @@
 from typing import Optional
 
-from features.backtesting.indicators import compute_rsi, compute_sma
+from features.backtesting.indicators import compute_atr, compute_ema, compute_rsi, compute_sma
 
-# Bar-index warmup: lookbacks (ret_20, sma50, etc.) count bars, not calendar time.
-FEATURE_WARMUP_BARS = 50
+# Bar-index warmup: ema200 needs 200 bars before valid rows.
+FEATURE_WARMUP_BARS = 200
 
 FEATURE_NAMES = [
     "ret_1",
@@ -14,6 +14,10 @@ FEATURE_NAMES = [
     "sma20_dist",
     "sma50_dist",
     "hl_range",
+    "atr_14",
+    "ema20_dist",
+    "ema50_dist",
+    "ema200_dist",
 ]
 
 
@@ -38,15 +42,18 @@ def _rolling_vol(closes: list[float], index: int, period: int) -> Optional[float
     return variance**0.5
 
 
-def _sma_distance(
+def _ma_distance(
     closes: list[float],
-    sma_values: list[Optional[float]],
+    ma_values: list[Optional[float]],
     index: int,
 ) -> Optional[float]:
-    sma = sma_values[index]
-    if sma is None or sma == 0:
+    ma = ma_values[index]
+    if ma is None or ma == 0:
         return None
-    return (closes[index] / sma) - 1.0
+    return (closes[index] / ma) - 1.0
+
+
+_sma_distance = _ma_distance
 
 
 def build_price_feature_matrix(bars: list[dict]) -> tuple[list[str], list[Optional[list[float]]]]:
@@ -59,6 +66,10 @@ def build_price_feature_matrix(bars: list[dict]) -> tuple[list[str], list[Option
     rsi = compute_rsi(closes, 14)
     sma20 = compute_sma(closes, 20)
     sma50 = compute_sma(closes, 50)
+    ema20 = compute_ema(closes, 20)
+    ema50 = compute_ema(closes, 50)
+    ema200 = compute_ema(closes, 200)
+    atr = compute_atr(highs, lows, closes, 14)
 
     rows: list[Optional[list[float]]] = []
     for index in range(len(bars)):
@@ -71,15 +82,33 @@ def build_price_feature_matrix(bars: list[dict]) -> tuple[list[str], list[Option
         ret_20 = _pct_return(closes, index, 20)
         vol_20 = _rolling_vol(closes, index, 20)
         rsi_14 = rsi[index]
-        sma20_dist = _sma_distance(closes, sma20, index)
-        sma50_dist = _sma_distance(closes, sma50, index)
+        sma20_dist = _ma_distance(closes, sma20, index)
+        sma50_dist = _ma_distance(closes, sma50, index)
+        ema20_dist = _ma_distance(closes, ema20, index)
+        ema50_dist = _ma_distance(closes, ema50, index)
+        ema200_dist = _ma_distance(closes, ema200, index)
+        atr_14 = atr[index]
 
         if closes[index] == 0:
             rows.append(None)
             continue
         hl_range = (highs[index] - lows[index]) / closes[index]
+        atr_norm = (atr_14 / closes[index]) if atr_14 is not None else None
 
-        values = [ret_1, ret_5, ret_20, vol_20, rsi_14, sma20_dist, sma50_dist, hl_range]
+        values = [
+            ret_1,
+            ret_5,
+            ret_20,
+            vol_20,
+            rsi_14,
+            sma20_dist,
+            sma50_dist,
+            hl_range,
+            atr_norm,
+            ema20_dist,
+            ema50_dist,
+            ema200_dist,
+        ]
         if any(value is None for value in values):
             rows.append(None)
             continue

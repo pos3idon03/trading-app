@@ -9,6 +9,13 @@ from features.execution.broadcaster import publish_activity_event
 
 
 def _thresholds(hyperparams: dict) -> tuple[float | None, float | None]:
+    label_mode = str(hyperparams.get("label_mode") or "binary")
+    if label_mode == "meta_label":
+        gate = hyperparams.get("meta_gate_threshold")
+        return (
+            float(gate) if gate is not None else None,
+            None,
+        )
     buy = hyperparams.get("buy_threshold")
     sell = hyperparams.get("sell_threshold")
     return (
@@ -43,6 +50,7 @@ def build_activity_payload(
         "blocked_reason": evaluation.get("blocked_reason"),
         "order_id": str(evaluation["order_id"]) if evaluation.get("order_id") else None,
         "warnings": evaluation.get("warnings") or [],
+        "explainability": evaluation.get("explainability") or {},
         "created_at": evaluation["created_at"].isoformat() if isinstance(evaluation["created_at"], datetime) else evaluation["created_at"],
     }
 
@@ -63,7 +71,9 @@ async def record_evaluation(
     blocked_reason: str | None,
     order_id: UUID | None,
     warnings: list[str],
+    explainability: dict | None = None,
 ) -> dict:
+    explainability_payload = explainability or {}
     evaluation = await execution_evaluation_dal.create_evaluation(
         session,
         deployment_id=deployment["id"],
@@ -79,15 +89,19 @@ async def record_evaluation(
         blocked_reason=blocked_reason,
         order_id=order_id,
         warnings=warnings,
+        explainability=explainability_payload,
     )
     await trading_deployment_dal.update_deployment_evaluation(
         session,
         deployment["id"],
         last_evaluated_bar_time=bar_time,
         last_signal=signal,
+        last_error=None,
         last_blocked_reason=blocked_reason,
         last_probability=probability,
+        last_explainability=explainability_payload,
         last_outcome=outcome,
+        status="active" if deployment.get("status") == "error" else None,
     )
     model = await ml_model_dal.get_model(session, deployment["model_id"])
     payload = build_activity_payload(

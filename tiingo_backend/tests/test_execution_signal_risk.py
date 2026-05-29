@@ -2,27 +2,26 @@ import pytest
 
 from features.execution.risk_checker import (
     check_daily_loss,
+    check_deployment_open_order,
+    check_exposure,
     check_kill_switch,
-    check_open_orders,
     check_rate_limit,
 )
-from features.execution.signal_to_order import OrderIntent, resolve_position_side, signal_to_order_intent
+from features.execution.signal_to_order import OrderIntent, resolve_deployment_side, signal_to_order_intent
 
 
-def test_resolve_position_side_flat():
-    assert resolve_position_side([], "AAPL") == "flat"
+def test_resolve_deployment_side_flat():
+    assert resolve_deployment_side(0) == "flat"
 
 
-def test_resolve_position_side_long():
-    positions = [{"symbol": "AAPL", "qty": 10}]
-    assert resolve_position_side(positions, "AAPL") == "long"
+def test_resolve_deployment_side_long():
+    assert resolve_deployment_side(10) == "long"
 
 
-def test_signal_to_order_intent_buy_when_flat():
+def test_signal_to_order_intent_buy_when_deployment_flat():
     intent = signal_to_order_intent(
         "buy",
-        symbol="AAPL",
-        positions=[],
+        deployment_net_qty=0,
         buying_power=10_000,
         account_equity=10_000,
         allocation_pct=100,
@@ -32,27 +31,51 @@ def test_signal_to_order_intent_buy_when_flat():
     assert intent == OrderIntent(side="buy", qty=100.0, reason="buy_signal_flat")
 
 
-def test_signal_to_order_intent_sell_when_long():
-    positions = [{"symbol": "AAPL", "qty": 5}]
+def test_signal_to_order_intent_buy_allowed_despite_external_position():
     intent = signal_to_order_intent(
-        "sell",
-        symbol="AAPL",
-        positions=positions,
+        "buy",
+        deployment_net_qty=0,
         buying_power=10_000,
         account_equity=10_000,
         allocation_pct=100,
         max_position_pct=100,
         last_price=100,
     )
-    assert intent == OrderIntent(side="sell", qty=5.0, reason="sell_signal_long")
+    assert intent is not None
+    assert intent.side == "buy"
+
+
+def test_signal_to_order_intent_buy_blocked_when_deployment_long():
+    intent = signal_to_order_intent(
+        "buy",
+        deployment_net_qty=5,
+        buying_power=10_000,
+        account_equity=10_000,
+        allocation_pct=100,
+        max_position_pct=100,
+        last_price=100,
+    )
+    assert intent is None
+
+
+def test_signal_to_order_intent_sell_uses_deployment_qty():
+    intent = signal_to_order_intent(
+        "sell",
+        deployment_net_qty=2.5,
+        buying_power=10_000,
+        account_equity=10_000,
+        allocation_pct=100,
+        max_position_pct=100,
+        last_price=100,
+    )
+    assert intent == OrderIntent(side="sell", qty=2.5, reason="sell_signal_long")
 
 
 def test_signal_to_order_intent_hold_returns_none():
     assert (
         signal_to_order_intent(
             "hold",
-            symbol="AAPL",
-            positions=[],
+            deployment_net_qty=0,
             buying_power=10_000,
             account_equity=10_000,
             allocation_pct=100,
@@ -73,8 +96,20 @@ def test_check_rate_limit_blocks_when_exceeded():
     assert not result.allowed
 
 
-def test_check_open_orders_blocks_duplicate_symbol():
-    result = check_open_orders([{"symbol": "AAPL"}], "AAPL")
+def test_check_deployment_open_order_blocks_when_open():
+    result = check_deployment_open_order(True)
+    assert not result.allowed
+
+
+def test_check_exposure_uses_deployment_exposure_only():
+    intent = OrderIntent(side="buy", qty=10, reason="buy_signal_flat")
+    result = check_exposure(
+        intent,
+        account_equity=10_000,
+        deployment_exposure=70_000,
+        last_price=100,
+        max_exposure_pct=80,
+    )
     assert not result.allowed
 
 

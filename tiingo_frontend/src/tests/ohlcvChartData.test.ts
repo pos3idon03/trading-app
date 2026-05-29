@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCandleData, normalizeChartTime } from '../utils/ohlcvChartData';
+import { buildCandleData, buildCloseLineData, buildVolumeData, normalizeChartTime } from '../utils/ohlcvChartData';
 
 describe('ohlcvChartData', () => {
   it('normalizes daily bars to UTC date strings', () => {
@@ -29,5 +29,25 @@ describe('ohlcvChartData', () => {
     const data = buildCandleData(records, '5m');
     expect(data).toHaveLength(1);
     expect(data[0].close).toBe(2.5);
+  });
+
+  it('builds close line data from candle closes', () => {
+    const records = [
+      { time: '2026-02-20T00:00:00.000Z', open: 1, high: 2, low: 0.5, close: 1.5, volume: 10, source: 'a' },
+      { time: '2026-02-21T00:00:00.000Z', open: 2, high: 3, low: 1.5, close: 2.5, volume: 11, source: 'a' },
+    ];
+    const line = buildCloseLineData(records, '1d');
+    expect(line).toEqual([
+      { time: '2026-02-20', value: 1.5 },
+      { time: '2026-02-21', value: 2.5 },
+    ]);
+  });
+
+  it('applies style preset colors to volume bars', () => {
+    const records = [
+      { time: '2024-01-02T00:00:00Z', open: 10, high: 11, low: 9, close: 10.5, volume: 1000, source: 'a' },
+    ];
+    const volume = buildVolumeData(records, '1d', 'blueOrange');
+    expect(volume[0].color).toContain('3b82f6');
   });
 });

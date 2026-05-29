@@ -3,6 +3,7 @@ from datetime import date
 import httpx
 
 from config import get_settings
+from utils.http_errors import format_external_api_error
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -53,7 +54,16 @@ async def _fetch_observations_page(
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.get(url, params=params)
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(
+                format_external_api_error(
+                    exc,
+                    context=f"FRED observations for {series_id}",
+                    secret_values=[_api_key()],
+                ),
+            ) from exc
         data = resp.json()
 
     raw = data.get("observations", [])

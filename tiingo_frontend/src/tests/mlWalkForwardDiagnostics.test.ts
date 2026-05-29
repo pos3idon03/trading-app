@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { MlParams, MlWalkForwardReadiness } from '../api/mlBacktestTypes';
 import {
+  dataPrepPreviewFingerprint,
   formatZeroOosGuidance,
   isReadinessReady,
   previewConfigFingerprint,
@@ -29,22 +30,39 @@ describe('mlWalkForwardDiagnostics', () => {
       strategy_feature_ids: ['rsi'],
       train_bars: 120,
     };
-    const first = previewConfigFingerprint(params);
-    const second = previewConfigFingerprint({ ...params });
+    const first = dataPrepPreviewFingerprint(params);
+    const second = dataPrepPreviewFingerprint({ ...params });
     expect(first).toBe(second);
     expect(first).toContain('"train_bars":120');
   });
 
+  it('ignores label horizon in data prep preview fingerprint', () => {
+    const params: MlParams = { ...DEFAULT_ML_PARAMS, label_horizon: 5 };
+    const otherHorizon = dataPrepPreviewFingerprint({ ...params, label_horizon: 24 });
+    expect(dataPrepPreviewFingerprint(params)).toBe(otherHorizon);
+  });
+
+  it('ignores label mode in data prep preview fingerprint', () => {
+    const params: MlParams = { ...DEFAULT_ML_PARAMS, label_mode: 'meta_label' };
+    const binary = dataPrepPreviewFingerprint({ ...params, label_mode: 'binary' });
+    expect(dataPrepPreviewFingerprint(params)).toBe(binary);
+  });
+
   it('includes date range in preview config fingerprint', () => {
     const params: MlParams = { ...DEFAULT_ML_PARAMS };
-    const withRange = previewConfigFingerprint(params, {
+    const withRange = dataPrepPreviewFingerprint(params, {
       preset: 'MAX',
       start: '2020-01-01',
       end: '2026-05-25',
     });
-    const withoutRange = previewConfigFingerprint(params);
+    const withoutRange = dataPrepPreviewFingerprint(params);
     expect(withRange).not.toBe(withoutRange);
     expect(withRange).toContain('"date_start":"2020-01-01"');
+  });
+
+  it('keeps previewConfigFingerprint aligned with data prep fingerprint', () => {
+    const params: MlParams = { ...DEFAULT_ML_PARAMS };
+    expect(previewConfigFingerprint(params)).toBe(dataPrepPreviewFingerprint(params));
   });
 
   it('detects readiness from viable fold count', () => {

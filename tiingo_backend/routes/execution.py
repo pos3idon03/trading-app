@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, status
@@ -7,6 +9,13 @@ from db import get_db
 from dtos.execution_dto import (
     AccountSnapshotDTO,
     CreateDeploymentRequest,
+    DeleteDeploymentRequest,
+    DeleteDeploymentResponse,
+    DeploymentCycleEnqueueRequest,
+    DeploymentOverviewDTO,
+    DeploymentOverviewResponse,
+    DeploymentRefreshResponse,
+    EnqueueJobResponse,
     EvaluateAllResponse,
     EvaluateDeploymentResponse,
     ExecutionActivityEventDTO,
@@ -14,21 +23,32 @@ from dtos.execution_dto import (
     ExecutionOrderDTO,
     ExecutionOrdersResponse,
     ExecutionStatusDTO,
+    DeploymentPositionSnapshotDTO,
     KillSwitchRequest,
     KillSwitchResponse,
+    PortfolioPeriodDTO,
+    PortfolioPositionRowDTO,
     PortfolioResponse,
+    PortfolioSummaryDTO,
     PositionSnapshotDTO,
+    ReconciliationResponse,
     RiskConfigDTO,
     TradingDeploymentDTO,
     TradingDeploymentsResponse,
+    UntrackedPositionSnapshotDTO,
 )
+from dtos.execution_explainability_dto import ProbabilityExplainabilityDTO
 from features.execution.activity_format import evaluation_row_to_activity
+from features.execution.deployment_reconciliation import reconcile_missed_updates
+from features.execution.job_runner import refresh_deployment_market_data
 from features.execution.orchestrator import (
     activate_deployment,
     create_deployment,
+    delete_deployment,
     evaluate_all_active,
     evaluate_deployment,
     get_deployment,
+    get_deployment_overview,
     get_execution_status,
     get_portfolio_snapshot,
     get_risk_config,
@@ -43,6 +63,44 @@ from features.execution.ws_handler import stream_execution_activity
 from features.worker.tasks import create_and_enqueue_job
 
 router = APIRouter(prefix="/execution", tags=["execution"])
+
+
+def _explainability_dto(data: dict | None) -> ProbabilityExplainabilityDTO | None:
+    if not data:
+        return None
+    return ProbabilityExplainabilityDTO.model_validate(data)
+
+
+def _overview_dto(row: dict) -> DeploymentOverviewDTO:
+    return DeploymentOverviewDTO(
+        id=row["id"],
+        model_id=row["model_id"],
+        symbol=row["symbol"],
+        timeframe=row["timeframe"],
+        status=row["status"],
+        model_name=row.get("model_name"),
+        last_error=row.get("last_error"),
+        last_signal=row.get("last_signal"),
+        last_probability=row.get("last_probability"),
+        buy_threshold=row.get("buy_threshold"),
+        sell_threshold=row.get("sell_threshold"),
+        last_explainability=_explainability_dto(row.get("last_explainability")),
+        last_evaluated_bar_time=row.get("last_evaluated_bar_time"),
+        current_price=row.get("current_price"),
+        price_updated_at=row.get("price_updated_at"),
+        round_trip_count=int(row.get("round_trip_count") or 0),
+        open_position_count=int(row.get("open_position_count") or 0),
+        order_count=int(row.get("order_count") or 0),
+        open_order_count=int(row.get("open_order_count") or 0),
+        strategy_profit=float(row.get("strategy_profit") or 0),
+        strategy_profit_pct=row.get("strategy_profit_pct"),
+        position_qty=float(row.get("position_qty") or 0),
+        position_side=row.get("position_side") or "flat",
+        update_status=row.get("update_status") or "unknown",
+        expected_latest_bar_time=row.get("expected_latest_bar_time"),
+        ohlcv_latest_bar_time=row.get("ohlcv_latest_bar_time"),
+        missed_slot_count=int(row.get("missed_slot_count") or 0),
+    )
 
 
 def _deployment_dto(row: dict) -> TradingDeploymentDTO:
@@ -64,6 +122,8 @@ def _deployment_dto(row: dict) -> TradingDeploymentDTO:
         last_blocked_reason=row.get("last_blocked_reason"),
         last_probability=row.get("last_probability"),
         last_outcome=row.get("last_outcome"),
+        position_qty=float(row.get("position_qty") or 0),
+        position_side=row.get("position_side") or "flat",
         activated_at=row.get("activated_at"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -124,16 +184,33 @@ async def risk_config() -> RiskConfigDTO:
 
 
 @router.get("/portfolio", response_model=PortfolioResponse)
-async def portfolio() -> PortfolioResponse:
+async def portfolio(
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+    session: AsyncSession = Depends(get_db),
+) -> PortfolioResponse:
     try:
-        snapshot = await get_portfolio_snapshot()
+        snapshot = await get_portfolio_snapshot(session, start=start, end=end)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    summary = snapshot.get("summary")
+    period = snapshot.get("period")
     return PortfolioResponse(
         account=AccountSnapshotDTO(**snapshot["account"]),
         positions=[PositionSnapshotDTO(**row) for row in snapshot["positions"]],
+        deployment_positions=[
+            DeploymentPositionSnapshotDTO(**row) for row in snapshot["deployment_positions"]
+        ],
+        untracked_positions=[
+            UntrackedPositionSnapshotDTO(**row) for row in snapshot["untracked_positions"]
+        ],
+        position_rows=[PortfolioPositionRowDTO(**row) for row in snapshot.get("position_rows", [])],
+        summary=PortfolioSummaryDTO(**summary) if summary else None,
+        period=PortfolioPeriodDTO(**period) if period else None,
     )
 
 
@@ -153,6 +230,17 @@ async def get_evaluations(
     return ExecutionEvaluationsResponse(
         evaluations=[_activity_dto(row) for row in rows],
     )
+
+
+@router.get("/overview", response_model=DeploymentOverviewResponse)
+async def get_overview(
+    session: AsyncSession = Depends(get_db),
+) -> DeploymentOverviewResponse:
+    try:
+        rows = await get_deployment_overview(session)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return DeploymentOverviewResponse(deployments=[_overview_dto(row) for row in rows])
 
 
 @router.get("/deployments", response_model=TradingDeploymentsResponse)
@@ -230,6 +318,27 @@ async def stop_deployment_route(
     return _deployment_dto(row)
 
 
+@router.delete("/deployments/{deployment_id}", response_model=DeleteDeploymentResponse)
+async def delete_deployment_route(
+    deployment_id: UUID,
+    body: DeleteDeploymentRequest,
+    session: AsyncSession = Depends(get_db),
+) -> DeleteDeploymentResponse:
+    try:
+        result = await delete_deployment(
+            session,
+            deployment_id,
+            close_positions=body.close_positions,
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = status.HTTP_404_NOT_FOUND if "not found" in detail.lower() else status.HTTP_400_BAD_REQUEST
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return DeleteDeploymentResponse(**result)
+
+
 @router.post("/deployments/{deployment_id}/evaluate", response_model=EvaluateDeploymentResponse)
 async def evaluate_deployment_route(
     deployment_id: UUID,
@@ -247,12 +356,51 @@ async def evaluate_deployment_route(
         signal=result.get("signal"),
         bar_time=result.get("bar_time"),
         probability=result.get("probability"),
+        explainability=_explainability_dto(result.get("explainability")),
         warnings=result.get("warnings") or [],
         order=result.get("order"),
         blocked_reason=result.get("blocked_reason"),
         outcome=result.get("outcome"),
         error=result.get("error"),
     )
+
+
+@router.post("/deployments/{deployment_id}/refresh", response_model=DeploymentRefreshResponse)
+async def refresh_deployment_route(
+    deployment_id: UUID,
+    session: AsyncSession = Depends(get_db),
+) -> DeploymentRefreshResponse:
+    row = await get_deployment(session, deployment_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Deployment not found: {deployment_id}")
+    try:
+        result = await refresh_deployment_market_data(session, row)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return DeploymentRefreshResponse(
+        deployment_id=deployment_id,
+        results=result.get("results") or [],
+    )
+
+
+@router.post(
+    "/deployments/{deployment_id}/evaluate/enqueue",
+    response_model=EnqueueJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def enqueue_evaluate_deployment(
+    deployment_id: UUID,
+    session: AsyncSession = Depends(get_db),
+) -> EnqueueJobResponse:
+    row = await get_deployment(session, deployment_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Deployment not found: {deployment_id}")
+    job = await create_and_enqueue_job(
+        session,
+        "execution_evaluate_one",
+        {"deployment_id": str(deployment_id)},
+    )
+    return EnqueueJobResponse(job_id=str(job["id"]), status=job["status"])
 
 
 @router.post("/evaluate-all", response_model=EvaluateAllResponse)
@@ -266,12 +414,60 @@ async def evaluate_all_route(
     return EvaluateAllResponse(**result)
 
 
-@router.post("/evaluate-all/enqueue", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/evaluate-all/enqueue", response_model=EnqueueJobResponse, status_code=status.HTTP_202_ACCEPTED)
 async def enqueue_evaluate_all(
     session: AsyncSession = Depends(get_db),
-) -> dict:
+) -> EnqueueJobResponse:
     job = await create_and_enqueue_job(session, "execution_evaluate_all", {})
-    return {"job_id": str(job["id"]), "status": job["status"]}
+    return EnqueueJobResponse(job_id=str(job["id"]), status=job["status"])
+
+
+@router.post(
+    "/market-data/refresh/enqueue",
+    response_model=EnqueueJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def enqueue_market_data_refresh(
+    session: AsyncSession = Depends(get_db),
+) -> EnqueueJobResponse:
+    job = await create_and_enqueue_job(session, "deployment_market_data_refresh", {})
+    return EnqueueJobResponse(job_id=str(job["id"]), status=job["status"])
+
+
+@router.post(
+    "/deployment-cycle/enqueue",
+    response_model=EnqueueJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def enqueue_deployment_cycle(
+    body: DeploymentCycleEnqueueRequest | None = None,
+    session: AsyncSession = Depends(get_db),
+) -> EnqueueJobResponse:
+    params: dict = {}
+    if body and body.scheduled_at:
+        params["scheduled_at"] = body.scheduled_at.isoformat()
+    job = await create_and_enqueue_job(session, "execution_deployment_cycle", params)
+    return EnqueueJobResponse(job_id=str(job["id"]), status=job["status"])
+
+
+@router.post(
+    "/reconciliation/enqueue",
+    response_model=EnqueueJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def enqueue_reconciliation(
+    session: AsyncSession = Depends(get_db),
+) -> EnqueueJobResponse:
+    job = await create_and_enqueue_job(session, "execution_deployment_reconciliation", {})
+    return EnqueueJobResponse(job_id=str(job["id"]), status=job["status"])
+
+
+@router.post("/reconciliation", response_model=ReconciliationResponse)
+async def run_reconciliation(
+    session: AsyncSession = Depends(get_db),
+) -> ReconciliationResponse:
+    result = await reconcile_missed_updates(session)
+    return ReconciliationResponse(**result)
 
 
 @router.get("/orders", response_model=ExecutionOrdersResponse)

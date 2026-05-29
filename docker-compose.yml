@@ -37,6 +37,8 @@ services:
     build:
       context: ./tiingo_backend
       dockerfile: Dockerfile
+      args:
+        INSTALL_FOUNDATION: ${INSTALL_FOUNDATION:-false}
     container_name: tiingo_backend
     env_file: .env
     environment:
@@ -67,6 +69,8 @@ services:
     build:
       context: ./tiingo_backend
       dockerfile: Dockerfile
+      args:
+        INSTALL_FOUNDATION: ${INSTALL_FOUNDATION:-false}
     container_name: tiingo_worker
     env_file: .env
     environment:
@@ -86,6 +90,33 @@ services:
         condition: service_healthy
     restart: unless-stopped
     command: arq worker.WorkerSettings
+
+  tiingo_worker_heavy:
+    build:
+      context: ./tiingo_backend
+      dockerfile: Dockerfile
+      args:
+        INSTALL_FOUNDATION: ${INSTALL_FOUNDATION:-false}
+    container_name: tiingo_worker_heavy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${TIINGO_POSTGRES_USER:-tiingo_user}:${TIINGO_POSTGRES_PASSWORD:-changeme_tiingo_password}@tiingo_db:5432/${TIINGO_POSTGRES_DB:-tiingo_db}
+      DATABASE_SYNC_URL: postgresql://${TIINGO_POSTGRES_USER:-tiingo_user}:${TIINGO_POSTGRES_PASSWORD:-changeme_tiingo_password}@tiingo_db:5432/${TIINGO_POSTGRES_DB:-tiingo_db}
+      TIINGO_API_KEY: ${TIINGO_API_KEY}
+      FRED_API_KEY: ${FRED_API_KEY}
+      TIINGO_FUNDAMENTALS_TIER: ${TIINGO_FUNDAMENTALS_TIER:-dow30}
+      REDIS_URL: redis://redis:6379
+      ARQ_HEAVY_MAX_JOBS: ${ARQ_HEAVY_MAX_JOBS:-1}
+      ARQ_HEAVY_QUEUE_NAME: ${ARQ_HEAVY_QUEUE_NAME:-heavy}
+    volumes:
+      - ./tiingo_backend:/app
+    depends_on:
+      tiingo_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    command: arq worker_heavy.HeavyWorkerSettings
 
   tiingo_frontend:
     build:

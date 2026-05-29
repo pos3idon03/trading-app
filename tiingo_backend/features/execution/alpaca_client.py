@@ -3,6 +3,7 @@ from typing import Any
 import httpx
 
 from config import get_settings
+from features.execution.alpaca_symbols import execution_asset_type, to_alpaca_symbol
 
 _ACCOUNT_PATH = "/v2/account"
 _POSITIONS_PATH = "/v2/positions"
@@ -82,11 +83,13 @@ async def get_open_orders() -> list[dict]:
 
 async def get_order(order_id: str) -> dict:
     data = await _request("GET", f"{_ORDERS_PATH}/{order_id}")
+    filled_qty_raw = data.get("filled_qty")
     return {
         "id": data.get("id"),
         "symbol": data.get("symbol"),
         "side": data.get("side"),
         "qty": float(data.get("qty") or 0),
+        "filled_qty": float(filled_qty_raw) if filled_qty_raw else None,
         "status": data.get("status"),
         "filled_avg_price": float(data.get("filled_avg_price") or 0) or None,
         "filled_at": data.get("filled_at"),
@@ -94,14 +97,23 @@ async def get_order(order_id: str) -> dict:
     }
 
 
-async def submit_market_order(symbol: str, qty: float, side: str) -> dict:
-    payload = {
-        "symbol": symbol.upper(),
+async def submit_market_order(
+    symbol: str,
+    qty: float,
+    side: str,
+    *,
+    asset_type: str = "stock",
+) -> dict:
+    is_crypto = execution_asset_type(asset_type) == "crypto"
+    payload: dict = {
+        "symbol": to_alpaca_symbol(symbol, asset_type),
         "qty": str(round(qty, 6)),
         "side": side.lower(),
         "type": "market",
-        "time_in_force": "day",
+        "time_in_force": "gtc" if is_crypto else "day",
     }
+    if is_crypto:
+        payload["asset_class"] = "crypto"
     data = await _request("POST", _ORDERS_PATH, json=payload)
     return {
         "id": data.get("id"),

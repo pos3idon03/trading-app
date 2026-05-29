@@ -19,13 +19,13 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 _SOURCE_PRIORITY: dict[str, list[str]] = {
-    "1d": ["tiingo_crypto", "tiingo_eod", "tiingo_iex"],
-    "5m": ["tiingo_iex", "tiingo_crypto"],
-    "1m": ["tiingo_iex", "tiingo_crypto"],
-    "15m": ["tiingo_iex", "tiingo_crypto"],
-    "30m": ["tiingo_iex", "tiingo_crypto"],
-    "1h": ["tiingo_iex", "tiingo_crypto"],
-    "4h": ["tiingo_iex", "tiingo_crypto"],
+    "1d": ["tiingo_crypto", "alpaca_crypto", "tiingo_eod", "tiingo_iex"],
+    "5m": ["alpaca_crypto", "tiingo_iex", "tiingo_crypto"],
+    "1m": ["alpaca_crypto", "tiingo_iex", "tiingo_crypto"],
+    "15m": ["alpaca_crypto", "tiingo_iex", "tiingo_crypto"],
+    "30m": ["alpaca_crypto", "tiingo_iex", "tiingo_crypto"],
+    "1h": ["alpaca_crypto", "tiingo_iex", "tiingo_crypto"],
+    "4h": ["alpaca_crypto", "tiingo_iex", "tiingo_crypto"],
     "1w": ["tiingo_eod", "tiingo_iex"],
     "1mo": ["tiingo_eod", "tiingo_iex"],
 }

@@ -25,6 +25,24 @@ async def test_enqueue_ingestion_job_commits_and_enqueues():
 
 
 @pytest.mark.asyncio
+async def test_enqueue_foundation_job_uses_heavy_queue():
+    session = AsyncMock()
+    job_id = uuid4()
+    mock_pool = AsyncMock()
+
+    with patch("features.worker.tasks.get_arq_pool", new=AsyncMock(return_value=mock_pool)):
+        await enqueue_ingestion_job(session, job_id, "foundation_backtest", {"symbol": "IBM"})
+
+    mock_pool.enqueue_job.assert_awaited_once_with(
+        "run_ingestion_job",
+        str(job_id),
+        "foundation_backtest",
+        {"symbol": "IBM"},
+        _queue_name="heavy",
+    )
+
+
+@pytest.mark.asyncio
 async def test_create_and_enqueue_job():
     session = AsyncMock()
     job_id = uuid4()

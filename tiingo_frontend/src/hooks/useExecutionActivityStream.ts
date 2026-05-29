@@ -21,7 +21,7 @@ export function useExecutionActivityStream(options?: {
       const response = await executionApi.listEvaluations({
         deployment_id: options?.deploymentId ?? undefined,
         symbol: options?.symbol ?? undefined,
-        limit: 50,
+        limit: deploymentId ? 200 : 50,
       });
       if (!cancelled) {
         setEvents(response.evaluations);

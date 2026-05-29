@@ -29,9 +29,15 @@ class Settings(BaseSettings):
     ingest_concurrency: int = 8
     iex_backfill_days: int = 120
     news_interval_minutes: int = 20
+    deployment_reconciliation_interval_minutes: int = Field(
+        default=10,
+        validation_alias="DEPLOYMENT_RECONCILIATION_INTERVAL_MINUTES",
+    )
 
     redis_url: str = Field(default="redis://redis:6379", validation_alias="REDIS_URL")
     arq_max_jobs: int = Field(default=4, validation_alias="ARQ_MAX_JOBS")
+    arq_heavy_queue_name: str = Field(default="heavy", validation_alias="ARQ_HEAVY_QUEUE_NAME")
+    arq_heavy_max_jobs: int = Field(default=1, validation_alias="ARQ_HEAVY_MAX_JOBS")
     auto_backfill_on_create: bool = Field(default=True, validation_alias="AUTO_BACKFILL_ON_CREATE")
     crypto_meta_cache_ttl_seconds: int = 86400
     crypto_history_start_date: str = Field(
@@ -39,6 +45,27 @@ class Settings(BaseSettings):
         validation_alias="CRYPTO_HISTORY_START_DATE",
     )
     ml_artifact_dir: str = Field(default="./data/ml_models", validation_alias="ML_ARTIFACT_DIR")
+
+    sentiment_enabled: bool = Field(default=False, validation_alias="SENTIMENT_ENABLED")
+    sentiment_model_name: str = Field(default="ProsusAI/finbert", validation_alias="SENTIMENT_MODEL_NAME")
+    sentiment_model_version: str = Field(default="1", validation_alias="SENTIMENT_MODEL_VERSION")
+    sentiment_device: str = Field(default="cpu", validation_alias="SENTIMENT_DEVICE")
+    sentiment_batch_size: int = Field(default=16, validation_alias="SENTIMENT_BATCH_SIZE")
+    sentiment_max_text_chars: int = Field(default=512, validation_alias="SENTIMENT_MAX_TEXT_CHARS")
+    sentiment_interval_minutes: int = Field(default=30, validation_alias="SENTIMENT_INTERVAL_MINUTES")
+
+    gemini_api_key: str = Field(default="", validation_alias="GEMINI_API_KEY")
+    sentiment_llm_enabled: bool = Field(default=False, validation_alias="SENTIMENT_LLM_ENABLED")
+    sentiment_llm_model: str = Field(default="gemini-2.5-flash", validation_alias="SENTIMENT_LLM_MODEL")
+    sentiment_llm_model_version: str = Field(default="1", validation_alias="SENTIMENT_LLM_MODEL_VERSION")
+    sentiment_llm_neutral_only: bool = Field(default=True, validation_alias="SENTIMENT_LLM_NEUTRAL_ONLY")
+    sentiment_llm_batch_size: int = Field(default=5, validation_alias="SENTIMENT_LLM_BATCH_SIZE")
+    sentiment_llm_timeout_seconds: int = Field(default=60, validation_alias="SENTIMENT_LLM_TIMEOUT")
+    news_title_dedup_hours: int = Field(default=6, validation_alias="NEWS_TITLE_DEDUP_HOURS")
+
+    macro_brief_enabled: bool = Field(default=True, validation_alias="MACRO_BRIEF_ENABLED")
+    macro_brief_model: str = Field(default="gemini-2.5-flash", validation_alias="MACRO_BRIEF_MODEL")
+    macro_brief_timeout_seconds: int = Field(default=60, validation_alias="MACRO_BRIEF_TIMEOUT")
 
     foundation_models_enabled: bool = Field(
         default=False,
@@ -62,11 +89,31 @@ class Settings(BaseSettings):
         default="https://paper-api.alpaca.markets",
         validation_alias="ALPACA_BASE_PAPER_URL",
     )
+    alpaca_data_base_url: str = Field(
+        default="https://data.alpaca.markets",
+        validation_alias="ALPACA_DATA_BASE_URL",
+    )
+    crypto_intraday_source: str = Field(
+        default="alpaca",
+        validation_alias="CRYPTO_INTRADAY_SOURCE",
+    )
     trading_mode_paper: bool = Field(default=True, validation_alias="TRADING_MODE_PAPER")
     max_position_pct: float = Field(default=5.0, validation_alias="MAX_POSITION_PCT")
     max_exposure_pct: float = Field(default=80.0, validation_alias="MAX_EXPOSURE_PCT")
     daily_loss_limit_pct: float = Field(default=5.0, validation_alias="DAILY_LOSS_LIMIT_PCT")
     max_orders_per_minute: int = Field(default=10, validation_alias="MAX_ORDERS_PER_MINUTE")
+    deployment_max_drawdown_pct: float = Field(
+        default=15.0,
+        validation_alias="DEPLOYMENT_MAX_DRAWDOWN_PCT",
+    )
+    stale_data_max_missed_slots: int = Field(
+        default=2,
+        validation_alias="STALE_DATA_MAX_MISSED_SLOTS",
+    )
+    stale_data_block_orders: bool = Field(
+        default=True,
+        validation_alias="STALE_DATA_BLOCK_ORDERS",
+    )
 
     @property
     def cors_origins_list(self) -> list[str]:

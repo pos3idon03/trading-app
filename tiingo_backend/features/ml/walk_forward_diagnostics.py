@@ -1,6 +1,6 @@
 from typing import Any, Optional
 
-from features.ml.labels import build_labels
+from features.ml.labels import build_labels_for_ml_params
 from features.ml.price_features import FEATURE_WARMUP_BARS
 from features.ml.splitter import build_walk_forward_windows
 
@@ -140,13 +140,7 @@ def build_walk_forward_readiness(
     step_bars = int(validated_params["step_bars"])
     label_horizon = int(validated_params["label_horizon"])
 
-    labels = build_labels(
-        bars,
-        label_horizon,
-        label_mode=str(validated_params.get("label_mode") or "binary"),
-        label_threshold=float(validated_params.get("label_threshold") or 0.01),
-        label_method=str(validated_params.get("label_method") or "endpoint"),
-    )
+    labels = build_labels_for_ml_params(bars, validated_params)
 
     total_bars = len(bars)
     valid_feature_rows = count_valid_feature_rows(feature_rows)

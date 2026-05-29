@@ -128,3 +128,34 @@ async def test_get_macro_overview():
     data = resp.json()
     assert data["rows"][0]["series_id"] == "CPIAUCSL"
     assert data["rows"][0]["ma50_position"] == "Above"
+
+
+@pytest.mark.asyncio
+async def test_get_macro_brief():
+    generated_at = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+    payload = {
+        "as_of": date(2024, 6, 1),
+        "situation": "Growth is steady.",
+        "outlook": "Inflation may cool.",
+        "situation_phase": "Expansion",
+        "outlook_phase": "Slowdown",
+        "generated_at": generated_at,
+        "available": True,
+        "message": None,
+    }
+
+    with patch(
+        "routes.overview.get_stored_macro_brief",
+        new=AsyncMock(return_value=payload),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/v1/market-data/overview/macro/brief")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["available"] is True
+    assert data["situation"] == "Growth is steady."
+    assert data["outlook"] == "Inflation may cool."
+    assert data["situation_phase"] == "Expansion"
+    assert data["outlook_phase"] == "Slowdown"

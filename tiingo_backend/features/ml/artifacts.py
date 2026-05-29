@@ -27,6 +27,33 @@ def validate_feature_schema(saved_schema: dict, actual_feature_names: list[str])
         )
 
 
+def align_feature_matrix_to_schema(
+    saved_schema: dict,
+    feature_names: list[str],
+    feature_rows: list[list[float] | None],
+) -> tuple[list[str], list[list[float] | None]]:
+    expected = list(saved_schema.get("feature_names") or [])
+    if not expected or expected == feature_names:
+        return feature_names, feature_rows
+
+    index_by_name = {name: index for index, name in enumerate(feature_names)}
+    missing = [name for name in expected if name not in index_by_name]
+    if missing:
+        raise ValueError(
+            "Saved model requires features missing from current build: "
+            f"{missing}. Retrain the model to use the updated feature set."
+        )
+
+    indices = [index_by_name[name] for name in expected]
+    aligned_rows: list[list[float] | None] = []
+    for row in feature_rows:
+        if row is None or len(row) < len(feature_names):
+            aligned_rows.append(None)
+            continue
+        aligned_rows.append([row[index] for index in indices])
+    return expected, aligned_rows
+
+
 def _artifact_dir() -> Path:
     settings = get_settings()
     path = Path(settings.ml_artifact_dir)

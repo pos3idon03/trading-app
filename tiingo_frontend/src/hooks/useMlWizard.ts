@@ -171,6 +171,7 @@ export function useMlWizard(options: UseMlWizardOptions) {
             decisionTimeframe,
             dateRange,
             mlParams: pickWalkForwardParams(mlParams),
+            availableBarCountAtLock: availableBarCount ?? null,
           };
         case 'data_prep':
           return { mlParams: { ...mlParams } };
@@ -205,6 +206,7 @@ export function useMlWizard(options: UseMlWizardOptions) {
       runMode,
       initialCash,
       commissionBps,
+      availableBarCount,
     ],
   );
 

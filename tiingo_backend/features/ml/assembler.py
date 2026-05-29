@@ -1,8 +1,13 @@
 from typing import Optional
 
 
+def _row_set_is_active(rows: list[Optional[list[float]]]) -> bool:
+    """Skip empty blocks and placeholder all-None rows from omitted optional features."""
+    return bool(rows) and any(row is not None for row in rows)
+
+
 def _merge_rows(*row_sets: list[Optional[list[float]]]) -> list[Optional[list[float]]]:
-    active_sets = [rows for rows in row_sets if rows]
+    active_sets = [rows for rows in row_sets if _row_set_is_active(rows)]
     if not active_sets:
         return []
 
@@ -29,6 +34,8 @@ def assemble_feature_matrix(
     macro_rows: list[Optional[list[float]]] | None = None,
     fundamental_names: list[str] | None = None,
     fundamental_rows: list[Optional[list[float]]] | None = None,
+    news_names: list[str] | None = None,
+    news_rows: list[Optional[list[float]]] | None = None,
     context_names: list[str] | None = None,
     context_rows: list[Optional[list[float]]] | None = None,
     strategy_names: list[str] | None = None,
@@ -38,6 +45,8 @@ def assemble_feature_matrix(
     macro_rows = macro_rows or []
     fundamental_names = fundamental_names or []
     fundamental_rows = fundamental_rows or []
+    news_names = news_names or []
+    news_rows = news_rows or []
     context_names = context_names or []
     context_rows = context_rows or []
     strategy_names = strategy_names or []
@@ -58,6 +67,6 @@ def assemble_feature_matrix(
     else:
         raise ValueError(f"Unsupported feature_mode: {feature_mode}")
 
-    merged_names = [*base_names, *context_names, *strategy_names]
-    merged_rows = _merge_rows(*base_row_sets, context_rows, strategy_rows)
+    merged_names = [*base_names, *news_names, *context_names, *strategy_names]
+    merged_rows = _merge_rows(*base_row_sets, news_rows, context_rows, strategy_rows)
     return merged_names, merged_rows

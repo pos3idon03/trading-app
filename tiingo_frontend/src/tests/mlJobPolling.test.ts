@@ -36,4 +36,17 @@ describe('pollIngestionJob', () => {
 
     await expect(pollIngestionJob('1')).rejects.toThrow('boom');
   });
+
+  it('throws when job is cancelled', async () => {
+    vi.spyOn(ingestionApi, 'getJob').mockResolvedValueOnce({
+      id: '1',
+      job_type: 'ml_label_search',
+      status: 'cancelled',
+      progress: 25,
+      created_at: '2024-01-01T00:00:00Z',
+      error_message: 'Cancelled by user',
+    });
+
+    await expect(pollIngestionJob('1')).rejects.toThrow('Cancelled by user');
+  });
 });

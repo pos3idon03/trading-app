@@ -3,12 +3,14 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { executionApi, mlBacktestApi } from '../../api/endpoints';
 import type { MlSavedModel } from '../../api/mlBacktestTypes';
 import ConfirmModal from '../../components/ConfirmModal';
+import DeleteDeploymentModal from '../../components/trading/DeleteDeploymentModal';
 import DataTable, { type DataTableColumn } from '../../components/DataTable';
 import ErrorAlert from '../../components/ErrorAlert';
 import Spinner from '../../components/Spinner';
 import Toast from '../../components/Toast';
 import {
   deploymentStatusClass,
+  filterDeployableModels,
   formatDeploymentStatus,
   mapDeploymentRows,
   outcomeClass,
@@ -32,6 +34,7 @@ export default function DeploymentsPage() {
   const [selectedModelId, setSelectedModelId] = useState(prefillModelId ?? '');
   const [allocationPct, setAllocationPct] = useState('100');
   const [confirmStop, setConfirmStop] = useState<DeploymentRow | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<DeploymentRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,7 +45,7 @@ export default function DeploymentsPage() {
         mlBacktestApi.listSavedModels(),
       ]);
       setRows(mapDeploymentRows(deploymentsResponse.deployments));
-      setSavedModels(savedResponse.models);
+      setSavedModels(filterDeployableModels(savedResponse.models));
     } catch (err) {
       setRows([]);
       setSavedModels([]);
@@ -113,8 +116,30 @@ export default function DeploymentsPage() {
     }
   };
 
+  const handleDelete = async (row: DeploymentRow, closePositions: boolean) => {
+    setBusyId(row.id);
+    try {
+      const result = await executionApi.deleteDeployment(row.id, { close_positions: closePositions });
+      const detail =
+        result.closed_qty > 0
+          ? `Deployment deleted. Closed ${result.closed_qty.toFixed(4)} ${row.symbol}.`
+          : 'Deployment deleted.';
+      setToast({ message: detail, variant: 'success' });
+      setConfirmDelete(null);
+      await load();
+    } catch (err) {
+      setToast({
+        message: err instanceof Error ? err.message : 'Failed to delete deployment.',
+        variant: 'error',
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const columns = useMemo((): DataTableColumn<DeploymentRow>[] => [
     { key: 'symbol', label: 'Symbol', sortValue: (row) => row.symbol },
+    { key: 'timeframe', label: 'Timeframe', sortValue: (row) => row.timeframe },
     { key: 'modelName', label: 'Model', sortValue: (row) => row.modelName },
     {
       key: 'status',
@@ -127,8 +152,9 @@ export default function DeploymentsPage() {
       ),
     },
     { key: 'allocationPct', label: 'Allocation', sortValue: (row) => row.deployment.allocation_pct },
+    { key: 'positionLabel', label: 'Position', sortValue: (row) => row.positionSort },
     { key: 'lastSignal', label: 'Signal', sortValue: (row) => row.lastSignal },
-    { key: 'lastProbability', label: 'Probability', sortValue: (row) => row.deployment.last_probability ?? 0 },
+    { key: 'lastProbability', label: 'Probability (up)', sortValue: (row) => row.deployment.last_probability ?? 0 },
     {
       key: 'lastOutcome',
       label: 'Outcome',
@@ -206,6 +232,14 @@ export default function DeploymentsPage() {
             >
               Stop
             </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setConfirmDelete(row)}
+              className="text-xs font-medium text-red-400 hover:text-red-300 disabled:opacity-50"
+            >
+              Delete
+            </button>
           </div>
         );
       },
@@ -249,7 +283,7 @@ export default function DeploymentsPage() {
                 <option value="">Select a model</option>
                 {savedModels.map((model) => (
                   <option key={model.id} value={model.id}>
-                    {model.name}
+                    {model.name} ({model.symbol ?? '—'} · {model.timeframe ?? '1d'})
                   </option>
                 ))}
               </select>
@@ -285,6 +319,13 @@ export default function DeploymentsPage() {
           </div>
         </div>
       )}
+
+      <DeleteDeploymentModal
+        deployment={confirmDelete}
+        busy={confirmDelete !== null && busyId === confirmDelete.id}
+        onConfirm={(closePositions) => confirmDelete && void handleDelete(confirmDelete, closePositions)}
+        onCancel={() => setConfirmDelete(null)}
+      />
 
       <ConfirmModal
         open={confirmStop !== null}

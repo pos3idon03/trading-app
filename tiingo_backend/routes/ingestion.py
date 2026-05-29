@@ -15,6 +15,7 @@ from dtos.market_data_dto import (
     OHLCVBackfillRequest,
     StreamControlRequest,
 )
+from dtos.sentiment_dto import NewsSentimentEnrichmentRunRequest, NewsSentimentRunRequest
 from features.scheduler.scheduler import list_jobs
 from features.stream import iex_stream
 from features.tiingo.entitlement import DOW_30_SYMBOLS
@@ -87,8 +88,44 @@ async def news_run(
 
 
 @router.get("/news")
-async def list_news(limit: int = 50, session: AsyncSession = Depends(get_db)):
-    return {"articles": await news_dal.list_recent_news(session, limit)}
+async def list_news(
+    limit: int = 50,
+    include_sentiment: bool = Query(default=False),
+    session: AsyncSession = Depends(get_db),
+):
+    return {
+        "articles": await news_dal.list_recent_news(
+            session,
+            limit,
+            include_sentiment=include_sentiment,
+        )
+    }
+
+
+@router.post("/news/sentiment/run", status_code=202)
+async def news_sentiment_run(
+    body: NewsSentimentRunRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    settings = get_settings()
+    if not settings.sentiment_enabled:
+        raise HTTPException(400, "Sentiment analysis is disabled (SENTIMENT_ENABLED=false)")
+    job = await create_and_enqueue_job(session, "news_sentiment", body.model_dump())
+    return {"job_id": str(job["id"]), "status": "accepted"}
+
+
+@router.post("/news/sentiment/enrich/run", status_code=202)
+async def news_sentiment_enrich_run(
+    body: NewsSentimentEnrichmentRunRequest,
+    session: AsyncSession = Depends(get_db),
+):
+    settings = get_settings()
+    if not settings.sentiment_llm_enabled:
+        raise HTTPException(400, "Sentiment LLM enrichment is disabled (SENTIMENT_LLM_ENABLED=false)")
+    if not settings.gemini_api_key:
+        raise HTTPException(400, "GEMINI_API_KEY is not configured")
+    job = await create_and_enqueue_job(session, "news_sentiment_enrichment", body.model_dump())
+    return {"job_id": str(job["id"]), "status": "accepted"}
 
 
 @router.post("/fundamentals/run", status_code=202)
@@ -147,4 +184,16 @@ async def get_ingestion_job(job_id: UUID, session: AsyncSession = Depends(get_db
     job = await job_dal.get_job(session, job_id)
     if not job:
         raise HTTPException(404, "Job not found")
+    return job
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=JobDTO)
+async def cancel_ingestion_job(job_id: UUID, session: AsyncSession = Depends(get_db)):
+    job = await job_dal.cancel_job(session, job_id)
+    if not job:
+        existing = await job_dal.get_job(session, job_id)
+        if not existing:
+            raise HTTPException(404, "Job not found")
+        raise HTTPException(409, f"Job cannot be cancelled while {existing['status']}")
+    await session.commit()
     return job

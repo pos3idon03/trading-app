@@ -13,18 +13,42 @@ from dal import (
     trading_deployment_dal,
 )
 from features.execution import alpaca_client
+from features.execution.deployment_close import close_deployment_position
+from features.execution.deployment_position import resolve_deployment_side
 from features.execution.evaluation_recorder import _thresholds, record_evaluation
 from features.execution.inference_runner import run_live_inference
+from features.execution.order_sync import sync_deployment_orders
+from features.execution.portfolio_snapshot import (
+    build_portfolio_breakdown,
+    build_unified_position_rows,
+    compute_deployment_exposure,
+    enrich_deployment_positions,
+)
+from features.execution.portfolio_metrics import build_portfolio_period_summary
 from features.execution.risk_checker import run_risk_checks
-from features.execution.signal_to_order import resolve_position_side, signal_to_order_intent
+from features.execution.signal_to_order import signal_to_order_intent
+from features.execution.alpaca_symbols import execution_asset_type
+from features.execution.deployment_overview import build_deployment_overview_row
+from features.execution.deployment_reconciliation import build_deployment_readiness
+from features.execution.deployment_risk_state import refresh_deployment_peak_profit
+from features.execution.deployment_timeframes import validate_execution_timeframe
+from features.execution.deployment_metrics import compute_strategy_pnl
+from features.execution.portfolio_snapshot import alpaca_price_by_tiingo_symbol
+from features.ingestion.deployment_ohlcv_refresh import refresh_single_deployment_ohlcv
 from features.ml.saved_model_metadata import extract_saved_model_metadata
+from features.sentiment.sentiment_context import fetch_symbol_sentiment_context
 
 
-def _ensure_paper_mode() -> None:
-    settings = get_settings()
-    if not settings.paper_trading_only:
-        raise ValueError("Live trading is not enabled in MVP; set TRADING_MODE_PAPER=true")
-    if not settings.alpaca_configured:
+def _sentiment_guardrail_params(hyperparams: dict) -> dict:
+    return {
+        "enabled": bool(hyperparams.get("sentiment_guardrail_enabled")),
+        "min_score": float(hyperparams.get("sentiment_min_score") or -0.5),
+        "min_articles": int(hyperparams.get("sentiment_min_articles") or 3),
+    }
+
+
+def _ensure_trading_enabled() -> None:
+    if not get_settings().alpaca_configured:
         raise RuntimeError("Alpaca API credentials are not configured")
 
 
@@ -64,6 +88,9 @@ async def get_risk_config() -> dict:
         "max_exposure_pct": settings.max_exposure_pct,
         "daily_loss_limit_pct": settings.daily_loss_limit_pct,
         "max_orders_per_minute": settings.max_orders_per_minute,
+        "deployment_max_drawdown_pct": settings.deployment_max_drawdown_pct,
+        "stale_data_max_missed_slots": settings.stale_data_max_missed_slots,
+        "stale_data_block_orders": settings.stale_data_block_orders,
     }
 
 
@@ -73,11 +100,57 @@ async def set_kill_switch(session: AsyncSession, enabled: bool) -> dict:
     return row
 
 
-async def get_portfolio_snapshot() -> dict:
-    _ensure_paper_mode()
+async def get_portfolio_snapshot(
+    session: AsyncSession,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> dict:
+    _ensure_trading_enabled()
     account = await alpaca_client.get_account()
     positions = await alpaca_client.get_positions()
-    return {"account": account, "positions": positions}
+    deployments = await trading_deployment_dal.list_deployments(session, limit=500)
+    for deployment in deployments:
+        await sync_deployment_orders(session, deployment["id"])
+    deployment_positions, untracked_positions = await build_portfolio_breakdown(
+        session,
+        positions,
+    )
+    period_summary, period_pl_map = await build_portfolio_period_summary(
+        session,
+        deployment_rows=deployment_positions,
+        untracked_rows=untracked_positions,
+        start=start,
+        end=end,
+    )
+    position_rows = build_unified_position_rows(
+        deployment_positions,
+        untracked_positions,
+        period_pl_by_key=period_pl_map,
+    )
+    return {
+        "account": account,
+        "positions": positions,
+        "deployment_positions": deployment_positions,
+        "untracked_positions": untracked_positions,
+        "position_rows": position_rows,
+        "summary": {
+            "closed_pnl": {
+                "amount": period_summary.closed_pnl.amount,
+                "pct": period_summary.closed_pnl.pct,
+            },
+            "open_pnl": {
+                "amount": period_summary.open_pnl.amount,
+                "pct": period_summary.open_pnl.pct,
+            },
+            "qqq_return_pct": period_summary.qqq_return_pct,
+            "voo_return_pct": period_summary.voo_return_pct,
+        },
+        "period": {
+            "start": period_summary.start,
+            "end": period_summary.end,
+        },
+    }
 
 
 async def _validate_model_for_deployment(session: AsyncSession, model_id: UUID) -> dict:
@@ -91,11 +164,16 @@ async def _validate_model_for_deployment(session: AsyncSession, model_id: UUID) 
     timeframe = metadata.get("timeframe") or "1d"
     if not symbol:
         raise ValueError("Saved model is missing training symbol metadata")
-    if timeframe != "1d":
-        raise ValueError("Live execution MVP supports daily (1d) timeframe only")
+    validate_execution_timeframe(timeframe)
     instrument = await instrument_dal.get_by_symbol(session, symbol)
     if not instrument:
         raise ValueError(f"Instrument {symbol} is not in the watchlist")
+    label_mode = str((row.get("hyperparams") or {}).get("label_mode") or "binary")
+    asset_type = instrument.get("asset_type") or "stock"
+    if label_mode == "meta_label" and asset_type != "crypto":
+        raise ValueError(
+            f"Meta-label deployments require a crypto instrument; {symbol} is {asset_type}"
+        )
     return row
 
 
@@ -105,7 +183,7 @@ async def create_deployment(
     model_id: UUID,
     allocation_pct: float = 100.0,
 ) -> dict:
-    _ensure_paper_mode()
+    _ensure_trading_enabled()
     if allocation_pct <= 0 or allocation_pct > 100:
         raise ValueError("allocation_pct must be between 0 and 100")
 
@@ -127,16 +205,37 @@ async def create_deployment(
 
 
 async def list_deployments(session: AsyncSession) -> list[dict]:
-    return await trading_deployment_dal.list_deployments_enriched(session)
+    rows = await trading_deployment_dal.list_deployments_enriched(session)
+    return await enrich_deployment_positions(session, rows)
+
+
+async def get_deployment_overview(session: AsyncSession) -> list[dict]:
+    _ensure_trading_enabled()
+    positions = await alpaca_client.get_positions()
+    alpaca_price_by_symbol = alpaca_price_by_tiingo_symbol(positions)
+    deployments = await list_deployments(session)
+    overview_rows: list[dict] = []
+    for deployment in deployments:
+        instrument = await instrument_dal.get_by_symbol(session, deployment["symbol"])
+        asset_type = (instrument or {}).get("asset_type") or "stock"
+        overview_rows.append(
+            await build_deployment_overview_row(
+                session,
+                deployment,
+                alpaca_price_by_symbol=alpaca_price_by_symbol,
+                asset_type=asset_type,
+            ),
+        )
+    return overview_rows
 
 
 async def get_deployment(session: AsyncSession, deployment_id: UUID) -> dict | None:
-    rows = await trading_deployment_dal.list_deployments_enriched(session)
+    rows = await list_deployments(session)
     return next((row for row in rows if row["id"] == deployment_id), None)
 
 
 async def activate_deployment(session: AsyncSession, deployment_id: UUID) -> dict:
-    _ensure_paper_mode()
+    _ensure_trading_enabled()
     deployment = await trading_deployment_dal.get_deployment(session, deployment_id)
     if not deployment:
         raise ValueError(f"Deployment not found: {deployment_id}")
@@ -144,15 +243,6 @@ async def activate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
         raise ValueError(f"Cannot activate deployment in status {deployment['status']}")
 
     await _validate_model_for_deployment(session, deployment["model_id"])
-    existing = await trading_deployment_dal.get_active_deployment_for_symbol(
-        session,
-        symbol=deployment["symbol"],
-        trading_mode=deployment["trading_mode"],
-    )
-    if existing and existing["id"] != deployment_id:
-        raise ValueError(
-            f"Another active deployment already exists for {deployment['symbol']}"
-        )
 
     now = datetime.now(timezone.utc)
     await trading_deployment_dal.update_deployment_status(
@@ -182,6 +272,45 @@ async def stop_deployment(session: AsyncSession, deployment_id: UUID) -> dict:
     await trading_deployment_dal.update_deployment_status(session, deployment_id, status="stopped")
     await session.commit()
     return await get_deployment(session, deployment_id)
+
+
+async def delete_deployment(
+    session: AsyncSession,
+    deployment_id: UUID,
+    *,
+    close_positions: bool = False,
+) -> dict:
+    _ensure_trading_enabled()
+    deployment = await trading_deployment_dal.get_deployment(session, deployment_id)
+    if not deployment:
+        raise ValueError(f"Deployment not found: {deployment_id}")
+
+    try:
+        if deployment["status"] == "active":
+            await trading_deployment_dal.update_deployment_status(session, deployment_id, status="stopped")
+
+        closed_qty = 0.0
+        close_order_id = None
+        if close_positions:
+            close_result = await close_deployment_position(session, deployment)
+            closed_qty = float(close_result.get("qty") or 0)
+            close_order_id = close_result.get("order_id")
+
+        deleted = await trading_deployment_dal.delete_deployment(session, deployment_id)
+        if not deleted:
+            raise ValueError(f"Deployment not found: {deployment_id}")
+
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+
+    return {
+        "deleted": True,
+        "close_positions": close_positions,
+        "closed_qty": closed_qty,
+        "close_order_id": close_order_id,
+    }
 
 
 async def list_orders(
@@ -216,7 +345,7 @@ async def list_evaluations(
     *,
     deployment_id: UUID | None = None,
     symbol: str | None = None,
-    limit: int = 50,
+    limit: int = 200,
 ) -> list[dict]:
     rows = await execution_evaluation_dal.list_evaluations(
         session,
@@ -260,12 +389,14 @@ async def _submit_order(
     intent,
     signal: str,
     bar_time: datetime,
+    asset_type: str = "stock",
 ) -> tuple[dict | None, str | None]:
     try:
         alpaca_order = await alpaca_client.submit_market_order(
             deployment["symbol"],
             intent.qty,
             intent.side,
+            asset_type=asset_type,
         )
         await execution_settings_dal.record_order_submission(session)
         order_row = await execution_order_dal.create_order(
@@ -305,12 +436,24 @@ async def _submit_order(
 
 
 async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dict:
-    _ensure_paper_mode()
+    _ensure_trading_enabled()
     deployment = await trading_deployment_dal.get_deployment(session, deployment_id)
     if not deployment:
         raise ValueError(f"Deployment not found: {deployment_id}")
-    if deployment["status"] != "active":
+    if deployment["status"] not in {"active", "error"}:
         raise ValueError("Deployment must be active to evaluate")
+
+    instrument = await instrument_dal.get_by_symbol(session, deployment["symbol"])
+    asset_type = execution_asset_type((instrument or {}).get("asset_type"))
+
+    await sync_deployment_orders(session, deployment_id)
+    deployment_net_qty = await execution_order_dal.sum_filled_qty_by_deployment(
+        session,
+        deployment_id,
+    )
+    deployment_side = resolve_deployment_side(deployment_net_qty)
+
+    await refresh_single_deployment_ohlcv(session, deployment)
 
     hyperparams = deployment["hyperparams_snapshot"]
     buy_threshold, sell_threshold = _thresholds(hyperparams)
@@ -327,43 +470,33 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
         probability = float(probability)
     else:
         probability = None
+    explainability = inference.get("explainability") or {
+        "method": "unavailable",
+        "top_contributors": [],
+        "warnings": [],
+    }
 
     if _same_bar_time(deployment.get("last_evaluated_bar_time"), bar_time):
-        eval_row = await record_evaluation(
-            session,
-            deployment=deployment,
-            bar_time=bar_time,
-            signal=deployment.get("last_signal") or inference["signal"],
-            probability=probability,
-            buy_threshold=buy_threshold,
-            sell_threshold=sell_threshold,
-            position_side=None,
-            order_intent_side=None,
-            order_qty=None,
-            outcome="skipped",
-            blocked_reason="Already evaluated for latest bar",
-            order_id=None,
-            warnings=inference.get("warnings") or [],
-        )
-        await session.commit()
         return {
-            "deployment_id": deployment_id,
+            "deployment_id": str(deployment_id),
             "skipped": True,
             "reason": "Already evaluated for latest bar",
             "signal": deployment.get("last_signal"),
             "bar_time": bar_time.isoformat(),
             "outcome": "skipped",
-            "evaluation": eval_row,
+            "probability": probability,
+            "explainability": explainability,
         }
 
     signal = inference["signal"]
     settings = get_settings()
     result: dict = {
-        "deployment_id": deployment_id,
+        "deployment_id": str(deployment_id),
         "skipped": False,
         "signal": signal,
         "bar_time": bar_time.isoformat(),
         "probability": probability,
+        "explainability": explainability,
         "warnings": inference.get("warnings") or [],
         "order": None,
         "blocked_reason": None,
@@ -379,13 +512,14 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
             probability=probability,
             buy_threshold=buy_threshold,
             sell_threshold=sell_threshold,
-            position_side=resolve_position_side([], deployment["symbol"]),
+            position_side=deployment_side,
             order_intent_side=None,
             order_qty=None,
             outcome="hold",
             blocked_reason=None,
             order_id=None,
             warnings=result["warnings"],
+            explainability=explainability,
         )
         await session.commit()
         result["outcome"] = "hold"
@@ -393,15 +527,32 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
         return result
 
     account = await alpaca_client.get_account()
-    positions = await alpaca_client.get_positions()
-    open_orders = await alpaca_client.get_open_orders()
+    alpaca_positions = await alpaca_client.get_positions()
     exec_settings = await _sync_day_start_equity(session, account["equity"])
-    position_side = resolve_position_side(positions, deployment["symbol"])
+    last_price = float(inference.get("last_price") or 0)
+    price_by_symbol = alpaca_price_by_tiingo_symbol(alpaca_positions)
+    price_by_symbol[deployment["symbol"].upper()] = last_price
+    deployment_exposure = await compute_deployment_exposure(session, price_by_symbol=price_by_symbol)
+    deployment_has_open_order = await execution_order_dal.has_open_order(session, deployment_id)
+
+    now = datetime.now(timezone.utc)
+    readiness = await build_deployment_readiness(
+        session,
+        deployment,
+        now,
+        asset_type=asset_type,
+    )
+    orders = await execution_order_dal.list_orders(session, deployment_id=deployment_id)
+    strategy_pnl = compute_strategy_pnl(orders, last_price)
+    peak_profit = await refresh_deployment_peak_profit(
+        session,
+        deployment,
+        current_price=last_price,
+    )
 
     intent = signal_to_order_intent(
         signal,
-        symbol=deployment["symbol"],
-        positions=positions,
+        deployment_net_qty=deployment_net_qty,
         buying_power=account["buying_power"],
         account_equity=account["equity"],
         allocation_pct=deployment["allocation_pct"],
@@ -417,32 +568,53 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
             probability=probability,
             buy_threshold=buy_threshold,
             sell_threshold=sell_threshold,
-            position_side=position_side,
+            position_side=deployment_side,
             order_intent_side=None,
             order_qty=None,
             outcome="blocked",
-            blocked_reason="No actionable order for current position",
+            blocked_reason="No actionable order for current deployment position",
             order_id=None,
             warnings=result["warnings"],
+            explainability=explainability,
         )
         await session.commit()
-        result["blocked_reason"] = "No actionable order for current position"
+        result["blocked_reason"] = "No actionable order for current deployment position"
         result["outcome"] = "blocked"
         result["evaluation"] = eval_row
         return result
 
+    guardrail = _sentiment_guardrail_params(hyperparams)
+    sentiment_context = None
+    if guardrail["enabled"]:
+        sentiment_context = await fetch_symbol_sentiment_context(
+            session,
+            symbol=deployment["symbol"],
+            on_date=bar_time.date(),
+        )
+
     risk = run_risk_checks(
         intent,
-        symbol=deployment["symbol"],
         kill_switch_enabled=exec_settings["kill_switch_enabled"],
         orders_this_minute=exec_settings.get("orders_this_minute") or 0,
-        open_orders=open_orders,
+        deployment_has_open_order=deployment_has_open_order,
         account_equity=account["equity"],
         day_start_equity=exec_settings.get("day_start_equity"),
         day_start_date=exec_settings.get("day_start_date"),
         today=date.today(),
-        positions=positions,
-        last_price=float(inference.get("last_price") or 0),
+        deployment_exposure=deployment_exposure,
+        last_price=last_price,
+        sentiment_guardrail_enabled=guardrail["enabled"],
+        sentiment_avg_score_1d=(
+            float(sentiment_context["avg_score"]) if sentiment_context else None
+        ),
+        sentiment_article_count_1d=(
+            int(sentiment_context["article_count"]) if sentiment_context else 0
+        ),
+        sentiment_min_score=guardrail["min_score"],
+        sentiment_min_articles=guardrail["min_articles"],
+        strategy_profit_pct=strategy_pnl.profit_pct,
+        peak_strategy_profit_pct=peak_profit,
+        deployment_readiness=readiness,
     )
     if not risk.allowed:
         eval_row = await record_evaluation(
@@ -453,13 +625,14 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
             probability=probability,
             buy_threshold=buy_threshold,
             sell_threshold=sell_threshold,
-            position_side=position_side,
+            position_side=deployment_side,
             order_intent_side=intent.side,
             order_qty=intent.qty,
             outcome="blocked",
             blocked_reason=risk.reason,
             order_id=None,
             warnings=result["warnings"],
+            explainability=explainability,
         )
         await session.commit()
         result["blocked_reason"] = risk.reason
@@ -473,6 +646,7 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
         intent=intent,
         signal=signal,
         bar_time=bar_time,
+        asset_type=asset_type,
     )
     outcome = "order_submitted" if order_row else "error"
     eval_row = await record_evaluation(
@@ -483,13 +657,14 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
         probability=probability,
         buy_threshold=buy_threshold,
         sell_threshold=sell_threshold,
-        position_side=position_side,
+        position_side=deployment_side,
         order_intent_side=intent.side,
         order_qty=intent.qty,
         outcome=outcome,
         blocked_reason=submit_error,
         order_id=order_row["id"] if order_row else None,
         warnings=result["warnings"],
+        explainability=explainability,
     )
     await session.commit()
     result["order"] = order_row

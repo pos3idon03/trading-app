@@ -224,7 +224,7 @@ class MlLabelSearchRequest(BaseModel):
     start: Optional[datetime] = None
     end: Optional[datetime] = None
     label_mode: str = "binary"
-    horizons: list[int] = Field(default_factory=lambda: [2, 4, 6, 8, 10])
+    horizons: list[int] = Field(default_factory=list)
     thresholds: list[float] = Field(default_factory=lambda: [0.01, 0.02])
     model_type: Optional[str] = None
     model_types: Optional[list[str]] = None

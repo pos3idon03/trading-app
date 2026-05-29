@@ -13,6 +13,9 @@ import MlWalkForwardParamsControls from './MlWalkForwardParamsControls';
 interface MlUniversePeriodSectionProps {
   symbol: string;
   decisionTimeframe: string;
+  assetType?: string;
+  labelMode?: 'binary' | 'ternary' | 'meta_label';
+  maxHorizonBars?: number;
   dateRange: DateRangeValue;
   onDateRangeChange: (value: DateRangeValue) => void;
   walkForwardParams: WalkForwardParams;
@@ -45,6 +48,9 @@ function formatEffectiveRangeLine(
 export default function MlUniversePeriodSection({
   symbol,
   decisionTimeframe,
+  assetType,
+  labelMode,
+  maxHorizonBars,
   dateRange,
   onDateRangeChange,
   walkForwardParams,
@@ -114,7 +120,13 @@ export default function MlUniversePeriodSection({
           <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             Bar budget
           </h4>
-          <dl className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+          <dl className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+            <div>
+              <dt className="text-slate-500 text-xs">Available bars</dt>
+              <dd className="text-slate-100 font-medium tabular-nums">
+                {barCountLoading ? '…' : budget.barCount.toLocaleString()}
+              </dd>
+            </div>
             <div>
               <dt className="text-slate-500 text-xs">Minimum required</dt>
               <dd className="text-slate-100">{budget.minimumRequired}</dd>
@@ -146,10 +158,15 @@ export default function MlUniversePeriodSection({
         onChange={onWalkForwardParamChange}
         onResetDefaults={onResetWalkForwardDefaults}
         barCount={barCount}
+        barCountLoading={barCountLoading}
         budget={budget}
         validationError={walkForwardValidationError}
         disabled={disabled}
         viableFolds={viableFolds}
+        assetType={assetType}
+        timeframe={decisionTimeframe}
+        labelMode={labelMode}
+        maxHorizonBars={maxHorizonBars}
       />
     </section>
   );

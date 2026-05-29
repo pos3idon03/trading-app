@@ -44,7 +44,7 @@ def build_context_feature_matrix(
 ) -> tuple[list[str], list[Optional[list[float]]], list[str]]:
     decision_count = len(bar_context.decision_bars)
     if not context_timeframes:
-        return [], [None] * decision_count, []
+        return [], [], []
 
     feature_names: list[str] = []
     per_tf_rows: list[list[Optional[list[float]]]] = []
@@ -74,7 +74,7 @@ def build_context_feature_matrix(
         per_tf_rows.append(aligned)
 
     if not feature_names:
-        return [], [None] * decision_count, warnings
+        return [], [], warnings
 
     merged: list[Optional[list[float]]] = []
     for row_index in range(decision_count):

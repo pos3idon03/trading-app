@@ -21,6 +21,7 @@ class ExecutionOrder(Base):
     symbol: Mapped[str] = mapped_column(String, nullable=False)
     side: Mapped[str] = mapped_column(String, nullable=False)
     qty: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    filled_qty: Mapped[float | None] = mapped_column(Numeric(18, 6))
     order_type: Mapped[str] = mapped_column(String, nullable=False, default="market")
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     signal: Mapped[str] = mapped_column(String, nullable=False)

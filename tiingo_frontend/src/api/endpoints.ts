@@ -11,6 +11,7 @@ import type {
   MacroSeries,
   NewsArticle,
   AssetOverviewResponse,
+  MacroBriefResponse,
   MacroOverviewResponse,
   OHLCVQueryResponse,
   PerformanceResponse,
@@ -58,6 +59,11 @@ import type {
 
 import type {
   CreateDeploymentRequest,
+  DeleteDeploymentRequest,
+  DeleteDeploymentResponse,
+  DeploymentCycleEnqueueRequest,
+  DeploymentOverviewResponse,
+  DeploymentRefreshResponse,
   EvaluateDeploymentResponse,
   EnqueueJobResponse,
   ExecutionActivityEvent,
@@ -106,8 +112,16 @@ export const ingestionApi = {
       .then((r) => r.data),
   runNews: (body: Record<string, unknown>) =>
     api.post<{ job_id: string }>('/ingestion/news/run', body).then((r) => r.data),
-  listNews: (limit = 50) =>
-    api.get<{ articles: NewsArticle[] }>('/ingestion/news', { params: { limit } }).then((r) => r.data),
+  listNews: (limit = 50, includeSentiment = true) =>
+    api
+      .get<{ articles: NewsArticle[] }>('/ingestion/news', {
+        params: { limit, include_sentiment: includeSentiment },
+      })
+      .then((r) => r.data),
+  runNewsSentiment: (body: Record<string, unknown>) =>
+    api.post<{ job_id: string }>('/ingestion/news/sentiment/run', body).then((r) => r.data),
+  runNewsSentimentEnrich: (body: Record<string, unknown>) =>
+    api.post<{ job_id: string }>('/ingestion/news/sentiment/enrich/run', body).then((r) => r.data),
   runFundamentals: (body: Record<string, unknown>) =>
     api.post<{ job_id: string }>('/ingestion/fundamentals/run', body).then((r) => r.data),
   getFundamentalsEntitlement: () =>
@@ -137,6 +151,8 @@ export const ingestionApi = {
     api.get<Job[]>('/ingestion/jobs', { params }).then((r) => r.data),
   listActiveJobs: () => api.get<Job[]>('/ingestion/jobs/active').then((r) => r.data),
   getJob: (id: string) => api.get<Job>(`/ingestion/jobs/${id}`).then((r) => r.data),
+  cancelJob: (id: string) =>
+    api.post<Job>(`/ingestion/jobs/${id}/cancel`).then((r) => r.data),
   listMacroSeries: (params?: { ingestedOnly?: boolean; query?: string; limit?: number }) =>
     api
       .get<MacroSeries[]>('/ingestion/macro/series', {
@@ -201,6 +217,8 @@ export const marketDataApi = {
         params: { category },
       })
       .then((r) => r.data),
+  getMacroBrief: () =>
+    api.get<MacroBriefResponse>('/market-data/overview/macro/brief').then((r) => r.data),
 };
 
 export const backtestApi = {
@@ -299,7 +317,10 @@ export const executionApi = {
   getRiskConfig: () => api.get<RiskConfig>('/execution/risk-config').then((r) => r.data),
   setKillSwitch: (enabled: boolean) =>
     api.post<{ kill_switch_enabled: boolean }>('/execution/kill-switch', { enabled }).then((r) => r.data),
-  getPortfolio: () => api.get<PortfolioResponse>('/execution/portfolio').then((r) => r.data),
+  getPortfolio: (params?: { start?: string; end?: string }) =>
+    api.get<PortfolioResponse>('/execution/portfolio', { params }).then((r) => r.data),
+  getOverview: () =>
+    api.get<DeploymentOverviewResponse>('/execution/overview').then((r) => r.data),
   listDeployments: () =>
     api.get<TradingDeploymentsResponse>('/execution/deployments').then((r) => r.data),
   createDeployment: (body: CreateDeploymentRequest) =>
@@ -310,12 +331,32 @@ export const executionApi = {
     api.post<TradingDeployment>(`/execution/deployments/${id}/pause`).then((r) => r.data),
   stopDeployment: (id: string) =>
     api.post<TradingDeployment>(`/execution/deployments/${id}/stop`).then((r) => r.data),
+  deleteDeployment: (id: string, body: DeleteDeploymentRequest) =>
+    api
+      .delete<DeleteDeploymentResponse>(`/execution/deployments/${id}`, { data: body })
+      .then((r) => r.data),
   evaluateDeployment: (id: string) =>
     api
       .post<EvaluateDeploymentResponse>(`/execution/deployments/${id}/evaluate`)
       .then((r) => r.data),
+  refreshDeployment: (id: string) =>
+    api
+      .post<DeploymentRefreshResponse>(`/execution/deployments/${id}/refresh`)
+      .then((r) => r.data),
+  enqueueEvaluateDeployment: (id: string) =>
+    api
+      .post<EnqueueJobResponse>(`/execution/deployments/${id}/evaluate/enqueue`)
+      .then((r) => r.data),
   enqueueEvaluateAll: () =>
     api.post<EnqueueJobResponse>('/execution/evaluate-all/enqueue').then((r) => r.data),
+  enqueueMarketDataRefresh: () =>
+    api.post<EnqueueJobResponse>('/execution/market-data/refresh/enqueue').then((r) => r.data),
+  enqueueDeploymentCycle: (body?: DeploymentCycleEnqueueRequest) =>
+    api
+      .post<EnqueueJobResponse>('/execution/deployment-cycle/enqueue', body ?? {})
+      .then((r) => r.data),
+  enqueueReconciliation: () =>
+    api.post<EnqueueJobResponse>('/execution/reconciliation/enqueue').then((r) => r.data),
   listOrders: (params?: { deployment_id?: string; symbol?: string; status?: string }) =>
     api.get<ExecutionOrdersResponse>('/execution/orders', { params }).then((r) => r.data),
   listEvaluations: (params?: { deployment_id?: string; symbol?: string; limit?: number }) =>

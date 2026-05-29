@@ -15,3 +15,11 @@ CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 \i /docker-entrypoint-initdb.d/migrations/012_macro_release_dates.sql
 \i /docker-entrypoint-initdb.d/migrations/013_create_trading_execution.sql
 \i /docker-entrypoint-initdb.d/migrations/014_execution_evaluations.sql
+\i /docker-entrypoint-initdb.d/migrations/015_allow_multi_deployment_per_symbol.sql
+\i /docker-entrypoint-initdb.d/migrations/016_create_news_sentiment.sql
+\i /docker-entrypoint-initdb.d/migrations/017_create_news_sentiment_enrichment.sql
+\i /docker-entrypoint-initdb.d/migrations/018_news_title_fingerprint.sql
+\i /docker-entrypoint-initdb.d/migrations/019_probability_explainability.sql
+\i /docker-entrypoint-initdb.d/migrations/020_create_macro_briefs.sql
+\i /docker-entrypoint-initdb.d/migrations/021_deployment_peak_profit.sql
+\i /docker-entrypoint-initdb.d/migrations/022_macro_brief_cycle_phases.sql

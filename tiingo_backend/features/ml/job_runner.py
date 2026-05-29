@@ -4,7 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dal import job_dal
+from features.ml.job_checkpoints import checkpoint_ml_job
 from features.ml.orchestrator import (
     export_training_data_for_symbol,
     export_workbook_for_symbol,
@@ -27,24 +27,13 @@ def _parse_datetime(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-async def _update_progress(
-    session: AsyncSession,
-    job_id: UUID | None,
-    progress: int,
-) -> None:
-    if job_id is None:
-        return
-    await job_dal.update_job_progress(session, job_id, progress)
-    await session.commit()
-
-
 async def execute_ml_job(
     session: AsyncSession,
     job_type: str,
     params: dict,
     job_id: UUID | None = None,
 ) -> dict:
-    await _update_progress(session, job_id, 5)
+    await checkpoint_ml_job(session, job_id, 5)
     start = _parse_datetime(params.get("start"))
     end = _parse_datetime(params.get("end"))
 
@@ -57,8 +46,9 @@ async def execute_ml_job(
             start=start,
             end=end,
             model_type=params.get("model_type", "ml_logistic"),
+            job_id=job_id,
         )
-        await _update_progress(session, job_id, 100)
+        await checkpoint_ml_job(session, job_id, 100)
         return preview
 
     if job_type == "ml_label_search":
@@ -74,8 +64,9 @@ async def execute_ml_job(
             thresholds=params["thresholds"],
             model_type=params.get("model_type"),
             model_types=params.get("model_types"),
+            job_id=job_id,
         )
-        await _update_progress(session, job_id, 100)
+        await checkpoint_ml_job(session, job_id, 100)
         return {"results": results}
 
     if job_type == "ml_training_export":
@@ -89,8 +80,9 @@ async def execute_ml_job(
             end=end,
             scope=params.get("scope", "all_labeled"),
             sample_size=int(params.get("sample_size", 500)),
+            job_id=job_id,
         )
-        await _update_progress(session, job_id, 100)
+        await checkpoint_ml_job(session, job_id, 100)
         return payload
 
     if job_type == "ml_workbook_export":
@@ -111,8 +103,9 @@ async def execute_ml_job(
             threshold_search_results=params.get("threshold_search_results"),
             compare_results=params.get("compare_results"),
             config_snapshot=params.get("config_snapshot"),
+            job_id=job_id,
         )
-        await _update_progress(session, job_id, 100)
+        await checkpoint_ml_job(session, job_id, 100)
         return payload
 
     if job_type == "ml_threshold_search":
@@ -126,8 +119,9 @@ async def execute_ml_job(
             end=end,
             buy_thresholds=params["buy_thresholds"],
             sell_thresholds=params["sell_thresholds"],
+            job_id=job_id,
         )
-        await _update_progress(session, job_id, 100)
+        await checkpoint_ml_job(session, job_id, 100)
         return {"results": results}
 
     if job_type == "ml_hyperparameter_search":
@@ -139,8 +133,9 @@ async def execute_ml_job(
             timeframe=params.get("timeframe", "1d"),
             start=start,
             end=end,
+            job_id=job_id,
         )
-        await _update_progress(session, job_id, 100)
+        await checkpoint_ml_job(session, job_id, 100)
         return result
 
     if job_type == "ml_train":
@@ -153,8 +148,9 @@ async def execute_ml_job(
             start=start,
             end=end,
             name=params.get("name"),
+            job_id=job_id,
         )
-        await _update_progress(session, job_id, 100)
+        await checkpoint_ml_job(session, job_id, 100)
         return {
             "id": str(row["id"]),
             "name": row["name"],
@@ -176,8 +172,9 @@ async def execute_ml_job(
             end=end,
             initial_cash=float(params.get("initial_cash", 10_000)),
             commission_bps=float(params.get("commission_bps", 0)),
+            job_id=job_id,
         )
-        await _update_progress(session, job_id, 100)
+        await checkpoint_ml_job(session, job_id, 100)
         return {
             "run_id": str(result["id"]),
             "id": str(result["id"]),

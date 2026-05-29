@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dal import macro_dal
 from features.ml.catalog import feature_mode_uses_macro
 from features.ml.feature_builder import collect_required_ml_timeframes
-from features.ml.labels import build_labels, label_distribution
+from features.ml.labels import build_labels_for_ml_params, label_distribution
 from features.ml.price_features import FEATURE_WARMUP_BARS
 from features.ml.walk_forward_diagnostics import build_walk_forward_readiness
 
@@ -54,13 +54,7 @@ async def build_data_preview(
                     f"Macro series {series_id} has {coverage['pct']}% ALFRED release_date coverage.",
                 )
 
-    labels = build_labels(
-        bars,
-        int(validated_params["label_horizon"]),
-        label_mode=str(validated_params.get("label_mode") or "binary"),
-        label_threshold=float(validated_params.get("label_threshold") or 0.01),
-        label_method=str(validated_params.get("label_method") or "endpoint"),
-    )
+    labels = build_labels_for_ml_params(bars, validated_params)
     distribution = label_distribution(labels)
     total_labeled = sum(distribution.values())
     if total_labeled:

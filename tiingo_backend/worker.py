@@ -1,3 +1,3 @@
-from features.worker.settings import WorkerSettings
+from features.worker.settings import DefaultWorkerSettings, WorkerSettings
 
-__all__ = ["WorkerSettings"]
+__all__ = ["DefaultWorkerSettings", "WorkerSettings"]

@@ -132,3 +132,131 @@ def _format_shap_values(
     class_label = _default_class_for_single_matrix(classes)
     _append_feature_rows(rows, means, feature_names, class_label)
     return rows
+
+
+def _positive_class_index(classes: list[int]) -> int:
+    if 2 in classes:
+        return classes.index(2)
+    if 1 in classes:
+        return classes.index(1)
+    return max(len(classes) - 1, 0)
+
+
+def _explainer_method(model: Any) -> str:
+    classifier = _resolve_classifier(model)
+    if hasattr(classifier, "feature_importances_"):
+        return "shap_tree"
+    if hasattr(classifier, "coef_"):
+        return "shap_linear"
+    return "unavailable"
+
+
+def _extract_signed_shap_row(
+    values: Any,
+    classes: list[int],
+    positive_index: int,
+) -> list[float]:
+    if isinstance(values, list):
+        if not values:
+            raise ValueError("SHAP returned no class outputs")
+        if len(values) == 1 and len(classes) == 2:
+            matrix = np.asarray(values[0])
+            if matrix.ndim == 1:
+                return [float(value) for value in matrix]
+            if matrix.shape[0] == 1:
+                return [float(value) for value in matrix[0]]
+            return [float(value) for value in matrix[0]]
+        class_index = positive_index if positive_index < len(values) else len(values) - 1
+        target = np.asarray(values[class_index])
+        if target.ndim == 1:
+            return [float(value) for value in target]
+        if target.shape[0] == 1:
+            return [float(value) for value in target[0]]
+        return [float(value) for value in target[0]]
+
+    array = np.asarray(values)
+    if array.size == 0:
+        raise ValueError("SHAP returned empty values")
+    if array.ndim == 3:
+        class_dim = array.shape[2]
+        class_index = positive_index if positive_index < class_dim else class_dim - 1
+        return [float(value) for value in array[0, :, class_index]]
+    if array.ndim == 2:
+        if array.shape[0] == 1:
+            return [float(value) for value in array[0]]
+        return [float(value) for value in array[-1]]
+    return [float(value) for value in array.ravel()]
+
+
+def _top_contributors(
+    shap_row: list[float],
+    x_row: list[float],
+    feature_names: list[str],
+    top_n: int,
+) -> list[dict]:
+    rows: list[dict] = []
+    for index, feature_name in enumerate(feature_names):
+        if index >= len(shap_row) or index >= len(x_row):
+            break
+        rows.append({
+            "feature": feature_name,
+            "value": round(float(x_row[index]), 6),
+            "contribution": round(float(shap_row[index]), 6),
+        })
+    rows.sort(key=lambda item: abs(item["contribution"]), reverse=True)
+    return rows[:top_n]
+
+
+def _unavailable_explainability(warnings: list[str]) -> dict:
+    return {
+        "method": "unavailable",
+        "top_contributors": [],
+        "warnings": warnings,
+    }
+
+
+def compute_instance_contributions(
+    model: Any,
+    x_row: list[float],
+    background_rows: list[list[float]],
+    feature_names: list[str],
+    classes: list[int],
+    *,
+    top_n: int = 5,
+) -> dict:
+    method = _explainer_method(model)
+    if not x_row or not feature_names:
+        return _unavailable_explainability(["No feature data for explainability"])
+    if method == "unavailable":
+        return _unavailable_explainability(["Model type does not support SHAP explainability"])
+    if not background_rows:
+        return _unavailable_explainability(["Insufficient background rows for SHAP"])
+
+    try:
+        import shap
+    except ImportError:  # pragma: no cover
+        return _unavailable_explainability(["SHAP not installed"])
+
+    sample = background_rows[-min(len(background_rows), _SHAP_SAMPLE_CAP):]
+    background = np.array(sample)
+    instance = np.array([x_row])
+    explainer = _build_explainer(model, shap, background)
+    if explainer is None:
+        return _unavailable_explainability(["Could not build SHAP explainer"])
+
+    scaled = _uses_scaled_explainer_input(model)
+    explain_x = _scale_features_for_explainer(model, instance) if scaled else instance
+    try:
+        values = explainer.shap_values(explain_x)
+    except Exception as exc:
+        return _unavailable_explainability([f"SHAP explainability failed: {exc}"])
+
+    try:
+        shap_row = _extract_signed_shap_row(values, classes, _positive_class_index(classes))
+    except (IndexError, ValueError) as exc:
+        return _unavailable_explainability([f"SHAP explainability parse failed: {exc}"])
+    return {
+        "method": method,
+        "top_contributors": _top_contributors(shap_row, x_row, feature_names, top_n),
+        "warnings": [],
+    }

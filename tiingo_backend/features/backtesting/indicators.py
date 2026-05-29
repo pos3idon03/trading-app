@@ -37,6 +37,38 @@ def compute_ema(values: list[float], period: int) -> list[Optional[float]]:
     return result
 
 
+def compute_atr(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    period: int,
+) -> list[Optional[float]]:
+    if period < 1 or len(closes) < 2:
+        return [None] * len(closes)
+
+    true_ranges: list[float] = []
+    for i in range(len(closes)):
+        if i == 0:
+            true_ranges.append(highs[i] - lows[i])
+            continue
+        prev_close = closes[i - 1]
+        tr = max(
+            highs[i] - lows[i],
+            abs(highs[i] - prev_close),
+            abs(lows[i] - prev_close),
+        )
+        true_ranges.append(tr)
+
+    result: list[Optional[float]] = [None] * period
+    seed = sum(true_ranges[:period]) / period
+    result.append(seed)
+    atr = seed
+    for i in range(period, len(true_ranges)):
+        atr = (atr * (period - 1) + true_ranges[i]) / period
+        result.append(atr)
+    return result
+
+
 def compute_rsi(values: list[float], period: int) -> list[Optional[float]]:
     if period < 1 or len(values) < period + 1:
         return [None] * len(values)

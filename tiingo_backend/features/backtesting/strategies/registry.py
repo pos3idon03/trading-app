@@ -3,6 +3,7 @@ from typing import Any, Callable
 from features.backtesting.strategies import (
     bollinger_breakout,
     buy_and_hold,
+    crypto_trend_entry,
     donchian_breakout,
     ema_crossover,
     ensemble,
@@ -141,6 +142,22 @@ STRATEGY_CATALOG: dict[str, dict[str, Any]] = {
         "min_bars": 16,
         "ensemble_eligible": True,
         "signal_fn": mfi_reversion.generate_signal,
+    },
+    "crypto_trend_entry": {
+        "label": "Crypto Trend Entry",
+        "description": (
+            "Long when close is above slow EMA and RSI is below overbought threshold. "
+            "Used as the base rule for meta-label training."
+        ),
+        "params": {"slow_period": 50, "rsi_period": 14, "rsi_max": 65.0},
+        "constraints": {
+            "slow_period": (10, 200),
+            "rsi_period": (2, 100),
+            "rsi_max": (50.0, 90.0),
+        },
+        "min_bars": 51,
+        "ensemble_eligible": False,
+        "signal_fn": crypto_trend_entry.generate_signal,
     },
     "ts_momentum": {
         "label": "Time-Series Momentum",

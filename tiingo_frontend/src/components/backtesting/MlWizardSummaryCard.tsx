@@ -1,6 +1,6 @@
 import type { MlDataPreviewResponse, MlWalkForwardReadiness } from '../../api/mlBacktestTypes';
 import type { MlLockedConfig } from '../../utils/mlWizardState';
-import { ML_FEATURE_MODES } from '../../utils/mlBacktestConfig';
+import { ML_FEATURE_MODES, minimumBarsRequired } from '../../utils/mlBacktestConfig';
 import { formatMlDateRangeLabel } from '../../utils/mlUniverseBudget';
 
 interface MlWizardSummaryCardProps {
@@ -37,6 +37,10 @@ export default function MlWizardSummaryCard({
   dataPreview,
 }: MlWizardSummaryCardProps) {
   const params = lockedConfig.mlParams;
+  const lockedMinimum =
+    params != null ? minimumBarsRequired(params) : null;
+  const previewBars = dataPreview?.walk_forward_readiness?.total_bars;
+  const lockedBars = lockedConfig.availableBarCountAtLock;
   const resolvedModel = modelLabel ?? lockedConfig.modelLabel ?? lockedConfig.modelType ?? '—';
   const contextTimeframes =
     formatOptionalList(params?.context_timeframes) ??
@@ -53,7 +57,12 @@ export default function MlWizardSummaryCard({
       <dl className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
         <div>
           <dt className="text-slate-500 text-xs">Symbol</dt>
-          <dd className="text-slate-100">{symbol || '—'}</dd>
+          <dd className="text-slate-100">
+            {symbol || '—'}
+            {params?.label_mode === 'meta_label' && (
+              <span className="ml-2 text-[10px] uppercase text-emerald-400">Crypto meta-label</span>
+            )}
+          </dd>
         </div>
         <div>
           <dt className="text-slate-500 text-xs">Timeframe</dt>
@@ -64,9 +73,20 @@ export default function MlWizardSummaryCard({
             <dt className="text-slate-500 text-xs">Simulation period</dt>
             <dd className="text-slate-100">
               {formatMlDateRangeLabel(lockedConfig.dateRange)}
-              {dataPreview?.walk_forward_readiness?.total_bars
-                ? ` (~${dataPreview.walk_forward_readiness.total_bars.toLocaleString()} bars)`
-                : ''}
+            </dd>
+          </div>
+        )}
+        {(lockedBars != null || previewBars != null || lockedMinimum != null) && (
+          <div>
+            <dt className="text-slate-500 text-xs">Bars (Universe / preview)</dt>
+            <dd className="text-slate-100">
+              {lockedBars != null ? lockedBars.toLocaleString() : '—'}
+              {previewBars != null && previewBars !== lockedBars
+                ? ` → ${previewBars.toLocaleString()} in preview`
+                : previewBars != null && lockedBars == null
+                  ? previewBars.toLocaleString()
+                  : ''}
+              {lockedMinimum != null ? ` · min ${lockedMinimum}` : ''}
             </dd>
           </div>
         )}
@@ -74,6 +94,12 @@ export default function MlWizardSummaryCard({
           <div>
             <dt className="text-slate-500 text-xs">Feature mode</dt>
             <dd className="text-slate-100">{featureModeLabel(params.feature_mode)}</dd>
+          </div>
+        )}
+        {params?.include_news_sentiment && (
+          <div>
+            <dt className="text-slate-500 text-xs">News sentiment</dt>
+            <dd className="text-slate-100">Enabled</dd>
           </div>
         )}
         {lockedConfig.modelType && (

@@ -1,4 +1,5 @@
 from datetime import datetime
+import asyncio
 import base64
 from typing import Any, Callable, Optional
 from uuid import UUID
@@ -23,6 +24,7 @@ from features.ml.artifacts import (
 )
 from features.ml.catalog import (
     feature_mode_uses_macro,
+    label_search_horizons,
     list_ml_models,
     minimum_bars_required,
     resolve_fundamental_metrics,
@@ -57,8 +59,13 @@ from features.ml.inference_holdout import (
     split_holdout_indices,
     split_labeled_samples_by_indices,
 )
-from features.ml.label_search import DEFAULT_LABEL_SEARCH_MODEL_TYPES, run_label_grid_search
-from features.ml.labels import build_labels
+from features.ml.label_search import (
+    DEFAULT_LABEL_SEARCH_MODEL_TYPES,
+    evaluate_label_combo,
+    label_search_combos,
+)
+from features.ml.labels import build_labels, build_labels_for_ml_params, build_meta_label_targets
+from features.ml.meta_label_events import build_event_mask
 from features.ml.predictor import predict_with_frozen_model, run_walk_forward_prediction
 from features.ml.simulation_window import (
     build_evaluation_metadata,
@@ -67,8 +74,13 @@ from features.ml.simulation_window import (
     slice_simulation_window,
     walk_forward_simulation_start_index,
 )
-from features.ml.signals import count_signals, predictions_to_signals
-from features.ml.threshold_search import run_threshold_search
+from features.ml.signals import count_signals, meta_gate_signals, predictions_to_signals
+from features.ml.threshold_search import (
+    binary_threshold_combos,
+    evaluate_binary_threshold_combo,
+    evaluate_ternary_threshold_gate,
+    ternary_threshold_gates,
+)
 from features.ml.trainer import train_model
 from features.tiingo.entitlement import is_fundamentals_entitled
 
@@ -192,8 +204,15 @@ async def _load_bars_and_features(
     timeframe: str,
     start: datetime | None,
     end: datetime | None,
+    job_id: UUID | None = None,
+    progress_start: int = 10,
+    progress_end: int = 50,
+    min_bars: int | None = None,
 ) -> tuple[list[dict], list[str], list, list[str], list[str], list[str], list[str], list[str], list[str]]:
     from features.backtesting.bar_context import build_multi_timeframe_context
+    from features.ml.job_checkpoints import checkpoint_ml_job
+
+    await checkpoint_ml_job(session, job_id, progress_start)
 
     required_tfs = collect_required_ml_timeframes(validated_params, timeframe)
     bars_by_tf = await load_multi_timeframe_bars(
@@ -205,12 +224,16 @@ async def _load_bars_and_features(
         decision_timeframe=timeframe,
     )
     bars = bars_by_tf[timeframe]
-    min_bars = minimum_bars_required(validated_params)
-    if len(bars) < min_bars:
+    required_bars = min_bars if min_bars is not None else minimum_bars_required(validated_params)
+    if len(bars) < required_bars:
+        context = "live inference" if min_bars is not None else "ML backtest"
         raise ValueError(
-            f"Insufficient bars ({len(bars)}) for ML backtest. "
-            f"Minimum required: {min_bars}"
+            f"Insufficient bars ({len(bars)}) for {context}. "
+            f"Minimum required: {required_bars}"
         )
+
+    mid_progress = progress_start + (progress_end - progress_start) // 2
+    await checkpoint_ml_job(session, job_id, mid_progress)
 
     bar_context = None
     if len(required_tfs) > 1:
@@ -235,10 +258,12 @@ async def _load_bars_and_features(
         bars,
         validated_params,
         instrument_id=instrument["id"],
+        symbol=instrument["symbol"],
         decision_timeframe=timeframe,
         bar_context=bar_context,
     )
     all_macro_warnings = [*macro_warnings, *context_warnings, *strategy_warnings]
+    await checkpoint_ml_job(session, job_id, progress_end)
     return (
         bars,
         feature_names,
@@ -262,13 +287,22 @@ async def train_ml_model_for_symbol(
     start: datetime | None,
     end: datetime | None,
     name: str | None = None,
+    job_id: UUID | None = None,
 ) -> dict:
-    validate_timeframe(timeframe, "decision timeframe")
-    validated_params = validate_ml_params(model_type, params, timeframe)
+    from features.ml.job_checkpoints import checkpoint_ml_job
 
+    validate_timeframe(timeframe, "decision timeframe")
     instrument = await instrument_dal.get_by_symbol(session, symbol)
     if not instrument:
         raise LookupError(f"Instrument not found: {symbol.upper()}")
+
+    asset_type = str(instrument.get("asset_type") or "equity")
+    validated_params = validate_ml_params(
+        model_type,
+        params,
+        timeframe,
+        asset_type=asset_type,
+    )
 
     _validate_fundamentals_entitlement(instrument["symbol"], validated_params["feature_mode"])
 
@@ -289,14 +323,11 @@ async def train_ml_model_for_symbol(
         timeframe=timeframe,
         start=start,
         end=end,
+        job_id=job_id,
+        progress_start=10,
+        progress_end=50,
     )
-    labels = build_labels(
-        _bars,
-        int(validated_params["label_horizon"]),
-        label_mode=str(validated_params.get("label_mode") or "binary"),
-        label_threshold=float(validated_params.get("label_threshold") or 0.01),
-        label_method=str(validated_params.get("label_method") or "endpoint"),
-    )
+    labels = build_labels_for_ml_params(_bars, validated_params)
     labeled_indices = collect_labeled_bar_indices(feature_rows, labels)
     holdout_bars = resolve_holdout_bars(validated_params)
     train_indices, holdout_indices = split_holdout_indices(labeled_indices, holdout_bars)
@@ -304,6 +335,7 @@ async def train_ml_model_for_symbol(
     if len(x_rows) < 2 or len(set(y_rows)) < 2:
         raise ValueError("Insufficient labeled train samples to train a model")
 
+    await checkpoint_ml_job(session, job_id, 55)
     trained = train_model(model_type, x_rows, y_rows, validated_params)
     predictions = [1 if prob >= 0.5 else 0 for prob in trained.model.predict(x_rows).tolist()]
     holdout_x, holdout_y = split_labeled_samples_by_indices(
@@ -339,6 +371,7 @@ async def train_ml_model_for_symbol(
         f"{instrument['symbol']} {model_type} {validated_params['feature_mode']}"
     )
 
+    await checkpoint_ml_job(session, job_id, 90)
     row = await ml_model_dal.create_model(
         session,
         name=model_name,
@@ -371,6 +404,16 @@ async def delete_saved_ml_model(session: AsyncSession, model_id: UUID) -> None:
     await session.commit()
 
 
+def _meta_sample_mask(
+    event_mask: list[bool],
+    labels: list[Optional[int]],
+) -> list[bool]:
+    return [
+        bool(is_event and label is not None)
+        for is_event, label in zip(event_mask, labels)
+    ]
+
+
 async def _run_walk_forward_backtest(
     *,
     model_type: str,
@@ -383,8 +426,15 @@ async def _run_walk_forward_backtest(
     macro_warnings: list[str],
     fundamental_metrics: list[str],
     fundamental_warnings: list[str],
+    event_mask: list[bool] | None = None,
 ) -> tuple[list[str], dict]:
     label_mode = str(validated_params.get("label_mode") or "binary")
+    sample_mask = None
+    if label_mode == "meta_label":
+        if event_mask is None:
+            event_mask = build_event_mask(bars, validated_params)
+        sample_mask = _meta_sample_mask(event_mask, labels)
+
     walk_forward = run_walk_forward_prediction(
         model_type=model_type,
         params=validated_params,
@@ -393,18 +443,28 @@ async def _run_walk_forward_backtest(
         train_bars=int(validated_params["train_bars"]),
         test_bars=int(validated_params["test_bars"]),
         step_bars=int(validated_params["step_bars"]),
+        sample_mask=sample_mask,
     )
     min_class_probability = validated_params.get("min_class_probability")
     min_class_prob = float(min_class_probability) if min_class_probability is not None else None
-    signals = predictions_to_signals(
-        label_mode=label_mode,
-        probabilities=walk_forward.probabilities,
-        class_predictions=walk_forward.class_predictions,
-        buy_threshold=float(validated_params["buy_threshold"]),
-        sell_threshold=float(validated_params["sell_threshold"]),
-        min_class_probability=min_class_prob,
-        class_probabilities=walk_forward.class_probabilities,
-    )
+    if label_mode == "meta_label":
+        if event_mask is None:
+            event_mask = build_event_mask(bars, validated_params)
+        signals = meta_gate_signals(
+            event_mask,
+            walk_forward.probabilities,
+            float(validated_params.get("meta_gate_threshold", 0.65)),
+        )
+    else:
+        signals = predictions_to_signals(
+            label_mode=label_mode,
+            probabilities=walk_forward.probabilities,
+            class_predictions=walk_forward.class_predictions,
+            buy_threshold=float(validated_params["buy_threshold"]),
+            sell_threshold=float(validated_params["sell_threshold"]),
+            min_class_probability=min_class_prob,
+            class_probabilities=walk_forward.class_probabilities,
+        )
     ml_summary = _build_enriched_ml_summary(
         validated_params=validated_params,
         model_type=model_type,
@@ -532,18 +592,27 @@ async def run_ml_backtest_for_symbol(
     end: datetime | None,
     initial_cash: float,
     commission_bps: float,
+    job_id: UUID | None = None,
 ) -> dict:
+    from features.ml.job_checkpoints import checkpoint_ml_job
+
     validate_timeframe(timeframe, "decision timeframe")
 
     raw_params = dict(params or {})
     model_id_raw = raw_params.pop("model_id", None)
     model_id = UUID(str(model_id_raw)) if model_id_raw else None
 
-    validated_params = validate_ml_params(model_type, raw_params, timeframe)
-
     instrument = await instrument_dal.get_by_symbol(session, symbol)
     if not instrument:
         raise LookupError(f"Instrument not found: {symbol.upper()}")
+
+    asset_type = str(instrument.get("asset_type") or "equity")
+    validated_params = validate_ml_params(
+        model_type,
+        raw_params,
+        timeframe,
+        asset_type=asset_type,
+    )
 
     _validate_fundamentals_entitlement(instrument["symbol"], validated_params["feature_mode"])
 
@@ -590,17 +659,28 @@ async def run_ml_backtest_for_symbol(
             timeframe=timeframe,
             start=start,
             end=end,
+            job_id=job_id,
+            progress_start=10,
+            progress_end=50,
         )
-        labels = build_labels(
-            bars,
-            int(validated_params["label_horizon"]),
-            label_mode=str(validated_params.get("label_mode") or "binary"),
-            label_threshold=float(validated_params.get("label_threshold") or 0.01),
-            label_method=str(validated_params.get("label_method") or "endpoint"),
-        )
+        label_mode = str(validated_params.get("label_mode") or "binary")
+        event_mask: list[bool] | None = None
+        if label_mode == "meta_label":
+            event_mask, labels = build_meta_label_targets(bars, validated_params)
+        else:
+            labels = build_labels(
+                bars,
+                int(validated_params["label_horizon"]),
+                label_mode=label_mode,
+                label_threshold=float(validated_params.get("label_threshold") or 0.01),
+                label_method=str(validated_params.get("label_method") or "endpoint"),
+                params=validated_params,
+            )
 
+        slippage_bps = float(validated_params.get("slippage_bps", 0.0))
         effective_model_type = model_type
         eval_start_index = 0
+        await checkpoint_ml_job(session, job_id, 55)
         if model_id:
             if saved_model is None:
                 raise ValueError(f"Saved model not found: {model_id}")
@@ -637,6 +717,7 @@ async def run_ml_backtest_for_symbol(
                 macro_warnings=macro_warnings,
                 fundamental_metrics=fundamental_metrics,
                 fundamental_warnings=fundamental_warnings,
+                event_mask=event_mask,
             )
             ml_summary = {**ml_summary, "evaluation_scope": "walk_forward_oos"}
 
@@ -685,6 +766,7 @@ async def run_ml_backtest_for_symbol(
             initial_cash,
             commission_bps,
             decision_timeframe=timeframe,
+            slippage_bps=slippage_bps,
         )
         eval_offset = resolve_evaluation_start_index(
             bars_for_sim,
@@ -703,12 +785,14 @@ async def run_ml_backtest_for_symbol(
                 initial_cash,
                 commission_bps,
                 decision_timeframe=timeframe,
+                slippage_bps=slippage_bps,
             )
             benchmark_result = run_buy_and_hold_benchmark(
                 eval_bars,
                 initial_cash,
                 commission_bps,
                 decision_timeframe=timeframe,
+                slippage_bps=slippage_bps,
             )
         else:
             benchmark_result = run_buy_and_hold_benchmark(
@@ -716,6 +800,7 @@ async def run_ml_backtest_for_symbol(
                 initial_cash,
                 commission_bps,
                 decision_timeframe=timeframe,
+                slippage_bps=slippage_bps,
             )
 
         eval_reason = "first_trade" if strategy_result.trades else "simulation_start"
@@ -728,7 +813,13 @@ async def run_ml_backtest_for_symbol(
                 reason=eval_reason,
             ),
         }
-        metrics = compute_metrics(strategy_result, benchmark_result, initial_cash, timeframe)
+        metrics = compute_metrics(
+            strategy_result,
+            benchmark_result,
+            initial_cash,
+            timeframe,
+            asset_type=asset_type,
+        )
         strategy_payload = serialize_simulation(strategy_result)
         benchmark_payload = serialize_simulation(benchmark_result)
 
@@ -736,6 +827,7 @@ async def run_ml_backtest_for_symbol(
         if model_id:
             final_params["model_id"] = str(model_id)
 
+        await checkpoint_ml_job(session, job_id, 95)
         await backtest_dal.finish_run(
             session,
             run["id"],
@@ -873,7 +965,10 @@ async def preview_ml_data_for_symbol(
     start: datetime | None,
     end: datetime | None,
     model_type: str = "ml_logistic",
+    job_id: UUID | None = None,
 ) -> dict:
+    from features.ml.job_checkpoints import checkpoint_ml_job
+
     validate_timeframe(timeframe, "decision timeframe")
     validated_params = validate_ml_params(model_type, params, timeframe)
     instrument = await instrument_dal.get_by_symbol(session, symbol)
@@ -898,6 +993,9 @@ async def preview_ml_data_for_symbol(
         timeframe=timeframe,
         start=start,
         end=end,
+        job_id=job_id,
+        progress_start=10,
+        progress_end=60,
     )
     bars_by_tf = await _load_bars_by_timeframe(
         session,
@@ -907,6 +1005,7 @@ async def preview_ml_data_for_symbol(
         start,
         end,
     )
+    await checkpoint_ml_job(session, job_id, 70)
     preview = await build_data_preview(
         session,
         bars_by_timeframe=bars_by_tf,
@@ -936,10 +1035,15 @@ async def search_ml_labels_for_symbol(
     model_type: str | None = None,
     model_types: list[str] | None = None,
     on_progress: Callable[[int], None] | None = None,
+    job_id: UUID | None = None,
 ) -> list[dict]:
+    from features.ml.job_checkpoints import checkpoint_ml_job, progress_in_band
+
     validate_timeframe(timeframe, "decision timeframe")
     probe_model = model_type or (model_types[0] if model_types else "ml_logistic")
     validated_params = validate_ml_params(probe_model, params, timeframe)
+    if not horizons:
+        horizons = label_search_horizons(int(validated_params["label_horizon"]))
     instrument = await instrument_dal.get_by_symbol(session, symbol)
     if not instrument:
         raise LookupError(f"Instrument not found: {symbol.upper()}")
@@ -956,6 +1060,9 @@ async def search_ml_labels_for_symbol(
         timeframe=timeframe,
         start=start,
         end=end,
+        job_id=job_id,
+        progress_start=10,
+        progress_end=40,
     )
     resolved_models = model_types
     if resolved_models is None and model_type is not None:
@@ -963,23 +1070,39 @@ async def search_ml_labels_for_symbol(
     if resolved_models is None:
         resolved_models = DEFAULT_LABEL_SEARCH_MODEL_TYPES
 
+    combos = label_search_combos(label_mode, horizons, thresholds)
+    label_method = str(validated_params.get("label_method") or "endpoint")
+    train_bars = int(validated_params["train_bars"])
+    test_bars = int(validated_params["test_bars"])
+    step_bars = int(validated_params["step_bars"])
+    total_work = max(len(resolved_models) * len(combos), 1)
+
     combined: list[dict] = []
-    total_models = len(resolved_models)
-    for index, current_model in enumerate(resolved_models):
-        combined.extend(run_label_grid_search(
-            bars=bars,
-            feature_rows=feature_rows,
-            label_mode=label_mode,
-            horizons=horizons,
-            thresholds=thresholds,
-            label_method=str(validated_params.get("label_method") or "endpoint"),
-            train_bars=int(validated_params["train_bars"]),
-            test_bars=int(validated_params["test_bars"]),
-            step_bars=int(validated_params["step_bars"]),
-            model_type=current_model,
-        ))
-        if on_progress is not None:
-            on_progress(int(((index + 1) / max(total_models, 1)) * 100))
+    done = 0
+    for current_model in resolved_models:
+        for horizon, threshold in combos:
+            await checkpoint_ml_job(
+                session,
+                job_id,
+                progress_in_band(40, 95, done, total_work),
+            )
+            result = await asyncio.to_thread(
+                evaluate_label_combo,
+                bars=bars,
+                feature_rows=feature_rows,
+                label_mode=label_mode,
+                horizon=horizon,
+                threshold=threshold,
+                label_method=label_method,
+                train_bars=train_bars,
+                test_bars=test_bars,
+                step_bars=step_bars,
+                model_type=current_model,
+            )
+            combined.append(result)
+            done += 1
+            if on_progress is not None:
+                on_progress(progress_in_band(0, 100, done, total_work))
 
     combined.sort(
         key=lambda row: (
@@ -1003,66 +1126,10 @@ async def search_ml_thresholds_for_symbol(
     end: datetime | None,
     buy_thresholds: list[float],
     sell_thresholds: list[float],
+    job_id: UUID | None = None,
 ) -> list[dict]:
-    validate_timeframe(timeframe, "decision timeframe")
-    validated_params = validate_ml_params(model_type, params, timeframe)
-    instrument = await instrument_dal.get_by_symbol(session, symbol)
-    if not instrument:
-        raise LookupError(f"Instrument not found: {symbol.upper()}")
+    from features.ml.job_checkpoints import checkpoint_ml_job, progress_in_band
 
-    (
-        bars,
-        feature_names,
-        feature_rows,
-        *_rest,
-    ) = await _load_bars_and_features(
-        session,
-        instrument=instrument,
-        validated_params=validated_params,
-        timeframe=timeframe,
-        start=start,
-        end=end,
-    )
-    labels = build_labels(
-        bars,
-        int(validated_params["label_horizon"]),
-        label_mode=str(validated_params.get("label_mode") or "binary"),
-        label_threshold=float(validated_params.get("label_threshold") or 0.01),
-        label_method=str(validated_params.get("label_method") or "endpoint"),
-    )
-    walk_forward = run_walk_forward_prediction(
-        model_type=model_type,
-        params=validated_params,
-        feature_rows=feature_rows,
-        labels=labels,
-        train_bars=int(validated_params["train_bars"]),
-        test_bars=int(validated_params["test_bars"]),
-        step_bars=int(validated_params["step_bars"]),
-    )
-    label_mode = str(validated_params.get("label_mode") or "binary")
-    return run_threshold_search(
-        label_mode=label_mode,
-        probabilities=walk_forward.probabilities,
-        class_predictions=walk_forward.class_predictions,
-        class_probabilities=walk_forward.class_probabilities,
-        y_true=walk_forward.oos_y_true,
-        y_proba=walk_forward.oos_y_proba,
-        buy_thresholds=buy_thresholds,
-        sell_thresholds=sell_thresholds,
-        min_class_probability=validated_params.get("min_class_probability"),
-    )
-
-
-async def search_ml_hyperparameters_for_symbol(
-    session: AsyncSession,
-    *,
-    symbol: str,
-    model_type: str,
-    params: dict | None,
-    timeframe: str,
-    start: datetime | None,
-    end: datetime | None,
-) -> dict:
     validate_timeframe(timeframe, "decision timeframe")
     validated_params = validate_ml_params(model_type, params, timeframe)
     instrument = await instrument_dal.get_by_symbol(session, symbol)
@@ -1081,18 +1148,119 @@ async def search_ml_hyperparameters_for_symbol(
         timeframe=timeframe,
         start=start,
         end=end,
+        job_id=job_id,
+        progress_start=10,
+        progress_end=50,
     )
-    labels = build_labels(
+    labels = build_labels_for_ml_params(bars, validated_params)
+    await checkpoint_ml_job(session, job_id, 55)
+    walk_forward = await asyncio.to_thread(
+        run_walk_forward_prediction,
+        model_type=model_type,
+        params=validated_params,
+        feature_rows=feature_rows,
+        labels=labels,
+        train_bars=int(validated_params["train_bars"]),
+        test_bars=int(validated_params["test_bars"]),
+        step_bars=int(validated_params["step_bars"]),
+    )
+    label_mode = str(validated_params.get("label_mode") or "binary")
+    min_class_probability = validated_params.get("min_class_probability")
+
+    if label_mode == "ternary":
+        gates = ternary_threshold_gates(min_class_probability)
+        total_work = max(len(gates), 1)
+        results: list[dict] = []
+        for done, gate in enumerate(gates):
+            await checkpoint_ml_job(
+                session,
+                job_id,
+                progress_in_band(60, 95, done, total_work),
+            )
+            results.append(
+                await asyncio.to_thread(
+                    evaluate_ternary_threshold_gate,
+                    label_mode=label_mode,
+                    probabilities=walk_forward.probabilities,
+                    class_predictions=walk_forward.class_predictions,
+                    class_probabilities=walk_forward.class_probabilities,
+                    y_true=walk_forward.oos_y_true,
+                    gate=gate,
+                )
+            )
+        return results
+
+    combos = binary_threshold_combos(buy_thresholds, sell_thresholds)
+    total_work = max(len(combos), 1)
+    results = []
+    for done, (buy_threshold, sell_threshold) in enumerate(combos):
+        await checkpoint_ml_job(
+            session,
+            job_id,
+            progress_in_band(60, 95, done, total_work),
+        )
+        results.append(
+            await asyncio.to_thread(
+                evaluate_binary_threshold_combo,
+                label_mode=label_mode,
+                probabilities=walk_forward.probabilities,
+                y_true=walk_forward.oos_y_true,
+                y_proba=walk_forward.oos_y_proba,
+                buy_threshold=buy_threshold,
+                sell_threshold=sell_threshold,
+            )
+        )
+    results.sort(key=lambda row: (row.get("f1_macro") or 0.0, row.get("f1") or 0.0), reverse=True)
+    return results
+
+
+async def search_ml_hyperparameters_for_symbol(
+    session: AsyncSession,
+    *,
+    symbol: str,
+    model_type: str,
+    params: dict | None,
+    timeframe: str,
+    start: datetime | None,
+    end: datetime | None,
+    job_id: UUID | None = None,
+) -> dict:
+    from features.ml.job_checkpoints import checkpoint_ml_job
+
+    validate_timeframe(timeframe, "decision timeframe")
+    validated_params = validate_ml_params(model_type, params, timeframe)
+    instrument = await instrument_dal.get_by_symbol(session, symbol)
+    if not instrument:
+        raise LookupError(f"Instrument not found: {symbol.upper()}")
+
+    (
         bars,
-        int(validated_params["label_horizon"]),
-        label_mode=str(validated_params.get("label_mode") or "binary"),
-        label_threshold=float(validated_params.get("label_threshold") or 0.01),
-        label_method=str(validated_params.get("label_method") or "endpoint"),
+        _feature_names,
+        feature_rows,
+        *_rest,
+    ) = await _load_bars_and_features(
+        session,
+        instrument=instrument,
+        validated_params=validated_params,
+        timeframe=timeframe,
+        start=start,
+        end=end,
+        job_id=job_id,
+        progress_start=10,
+        progress_end=50,
     )
+    labels = build_labels_for_ml_params(bars, validated_params)
     x_rows, y_rows = _collect_labeled_samples(feature_rows, labels)
     if len(x_rows) < 2 or len(set(y_rows)) < 2:
         raise ValueError("Insufficient labeled samples for hyperparameter search")
-    return run_hyperparameter_search(model_type, x_rows, y_rows, validated_params)
+    await checkpoint_ml_job(session, job_id, 55)
+    return await asyncio.to_thread(
+        run_hyperparameter_search,
+        model_type,
+        x_rows,
+        y_rows,
+        validated_params,
+    )
 
 
 async def export_training_data_for_symbol(
@@ -1106,7 +1274,9 @@ async def export_training_data_for_symbol(
     end: datetime | None,
     scope: str,
     sample_size: int = 500,
+    job_id: UUID | None = None,
 ) -> dict:
+    from features.ml.job_checkpoints import checkpoint_ml_job
     from features.ml.training_export import (
         build_training_rows,
         training_rows_to_excel_bytes,
@@ -1132,14 +1302,12 @@ async def export_training_data_for_symbol(
         timeframe=timeframe,
         start=start,
         end=end,
+        job_id=job_id,
+        progress_start=10,
+        progress_end=50,
     )
-    labels = build_labels(
-        bars,
-        int(validated_params["label_horizon"]),
-        label_mode=str(validated_params.get("label_mode") or "binary"),
-        label_threshold=float(validated_params.get("label_threshold") or 0.01),
-        label_method=str(validated_params.get("label_method") or "endpoint"),
-    )
+    labels = build_labels_for_ml_params(bars, validated_params)
+    await checkpoint_ml_job(session, job_id, 60)
     rows, warnings = build_training_rows(
         bars=bars,
         feature_names=feature_names,
@@ -1156,6 +1324,7 @@ async def export_training_data_for_symbol(
     if not rows:
         raise ValueError("No training rows available for export.")
 
+    await checkpoint_ml_job(session, job_id, 90)
     content = training_rows_to_excel_bytes(rows)
     filename = f"{instrument['symbol']}_{timeframe}_{scope}_training_data.xlsx"
     return {
@@ -1183,7 +1352,9 @@ async def export_workbook_for_symbol(
     threshold_search_results: list | None = None,
     compare_results: list | None = None,
     config_snapshot: dict | None = None,
+    job_id: UUID | None = None,
 ) -> dict:
+    from features.ml.job_checkpoints import checkpoint_ml_job
     from features.ml.training_export import build_training_rows
     from features.ml.workbook_export import WorkbookInput, build_workbook_bytes
 
@@ -1207,14 +1378,12 @@ async def export_workbook_for_symbol(
         timeframe=timeframe,
         start=start,
         end=end,
+        job_id=job_id,
+        progress_start=10,
+        progress_end=50,
     )
-    labels = build_labels(
-        bars,
-        int(validated_params["label_horizon"]),
-        label_mode=str(validated_params.get("label_mode") or "binary"),
-        label_threshold=float(validated_params.get("label_threshold") or 0.01),
-        label_method=str(validated_params.get("label_method") or "endpoint"),
-    )
+    labels = build_labels_for_ml_params(bars, validated_params)
+    await checkpoint_ml_job(session, job_id, 60)
     rows, warnings = build_training_rows(
         bars=bars,
         feature_names=feature_names,
@@ -1237,6 +1406,7 @@ async def export_workbook_for_symbol(
         if not run_results:
             warnings.append(f"Backtest run not found: {run_id}")
 
+    await checkpoint_ml_job(session, job_id, 90)
     workbook = WorkbookInput(
         symbol=instrument["symbol"],
         model_type=model_type,

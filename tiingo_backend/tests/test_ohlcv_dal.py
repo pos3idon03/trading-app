@@ -62,6 +62,23 @@ async def test_get_bars_returns_empty_when_no_source():
 
 
 @pytest.mark.asyncio
+async def test_resolve_best_source_prefers_alpaca_for_intraday_when_available():
+    session = AsyncMock()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            ohlcv_dal,
+            "get_coverage",
+            AsyncMock(return_value=[
+                {"source": "tiingo_crypto"},
+                {"source": "alpaca_crypto"},
+            ]),
+        )
+        source = await ohlcv_dal.resolve_best_source(session, 1, "1h")
+
+    assert source == "alpaca_crypto"
+
+
+@pytest.mark.asyncio
 async def test_resolve_best_source_prefers_crypto_for_daily_when_available():
     session = AsyncMock()
     with pytest.MonkeyPatch.context() as mp:

@@ -31,12 +31,15 @@ def _collect_samples(
     indices: list[int],
     feature_rows: list[Optional[list[float]]],
     labels: list[Optional[int]],
+    sample_mask: list[bool] | None = None,
 ) -> tuple[list[list[float]], list[int], list[int]]:
     x_rows: list[list[float]] = []
     y_rows: list[int] = []
     valid_indices: list[int] = []
 
     for index in indices:
+        if sample_mask is not None and not sample_mask[index]:
+            continue
         features = feature_rows[index]
         label = labels[index]
         if features is None or label is None:
@@ -106,6 +109,7 @@ def run_walk_forward_prediction(
     train_bars: int,
     test_bars: int,
     step_bars: int,
+    sample_mask: list[bool] | None = None,
 ) -> WalkForwardResult:
     label_mode = str(params.get("label_mode") or "binary")
     bar_count = len(feature_rows)
@@ -122,11 +126,17 @@ def run_walk_forward_prediction(
     last_trained_model: Any | None = None
 
     for train_indices, test_indices in windows:
-        x_train, y_train, _ = _collect_samples(train_indices, feature_rows, labels)
+        x_train, y_train, _ = _collect_samples(
+            train_indices,
+            feature_rows,
+            labels,
+            sample_mask,
+        )
         x_test, y_test, valid_test_indices = _collect_samples(
             test_indices,
             feature_rows,
             labels,
+            sample_mask,
         )
         min_samples = min_train_samples_for_model(model_type, params)
         if len(x_train) < min_samples or len(set(y_train)) < 2:
