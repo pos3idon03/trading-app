@@ -34,6 +34,7 @@ export interface TradingDeployment {
   model_type?: string | null;
   feature_mode?: string | null;
   last_evaluated_bar_time: string | null;
+  last_evaluated_at: string | null;
   last_signal: string | null;
   last_error: string | null;
   last_blocked_reason?: string | null;
@@ -58,7 +59,10 @@ export interface ProbabilityContributor {
 
 export interface ProbabilityExplainability {
   method: string;
+  base_value?: number | null;
+  predicted_value?: number | null;
   top_contributors: ProbabilityContributor[];
+  ordered_contributors?: ProbabilityContributor[];
   warnings?: string[];
 }
 
@@ -70,12 +74,14 @@ export interface DeploymentOverview {
   status: string;
   model_name: string | null;
   last_error: string | null;
+  last_blocked_reason: string | null;
   last_signal: string | null;
   last_probability: number | null;
   buy_threshold: number | null;
   sell_threshold: number | null;
   last_explainability: ProbabilityExplainability | null;
   last_evaluated_bar_time: string | null;
+  last_evaluated_at: string | null;
   current_price: number | null;
   price_updated_at: string | null;
   round_trip_count: number;
@@ -242,6 +248,7 @@ export interface DeleteDeploymentResponse {
   close_positions: boolean;
   closed_qty: number;
   close_order_id: string | null;
+  close_warning?: string | null;
 }
 
 export interface EvaluateDeploymentResponse {

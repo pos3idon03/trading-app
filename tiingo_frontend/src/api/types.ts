@@ -247,6 +247,24 @@ export interface MacroBriefResponse {
   message?: string | null;
 }
 
+export interface MarketSentimentPoint {
+  recorded_at: string;
+  score: number;
+  article_count: number;
+  bullish_count: number;
+  bearish_count: number;
+  neutral_count: number;
+}
+
+export interface MarketSentimentResponse {
+  window_hours: number;
+  current_score: number;
+  current_article_count: number;
+  points: MarketSentimentPoint[];
+  available: boolean;
+  message?: string | null;
+}
+
 export type MacroCyclePhase =
   | 'Expansion'
   | 'Peak'

@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db import Base
+from models.universe import UniverseDefinition  # noqa: F401 — register FK target table
 
 
 class BacktestRun(Base):
@@ -26,6 +27,8 @@ class BacktestRun(Base):
     equity_curve: Mapped[list | None] = mapped_column(JSONB)
     trades: Mapped[list | None] = mapped_column(JSONB)
     benchmark: Mapped[dict | None] = mapped_column(JSONB)
+    universe_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("universe_definitions.id", ondelete="SET NULL"))
+    symbol_list: Mapped[list | None] = mapped_column(JSONB)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

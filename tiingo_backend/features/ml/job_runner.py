@@ -45,13 +45,19 @@ async def execute_ml_job(
             timeframe=params.get("timeframe", "1d"),
             start=start,
             end=end,
-            model_type=params.get("model_type", "ml_logistic"),
+            model_type=params.get("model_type", "ml_gradient_boosting"),
             job_id=job_id,
         )
         await checkpoint_ml_job(session, job_id, 100)
         return preview
 
     if job_type == "ml_label_search":
+        raw_configs = params.get("model_configs")
+        model_configs = (
+            [entry for entry in raw_configs]
+            if raw_configs
+            else None
+        )
         results = await search_ml_labels_for_symbol(
             session,
             symbol=params["symbol"],
@@ -64,6 +70,7 @@ async def execute_ml_job(
             thresholds=params["thresholds"],
             model_type=params.get("model_type"),
             model_types=params.get("model_types"),
+            model_configs=model_configs,
             job_id=job_id,
         )
         await checkpoint_ml_job(session, job_id, 100)
@@ -73,7 +80,7 @@ async def execute_ml_job(
         payload = await export_training_data_for_symbol(
             session,
             symbol=params["symbol"],
-            model_type=params.get("model_type", "ml_logistic"),
+            model_type=params.get("model_type", "ml_gradient_boosting"),
             params=params.get("params"),
             timeframe=params.get("timeframe", "1d"),
             start=start,
@@ -90,7 +97,7 @@ async def execute_ml_job(
         payload = await export_workbook_for_symbol(
             session,
             symbol=params["symbol"],
-            model_type=params.get("model_type", "ml_logistic"),
+            model_type=params.get("model_type", "ml_gradient_boosting"),
             params=params.get("params"),
             timeframe=params.get("timeframe", "1d"),
             start=start,
@@ -173,6 +180,8 @@ async def execute_ml_job(
             initial_cash=float(params.get("initial_cash", 10_000)),
             commission_bps=float(params.get("commission_bps", 0)),
             job_id=job_id,
+            symbols=params.get("symbols"),
+            universe_id=params.get("universe_id"),
         )
         await checkpoint_ml_job(session, job_id, 100)
         return {

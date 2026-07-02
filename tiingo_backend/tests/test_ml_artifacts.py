@@ -8,9 +8,12 @@ from features.ml.artifacts import (
     align_feature_matrix_to_schema,
     build_feature_schema,
     load_model_artifact,
+    load_model_bundle,
     save_model_artifact,
     validate_feature_schema,
 )
+from features.ml.feature_preprocessor import fit_feature_preprocessor
+from features.ml.price_features import FEATURE_NAMES
 from features.ml.trainer import train_model
 
 
@@ -46,6 +49,28 @@ def test_save_and_load_scaled_pipeline_round_trip(artifact_dir):
     loaded = load_model_artifact(path)
 
     assert loaded.predict([[0.01, 50.0]]).tolist() == trained.model.predict([[0.01, 50.0]]).tolist()
+
+def test_save_and_load_bundle_with_preprocessor_round_trip(artifact_dir):
+    rows = [[float(value) for value in range(len(FEATURE_NAMES))] for _ in range(20)]
+    labels = [index % 2 for index in range(20)]
+    preprocessor = fit_feature_preprocessor(
+        rows,
+        labels,
+        list(FEATURE_NAMES),
+        {"correlation_prune_threshold": 0.0},
+    )
+    model = LogisticRegression(max_iter=200, random_state=42)
+    transformed = preprocessor.transform(rows)
+    model.fit(transformed, labels)
+    model_id = uuid4()
+
+    path = save_model_artifact(model, model_id, preprocessor=preprocessor)
+    loaded_model, loaded_preprocessor = load_model_bundle(path)
+
+    sample = preprocessor.transform([rows[0]])[0]
+    assert loaded_model.predict([sample]).tolist() == model.predict([sample]).tolist()
+    assert loaded_preprocessor.output_feature_names == preprocessor.output_feature_names
+    assert load_model_artifact(path).predict([sample]).tolist() == model.predict([sample]).tolist()
 
 
 def test_validate_feature_schema_rejects_mismatch():

@@ -11,6 +11,7 @@ from features.sentiment.daily_aggregator import (
     rollup_input_from_article,
 )
 from features.sentiment.model_loader import get_scorer
+from features.sentiment.market_sentiment import record_market_sentiment_snapshot
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -160,12 +161,14 @@ async def run_news_sentiment(
         model_version=model_version,
     )
     if pending == 0:
+        snapshot = await record_market_sentiment_snapshot(session)
         return {
             "scored": 0,
             "failed": 0,
             "pending": 0,
             "model_name": model_name,
             "model_version": model_version,
+            "market_sentiment": snapshot,
         }
 
     if not backfill:
@@ -197,12 +200,14 @@ async def run_news_sentiment(
         pending=remaining,
         backfill=backfill,
     )
+    snapshot = await record_market_sentiment_snapshot(session)
     return {
         "scored": scored,
         "failed": failed,
         "pending": remaining,
         "model_name": model_name,
         "model_version": model_version,
+        "market_sentiment": snapshot,
     }
 
 

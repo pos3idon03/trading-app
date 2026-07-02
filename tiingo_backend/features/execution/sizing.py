@@ -8,3 +8,7 @@ def compute_buy_budget(
     allocation_budget = buying_power * (allocation_pct / 100.0)
     risk_budget = account_equity * (max_position_pct / 100.0)
     return min(allocation_budget, risk_budget)
+
+
+def round_buy_qty(qty: float, *, decimals: int = 2) -> float:
+    return round(qty, decimals)

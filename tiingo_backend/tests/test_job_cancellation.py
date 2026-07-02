@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -45,3 +46,22 @@ async def test_execute_job_handles_cancellation_during_dispatch():
         await job_runner.execute_job(job_id, "ml_data_preview", {})
 
     finish_job.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_job_reraises_arq_abort():
+    job_id = uuid4()
+
+    with patch.object(
+        job_runner,
+        "_job_was_cancelled",
+        new=AsyncMock(return_value=False),
+    ), patch(
+        "features.ingestion.job_runner.job_dal.start_job",
+        new=AsyncMock(),
+    ), patch(
+        "features.ingestion.job_runner._dispatch",
+        new=AsyncMock(side_effect=asyncio.CancelledError()),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await job_runner.execute_job(job_id, "ml_data_preview", {})

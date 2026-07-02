@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import { marketDataApi } from '../../api/endpoints';
 import type { AssetOverviewRow, MacroOverviewRow } from '../../api/types';
 import MacroBriefPanel from '../../components/dashboard/MacroBriefPanel';
+import MarketSentimentPanel from '../../components/dashboard/MarketSentimentPanel';
 import DataTable, {
   formatMaBadge,
   formatPctCell,
@@ -380,6 +381,7 @@ export default function OverviewPage() {
           Watchlist summary tables for stocks, ETFs, crypto, and macro indicators.
         </p>
       </div>
+      <MarketSentimentPanel />
       <AssetOverviewSection />
       <MacroOverviewSection />
     </div>

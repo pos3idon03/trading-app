@@ -80,6 +80,39 @@ async def test_delete_deployment_closes_positions_when_requested(monkeypatch):
     assert result["close_positions"] is True
     assert result["closed_qty"] == 1.25
     assert result["close_order_id"] == close_order_id
+    assert result["close_warning"] is None
+
+
+@pytest.mark.asyncio
+async def test_delete_deployment_propagates_close_warning(monkeypatch):
+    deployment_id = uuid4()
+    deployment = {"id": deployment_id, "symbol": "BTC-USD", "status": "stopped"}
+    session = AsyncMock()
+    monkeypatch.setattr("features.execution.orchestrator._ensure_trading_enabled", lambda: None)
+    monkeypatch.setattr(
+        "features.execution.orchestrator.trading_deployment_dal.get_deployment",
+        AsyncMock(return_value=deployment),
+    )
+    monkeypatch.setattr(
+        "features.execution.orchestrator.close_deployment_position",
+        AsyncMock(
+            return_value={
+                "closed": False,
+                "qty": 0.0,
+                "order_id": None,
+                "close_warning": "No BTC-USD position in Alpaca; deployment removed without selling.",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "features.execution.orchestrator.trading_deployment_dal.delete_deployment",
+        AsyncMock(return_value=True),
+    )
+
+    result = await delete_deployment(session, deployment_id, close_positions=True)
+    assert result["close_warning"] == (
+        "No BTC-USD position in Alpaca; deployment removed without selling."
+    )
 
 
 @pytest.mark.asyncio

@@ -92,3 +92,30 @@ export function maxContributionMagnitude(
   if (!contributors.length) return 0;
   return Math.max(...contributors.map((row) => Math.abs(row.contribution)));
 }
+
+export function resolveOrderedContributors(
+  explainability: ProbabilityExplainability,
+): ProbabilityExplainability['top_contributors'] {
+  if (explainability.ordered_contributors?.length) {
+    return explainability.ordered_contributors;
+  }
+  return explainability.top_contributors;
+}
+
+export function buildDecisionPlotSteps(
+  explainability: ProbabilityExplainability,
+): Array<{ feature: string; cumulative: number }> {
+  const base = explainability.base_value ?? 0;
+  const ordered = [...resolveOrderedContributors(explainability)].sort(
+    (left, right) => Math.abs(right.contribution) - Math.abs(left.contribution),
+  );
+  let cumulative = base;
+  const steps: Array<{ feature: string; cumulative: number }> = [
+    { feature: 'base', cumulative: base },
+  ];
+  for (const row of ordered) {
+    cumulative += row.contribution;
+    steps.push({ feature: row.feature, cumulative });
+  }
+  return steps;
+}

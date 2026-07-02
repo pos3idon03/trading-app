@@ -4,6 +4,8 @@ import {
   formatOverviewPrice,
   formatOverviewProfit,
   mergeOverviewWithActivity,
+  overviewLastEvaluated,
+  overviewLatestUpdate,
   overviewMetricRows,
 } from '../utils/tradingOverview';
 import {
@@ -24,8 +26,11 @@ const baseDeployment: DeploymentOverview = {
   sell_threshold: 0.45,
   last_explainability: null,
   last_evaluated_bar_time: '2026-05-27T22:55:00Z',
+  last_evaluated_at: '2026-05-27T22:56:00Z',
+  last_blocked_reason: null,
   current_price: 190.25,
   price_updated_at: null,
+  ohlcv_latest_bar_time: '2026-05-27T22:55:00Z',
   round_trip_count: 2,
   open_position_count: 0,
   order_count: 4,
@@ -36,7 +41,6 @@ const baseDeployment: DeploymentOverview = {
   position_side: 'flat',
   update_status: 'current',
   expected_latest_bar_time: null,
-  ohlcv_latest_bar_time: null,
   missed_slot_count: 0,
 };
 
@@ -49,7 +53,7 @@ describe('tradingOverview utils', () => {
 
   it('builds metric rows for a deployment card', () => {
     const rows = overviewMetricRows(baseDeployment);
-    expect(rows).toHaveLength(9);
+    expect(rows).toHaveLength(10);
     expect(rows.find((row) => row.label === 'Signal')?.value).toBe('HOLD');
     expect(rows.find((row) => row.label === PROBABILITY_UP_LABEL)?.value).toBe('45.0%');
     expect(rows.find((row) => row.label === PROBABILITY_UP_LABEL)?.sublabel).toBe(
@@ -59,6 +63,21 @@ describe('tradingOverview utils', () => {
     const latestUpdate = rows.find((row) => row.label === 'Latest update');
     expect(latestUpdate?.value).not.toBe('—');
     expect(latestUpdate?.sublabel).toBeTruthy();
+    const lastEvaluated = rows.find((row) => row.label === 'Last evaluated');
+    expect(lastEvaluated?.value).not.toBe('—');
+  });
+
+  it('uses ohlcv time for latest update and evaluation time for last evaluated', () => {
+    const row = {
+      ...baseDeployment,
+      ohlcv_latest_bar_time: '2026-05-28T19:00:00Z',
+      last_evaluated_bar_time: '2026-05-28T18:00:00Z',
+      last_evaluated_at: '2026-05-28T18:05:00Z',
+      price_updated_at: '2026-05-28T17:00:00Z',
+    };
+    expect(overviewLatestUpdate(row).value).toContain('2026');
+    expect(overviewLastEvaluated(row).value).toContain('2026');
+    expect(overviewLatestUpdate(row).value).not.toBe(overviewLastEvaluated(row).value);
   });
 
   it('marks stale deployments in metric rows context', () => {
@@ -100,5 +119,6 @@ describe('tradingOverview utils', () => {
     expect(merged[0].sell_threshold).toBe(0.4);
     expect(merged[0].last_explainability?.method).toBe('shap_tree');
     expect(merged[0].last_evaluated_bar_time).toBe('2026-05-28T10:00:00Z');
+    expect(merged[0].last_evaluated_at).toBe('2026-05-28T10:00:05Z');
   });
 });

@@ -23,6 +23,8 @@ from dtos.ml_backtest_dto import (
     MlTrainingExportRequest,
     MlWorkbookExportRequest,
 )
+from dtos.rl_backtest_dto import MlUniverseRunRequest, UniverseListResponse
+from dal import universe_dal
 from features.ml.orchestrator import (
     delete_saved_ml_model,
     get_ml_backtest_results,
@@ -30,6 +32,7 @@ from features.ml.orchestrator import (
     get_saved_ml_model,
     list_saved_ml_models,
 )
+from features.ml.universe_orchestrator import run_universe_ml_backtest
 from features.ml.saved_model_metadata import extract_saved_model_metadata
 from features.worker.tasks import create_and_enqueue_job
 
@@ -205,6 +208,58 @@ async def run_ml_backtest(
         body.model_dump(mode="json"),
     )
     return MlJobAcceptedResponse(job_id=job["id"])
+
+
+@router.get("/universes", response_model=UniverseListResponse)
+async def list_universes(
+    session: AsyncSession = Depends(get_db),
+) -> UniverseListResponse:
+    rows = await universe_dal.list_universes(session)
+    from dtos.rl_backtest_dto import UniverseDefinitionDTO
+
+    return UniverseListResponse(
+        universes=[
+            UniverseDefinitionDTO(
+                id=r["id"],
+                name=r["name"],
+                source=r.get("source"),
+                description=r.get("description"),
+            )
+            for r in rows
+        ]
+    )
+
+
+@router.post("/universe/run")
+async def run_universe_backtest(
+    body: MlUniverseRunRequest,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    try:
+        result = await run_universe_ml_backtest(
+            session,
+            universe_id=body.universe_id,
+            symbols=body.symbols or None,
+            signals_by_symbol=body.signals_by_symbol,
+            timeframe=body.timeframe,
+            start=body.start,
+            end=body.end,
+            initial_cash=body.initial_cash,
+            commission_bps=body.commission_bps,
+            slippage_bps=body.slippage_bps,
+            sizing_params=body.sizing_params,
+        )
+        sim = result["simulation"]
+        return {
+            "symbols": result["symbols"],
+            "final_equity": sim.final_equity,
+            "trades": [t.__dict__ for t in sim.trades],
+            "equity_curve": [p.__dict__ for p in sim.equity_curve],
+            "survivorship_warnings": result["survivorship_warnings"],
+            "target_weights": result["target_weights"],
+        }
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{run_id}/results", response_model=MlBacktestResultsResponse)

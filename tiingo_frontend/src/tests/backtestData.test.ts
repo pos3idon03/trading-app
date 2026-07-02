@@ -64,6 +64,10 @@ describe('backtestData utils', () => {
     expect(data[0].benchmark).toBe(10000);
   });
 
+  it('treats non-array equity inputs as empty series', () => {
+    expect(buildEquityChartData(undefined as never, [])).toEqual([]);
+  });
+
   it('indexes equity curves to 100 at each series first point', () => {
     const indexed = buildIndexedEquityChartData(
       [

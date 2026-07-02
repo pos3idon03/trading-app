@@ -63,12 +63,13 @@ export default function DeploymentOverviewCard({
             <span className={`text-xs font-medium ${deploymentStatusClass(deployment.status)}`}>
               {formatDeploymentStatus(deployment.status)}
             </span>
-            {deployment.status === 'error' && deployment.last_error && (
+            {deployment.status === 'error' &&
+              (deployment.last_error ?? deployment.last_blocked_reason) && (
               <span
                 className="max-w-[12rem] text-right text-xs text-red-400/90 line-clamp-2"
-                title={deployment.last_error}
+                title={deployment.last_error ?? deployment.last_blocked_reason ?? undefined}
               >
-                {deployment.last_error}
+                {deployment.last_error ?? deployment.last_blocked_reason}
               </span>
             )}
           </div>

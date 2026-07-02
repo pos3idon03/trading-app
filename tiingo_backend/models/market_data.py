@@ -97,6 +97,23 @@ class NewsSentimentDaily(Base):
     bearish_pct: Mapped[float] = mapped_column(Double, nullable=False, default=0)
 
 
+class MarketSentimentSnapshot(Base):
+    __tablename__ = "market_sentiment_snapshots"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default="now()",
+    )
+    window_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    score: Mapped[float] = mapped_column(Double, nullable=False)
+    article_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bullish_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    bearish_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    neutral_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class NewsSentimentEnrichment(Base):
     __tablename__ = "news_sentiment_enrichment"
 

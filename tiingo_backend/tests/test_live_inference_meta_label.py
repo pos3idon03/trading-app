@@ -67,8 +67,8 @@ async def test_live_inference_uses_meta_gate_signals():
             return_value=(bars, ["f1"], feature_rows, [], [], [], [], [], []),
         ),
     ), patch(
-        "features.execution.inference_runner.load_model_artifact",
-        return_value=mock_model,
+        "features.execution.inference_runner.load_model_bundle",
+        return_value=(mock_model, None),
     ), patch(
         "features.execution.inference_runner.predict_with_frozen_model",
         return_value=(probabilities, [None] * len(bars), [None] * len(bars)),

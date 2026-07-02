@@ -1,10 +1,13 @@
+import { useState } from 'react';
 import type { ProbabilityExplainability } from '../../api/executionTypes';
 import {
   formatContribution,
   formatFeatureValue,
   hasExplainability,
   maxContributionMagnitude,
+  resolveOrderedContributors,
 } from '../../utils/probabilityExplainability';
+import ProbabilityDecisionPlot from './ProbabilityDecisionPlot';
 
 interface ProbabilityExplainabilityPanelProps {
   explainability: ProbabilityExplainability | null | undefined;
@@ -15,6 +18,8 @@ export default function ProbabilityExplainabilityPanel({
   explainability,
   compact = false,
 }: ProbabilityExplainabilityPanelProps) {
+  const [showAllDrivers, setShowAllDrivers] = useState(false);
+
   if (!explainability) {
     return null;
   }
@@ -26,12 +31,17 @@ export default function ProbabilityExplainabilityPanel({
     );
   }
 
-  const scale = maxContributionMagnitude(explainability.top_contributors);
+  const contributors = showAllDrivers
+    ? resolveOrderedContributors(explainability)
+    : explainability.top_contributors;
+  const scale = maxContributionMagnitude(contributors);
+  const hasExtended = (explainability.ordered_contributors?.length ?? 0) > topNCount(explainability);
 
   return (
     <div className={`space-y-3 ${compact ? 'text-xs' : 'text-sm'}`}>
+      <ProbabilityDecisionPlot explainability={explainability} compact={compact} />
       <div className="space-y-2">
-        {explainability.top_contributors.map((row) => {
+        {contributors.map((row) => {
           const positive = row.contribution >= 0;
           const widthPct =
             scale > 0 ? Math.max(4, (Math.abs(row.contribution) / scale) * 100) : 0;
@@ -62,10 +72,23 @@ export default function ProbabilityExplainabilityPanel({
           );
         })}
       </div>
+      {hasExtended && (
+        <button
+          type="button"
+          className="text-[11px] text-sky-400 hover:text-sky-300"
+          onClick={() => setShowAllDrivers((open) => !open)}
+        >
+          {showAllDrivers ? 'Show top drivers' : 'Show all drivers'}
+        </button>
+      )}
       <p className="text-[11px] leading-relaxed text-slate-500">
         Contributions show what pushed Probability (up) on this bar; signal still depends on
         buy/sell thresholds.
       </p>
     </div>
   );
+}
+
+function topNCount(explainability: ProbabilityExplainability): number {
+  return explainability.top_contributors.length;
 }

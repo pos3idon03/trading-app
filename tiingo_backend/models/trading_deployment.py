@@ -24,6 +24,7 @@ class TradingDeployment(Base):
     allocation_pct: Mapped[float] = mapped_column(Numeric(8, 4), nullable=False, default=100)
     hyperparams_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
     last_evaluated_bar_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_signal: Mapped[str | None] = mapped_column(String)
     last_error: Mapped[str | None] = mapped_column(Text)
     last_blocked_reason: Mapped[str | None] = mapped_column(Text)

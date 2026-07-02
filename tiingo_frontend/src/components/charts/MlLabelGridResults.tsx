@@ -41,6 +41,7 @@ export default function MlLabelGridResults({
           <thead className="bg-surface-900 text-slate-400">
             <tr>
               <th className="px-3 py-2 text-left">Model</th>
+              <th className="px-3 py-2 text-left">Label mode</th>
               <th className="px-3 py-2 text-left">Label</th>
               <th className="px-3 py-2 text-right">Horizon</th>
               <th className="px-3 py-2 text-right">Threshold</th>
@@ -57,6 +58,7 @@ export default function MlLabelGridResults({
                 <td className="px-3 py-2 text-slate-200">
                   {row.model_label ?? row.model_type ?? '—'}
                 </td>
+                <td className="px-3 py-2 text-slate-400">{row.label_mode}</td>
                 <td className="px-3 py-2 text-slate-300">{row.label_key}</td>
                 <td className="px-3 py-2 text-right text-slate-300">{row.label_horizon}</td>
                 <td className="px-3 py-2 text-right text-slate-300">

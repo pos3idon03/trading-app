@@ -15,6 +15,7 @@ from utils.logging import get_logger
 logger = get_logger(__name__)
 
 DEFAULT_GRACE_MINUTES = 10
+_OHLCV_TRACKED_STATUSES = frozenset({"active", "error"})
 
 
 def find_missed_slots(
@@ -109,7 +110,7 @@ async def build_deployment_readiness(
     asset_type: str = "stock",
     grace_minutes: int = DEFAULT_GRACE_MINUTES,
 ) -> dict:
-    if deployment.get("status") != "active":
+    if deployment.get("status") not in _OHLCV_TRACKED_STATUSES:
         return {
             "update_status": "unknown",
             "expected_latest_bar_time": None,
@@ -123,12 +124,26 @@ async def build_deployment_readiness(
         grace_minutes=grace_minutes,
         asset_type=asset_type,
     )
-    expected_bar = _latest_expected_bar(
-        deployment,
-        as_of,
-        grace_minutes=grace_minutes,
-        asset_type=asset_type,
-    )
+    if deployment.get("status") == "error":
+        end = as_of.astimezone(timezone.utc) - timedelta(minutes=grace_minutes)
+        boundaries = expected_boundaries(
+            deployment["timeframe"],
+            end - timedelta(days=7),
+            end,
+            asset_type=asset_type,
+        )
+        expected_bar = (
+            bar_time_for_evaluation_slot(boundaries[-1], deployment["timeframe"])
+            if boundaries
+            else None
+        )
+    else:
+        expected_bar = _latest_expected_bar(
+            deployment,
+            as_of,
+            grace_minutes=grace_minutes,
+            asset_type=asset_type,
+        )
     ohlcv_latest = await check_ohlcv_freshness(
         session,
         symbol=deployment["symbol"],
@@ -141,9 +156,10 @@ async def build_deployment_readiness(
     if not stale and expected_bar and ohlcv_latest:
         stale = ohlcv_latest.astimezone(timezone.utc) < expected_bar
 
-    last_evaluated = deployment.get("last_evaluated_bar_time")
-    if not stale and expected_bar and last_evaluated:
-        stale = last_evaluated.astimezone(timezone.utc) < expected_bar
+    if deployment.get("status") == "active":
+        last_evaluated = deployment.get("last_evaluated_bar_time")
+        if not stale and expected_bar and last_evaluated:
+            stale = last_evaluated.astimezone(timezone.utc) < expected_bar
 
     return {
         "update_status": "stale" if stale else "current",

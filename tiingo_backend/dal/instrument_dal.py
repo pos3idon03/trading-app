@@ -119,6 +119,8 @@ def _to_dict(row: Instrument) -> dict:
         "exchange": row.exchange,
         "currency": row.currency,
         "is_active": row.is_active,
+        "delisted_at": row.delisted_at,
+        "delist_reason": row.delist_reason,
         "metadata": row.metadata_,
     }
 
@@ -133,5 +135,7 @@ def _row_mapping_to_dict(mapping: dict) -> dict:
         "exchange": mapping["exchange"],
         "currency": mapping["currency"],
         "is_active": mapping["is_active"],
+        "delisted_at": mapping.get("delisted_at"),
+        "delist_reason": mapping.get("delist_reason"),
         "metadata": mapping["metadata"],
     }

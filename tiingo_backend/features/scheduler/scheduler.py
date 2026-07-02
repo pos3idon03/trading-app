@@ -65,6 +65,12 @@ async def _fundamentals_job() -> None:
 
 
 async def _fred_seed_job() -> None:
+    from features.fred.macro_seed_schedule import should_enqueue_macro_seed_catalog
+
+    async with AsyncSessionLocal() as session:
+        if not await should_enqueue_macro_seed_catalog(session):
+            logger.info("macro_seed_catalog_skipped", reason="recent_or_active")
+            return
     await _enqueue_scheduled_job("macro_seed_catalog", {})
 
 
@@ -114,7 +120,14 @@ def start_scheduler() -> None:
             replace_existing=True,
         )
     sched.add_job(_fundamentals_job, CronTrigger(hour=6, minute=0), id="fundamentals_ingest", replace_existing=True)
-    sched.add_job(_fred_seed_job, CronTrigger(hour=6, minute=30), id="fred_seed_catalog", replace_existing=True)
+    sched.add_job(
+        _fred_seed_job,
+        CronTrigger(hour=6, minute=30),
+        id="fred_seed_catalog",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
     sched.add_job(_fred_job, CronTrigger(hour=7, minute=0), id="fred_refresh", replace_existing=True)
     sched.start()
     logger.info("tiingo_scheduler_started")

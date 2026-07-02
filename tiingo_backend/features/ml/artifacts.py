@@ -61,19 +61,39 @@ def _artifact_dir() -> Path:
     return path
 
 
-def save_model_artifact(model: Any, model_id: UUID) -> str:
+def unpack_model_artifact(loaded: Any) -> tuple[Any, Any | None]:
+    if isinstance(loaded, dict) and "model" in loaded:
+        return loaded["model"], loaded.get("preprocessor")
+    return loaded, None
+
+
+def save_model_artifact(
+    model: Any,
+    model_id: UUID,
+    *,
+    preprocessor: Any | None = None,
+) -> str:
     directory = _artifact_dir()
     filename = f"{model_id}.joblib"
     full_path = directory / filename
-    joblib.dump(model, full_path)
+    payload: Any = model
+    if preprocessor is not None:
+        payload = {"model": model, "preprocessor": preprocessor}
+    joblib.dump(payload, full_path)
     return str(full_path)
 
 
 def load_model_artifact(artifact_path: str) -> Any:
+    model, _ = load_model_bundle(artifact_path)
+    return model
+
+
+def load_model_bundle(artifact_path: str) -> tuple[Any, Any | None]:
     path = Path(artifact_path)
     if not path.is_file():
         raise FileNotFoundError(f"Model artifact not found: {artifact_path}")
-    return joblib.load(path)
+    loaded = joblib.load(path)
+    return unpack_model_artifact(loaded)
 
 
 def delete_model_artifact(artifact_path: str | None) -> None:

@@ -190,3 +190,24 @@ def _win_rate(trades: list[TradeRecord]) -> float:
 
 def serialize_trades(trades: list[TradeRecord]) -> list[dict]:
     return [asdict(trade) for trade in trades]
+
+
+def compute_backtest_metrics(
+    strategy: SimulationResult,
+    bars: list[dict],
+    *,
+    initial_cash: float = 10_000.0,
+    commission_bps: float = 5.0,
+    decision_timeframe: str = "1d",
+    slippage_bps: float = 0.0,
+) -> dict:
+    from features.backtesting.engine import run_buy_and_hold_benchmark
+
+    benchmark = run_buy_and_hold_benchmark(
+        bars,
+        initial_cash,
+        commission_bps,
+        decision_timeframe=decision_timeframe,
+        slippage_bps=slippage_bps,
+    )
+    return compute_metrics(strategy, benchmark, initial_cash, decision_timeframe)

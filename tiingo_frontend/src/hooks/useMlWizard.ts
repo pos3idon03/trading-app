@@ -21,6 +21,7 @@ import {
   wizardStepIndex,
 } from '../utils/mlWizardState';
 import { pickWalkForwardParams } from '../utils/mlBacktestConfig';
+import type { LabelSearchGateContext } from '../utils/mlLabelSearchMatrix';
 
 interface UseMlWizardOptions {
   symbol: string;
@@ -34,6 +35,7 @@ interface UseMlWizardOptions {
   commissionBps: number;
   runMode: string;
   availableBarCount?: number | null;
+  labelSearchGate?: LabelSearchGateContext;
 }
 
 export function useMlWizard(options: UseMlWizardOptions) {
@@ -49,6 +51,7 @@ export function useMlWizard(options: UseMlWizardOptions) {
     commissionBps,
     runMode,
     availableBarCount,
+    labelSearchGate,
   } = options;
 
   const [wizardStep, setWizardStep] = useState<MlWizardStep>('universe');
@@ -65,8 +68,17 @@ export function useMlWizard(options: UseMlWizardOptions) {
         symbol,
         artifacts,
         availableBarCount,
+        labelSearchGate,
       ),
-    [wizardStep, mlParams, selectedModel, symbol, artifacts, availableBarCount],
+    [
+      wizardStep,
+      mlParams,
+      selectedModel,
+      symbol,
+      artifacts,
+      availableBarCount,
+      labelSearchGate,
+    ],
   );
 
   const invalidateFromStep = useCallback((step: MlWizardStep) => {
@@ -122,6 +134,7 @@ export function useMlWizard(options: UseMlWizardOptions) {
       commissionBps,
       configOverride,
       availableBarCount,
+      labelSearchGate,
     }),
     [
       wizardStep,
@@ -137,6 +150,7 @@ export function useMlWizard(options: UseMlWizardOptions) {
       initialCash,
       commissionBps,
       availableBarCount,
+      labelSearchGate,
     ],
   );
 

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
-from features.execution.sizing import compute_buy_budget
+from features.execution.order_qty import resolve_sell_qty
+from features.execution.sizing import compute_buy_budget, round_buy_qty
 
 
 @dataclass
@@ -25,6 +26,9 @@ def signal_to_order_intent(
     allocation_pct: float,
     max_position_pct: float,
     last_price: float | None,
+    asset_type: str = "stock",
+    position_qty: float | None = None,
+    qty_available: float | None = None,
 ) -> OrderIntent | None:
     side = resolve_deployment_side(deployment_net_qty)
     normalized = signal.lower()
@@ -45,13 +49,18 @@ def signal_to_order_intent(
             allocation_pct=allocation_pct,
             max_position_pct=max_position_pct,
         )
-        qty = budget / last_price
+        qty = round_buy_qty(budget / last_price)
         if qty <= 0:
             return None
         return OrderIntent(side="buy", qty=qty, reason="buy_signal_flat")
 
     if normalized == "sell":
-        qty = deployment_net_qty
+        qty = resolve_sell_qty(
+            deployment_net_qty,
+            asset_type=asset_type,
+            position_qty=position_qty,
+            qty_available=qty_available,
+        )
         if qty <= 0:
             return None
         return OrderIntent(side="sell", qty=qty, reason="sell_signal_long")

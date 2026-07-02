@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import models  # noqa: F401 — register FK target tables before BacktestRun mapper config
 from models.backtest import BacktestRun
 
 
@@ -19,6 +20,8 @@ async def create_run(
     end_date: datetime | None,
     initial_cash: float,
     commission_bps: float,
+    universe_id: int | None = None,
+    symbol_list: list[str] | None = None,
 ) -> dict:
     run_id = uuid4()
     now = datetime.now(timezone.utc)
@@ -33,6 +36,8 @@ async def create_run(
         end_date=end_date,
         initial_cash=initial_cash,
         commission_bps=commission_bps,
+        universe_id=universe_id,
+        symbol_list=symbol_list,
         status="running",
         created_at=now,
     )
@@ -85,6 +90,8 @@ def _to_dict(row: BacktestRun) -> dict:
         "end_date": row.end_date,
         "initial_cash": float(row.initial_cash),
         "commission_bps": float(row.commission_bps),
+        "universe_id": row.universe_id,
+        "symbol_list": row.symbol_list,
         "status": row.status,
         "metrics": row.metrics,
         "equity_curve": row.equity_curve,

@@ -12,6 +12,7 @@ import {
   validateMlParams,
   validateWalkForwardParams,
 } from './mlBacktestConfig';
+import type { LabelSearchGateContext } from './mlLabelSearchMatrix';
 
 export const WIZARD_STEP_ORDER: MlWizardStep[] = [
   'universe',
@@ -84,6 +85,7 @@ export interface CompleteStepInput {
   commissionBps: number;
   configOverride?: CompleteStepConfigOverride;
   availableBarCount?: number | null;
+  labelSearchGate?: LabelSearchGateContext;
 }
 
 export function buildWizardStepSnapshot(
@@ -156,6 +158,7 @@ export function resolveCompleteStepAdvance(
     input.symbol,
     mergedArtifacts,
     input.availableBarCount,
+    input.labelSearchGate,
   );
   if (error) {
     return { error };
@@ -213,6 +216,7 @@ export function validateWizardStepGate(
   symbol: string,
   artifacts: MlWizardArtifacts,
   availableBarCount?: number | null,
+  labelSearchGate?: LabelSearchGateContext,
 ): string | null {
   if (!symbol) {
     return 'Select a symbol first.';
@@ -230,11 +234,14 @@ export function validateWizardStepGate(
       }
       return validateMlParams(params, model);
     case 'labeling':
-      if (params.label_mode === 'ternary' && (params.label_threshold ?? 0) <= 0) {
-        return 'Ternary labels require a positive threshold.';
+      if (!labelSearchGate?.enabledModelIds.length) {
+        return 'Select at least one model for label grid search.';
       }
       if (!artifacts.hasLabelSearch) {
         return 'Run label grid search before continuing.';
+      }
+      if (labelSearchGate && !labelSearchGate.coverageComplete) {
+        return 'Run label grid search for all selected models before continuing.';
       }
       if (!artifacts.hasLabelApplied) {
         return 'Apply a label search result before continuing.';

@@ -53,5 +53,7 @@ Sidebar → **Backtesting** → **Foundation Models** (`/backtesting/foundation`
 
 ## Docker / CI
 
-- Use a optional image stage or profile that adds `requirements-foundation.txt` and TimesFM source install.
+- Foundation deps are baked when `INSTALL_FOUNDATION=true` (default in Docker).
+- **GPU (optional):** See [docs/GPU_DOCKER.md](docs/GPU_DOCKER.md). On RTX 50-series set `DOCKER_TORCH_CUDA=cu128` or `cu128-nightly`, build with `docker-compose.gpu.yml`, set `FOUNDATION_DEVICE=cuda`, and restart `tiingo_backend` + `tiingo_worker_heavy`.
 - Do not enable foundation jobs in CI unless GPU runners and model cache are available.
+- Default CI/local without NVIDIA toolkit: `DOCKER_TORCH_CUDA=cpu`, no `docker-compose.gpu.yml`.

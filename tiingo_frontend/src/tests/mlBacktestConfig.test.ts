@@ -27,6 +27,9 @@ import {
 describe('mlBacktestConfig', () => {
   it('parses default params', () => {
     const params = parseMlParams({});
+    expect(DEFAULT_ML_PARAMS.correlation_prune_threshold).toBe(0.75);
+    expect(DEFAULT_ML_PARAMS.technical_pca_enabled).toBe(true);
+    expect(DEFAULT_ML_PARAMS.macro_pca_enabled).toBe(true);
     expect(params.feature_mode).toBe('prices_only');
     expect(params.train_bars).toBe(252);
     expect(params.label_horizon).toBe(5);
@@ -52,9 +55,39 @@ describe('mlBacktestConfig', () => {
     expect(minimumBarsRequired(params)).toBe(FEATURE_WARMUP_BARS + 100 + 20 + 5);
   });
 
+  it('computes minimum bars with custom warmup', () => {
+    const params = { ...DEFAULT_ML_PARAMS, warmup_bars: 100, train_bars: 120, test_bars: 20, label_horizon: 5 };
+    expect(minimumBarsRequired(params)).toBe(100 + 120 + 20 + 5);
+  });
+
+  it('rejects train bars at or below warmup', () => {
+    const params = { ...DEFAULT_ML_PARAMS, warmup_bars: 300, train_bars: 252 };
+    expect(validateWalkForwardParams(params)).toMatch(/warmup/i);
+  });
+
   it('rejects buy threshold below sell threshold', () => {
     const params = { ...DEFAULT_ML_PARAMS, buy_threshold: 0.4, sell_threshold: 0.6 };
     expect(validateMlParams(params)).toMatch(/Buy threshold/);
+  });
+
+  it('validates meta gate threshold for meta-label mode', () => {
+    const params = {
+      ...DEFAULT_ML_PARAMS,
+      label_mode: 'meta_label' as const,
+      meta_gate_threshold: 0.4,
+    };
+    expect(validateMlParams(params)).toMatch(/Meta gate/i);
+  });
+
+  it('skips buy/sell ordering check for meta-label mode', () => {
+    const params = {
+      ...DEFAULT_ML_PARAMS,
+      label_mode: 'meta_label' as const,
+      buy_threshold: 0.4,
+      sell_threshold: 0.6,
+      meta_gate_threshold: 0.65,
+    };
+    expect(validateMlParams(params)).toBeNull();
   });
 
   it('validates against model constraints', () => {
@@ -71,9 +104,10 @@ describe('mlBacktestConfig', () => {
     expect(error).toMatch(/train bars/i);
   });
 
-  it('validateWalkForwardParams accepts train_bars of 10', () => {
+  it('validateWalkForwardParams accepts viable params above warmup', () => {
     const params = {
-      train_bars: 10,
+      warmup_bars: 50,
+      train_bars: 100,
       test_bars: 20,
       step_bars: 20,
       label_horizon: 2,
@@ -93,6 +127,7 @@ describe('mlBacktestConfig', () => {
 
   it('validateWalkForwardParams includes max train hint when range is too short', () => {
     const params = {
+      warmup_bars: 50,
       train_bars: 150,
       test_bars: 52,
       step_bars: 52,

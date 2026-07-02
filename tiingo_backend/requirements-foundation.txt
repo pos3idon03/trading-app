@@ -3,7 +3,7 @@
 #
 # TimesFM 2.5 is not on PyPI yet; install from GitHub (requires git on PATH).
 
-torch>=2.1.0,<3.0
+# torch: installed in Dockerfile (TORCH_CUDA build arg)
 numpy>=1.26.0,<3.0
 chronos-forecasting>=2.0,<3.0
 huggingface-hub>=0.23.0,<1.0

@@ -1,9 +1,14 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from features.ml.feature_preprocessor import FeaturePreprocessor, fit_feature_preprocessor
+from features.ml.imbalance import maybe_smote
 from features.ml.splitter import build_walk_forward_windows
+from features.ml.sparse_event_training import (
+    is_sparse_meta_label_training,
+    min_train_samples_for_fold,
+)
 from features.ml.trainer import (
-    min_train_samples_for_model,
     predict_class_probabilities,
     predict_labels_from_proba,
     predict_proba_up,
@@ -23,8 +28,27 @@ class WalkForwardResult:
     oos_y_pred: list[int]
     oos_y_proba: list[list[float]]
     oos_x_rows: list[list[float]]
+    oos_bar_indices: list[int]
     model_classes: list[int]
     last_trained_model: Any | None
+    pruned_features: list[str] = field(default_factory=list)
+    regime_feature_selection: list[dict] = field(default_factory=list)
+    explainability_feature_names: list[str] = field(default_factory=list)
+    explainability_x_rows: list[list[float]] = field(default_factory=list)
+    explainability_bar_indices: list[int] = field(default_factory=list)
+    last_preprocessor: FeaturePreprocessor | None = None
+
+
+def _resolve_feature_names(
+    feature_rows: list[Optional[list[float]]],
+    feature_names: list[str] | None,
+) -> list[str]:
+    if feature_names:
+        return feature_names
+    for row in feature_rows:
+        if row is not None:
+            return [f"f{i}" for i in range(len(row))]
+    return []
 
 
 def _collect_samples(
@@ -76,6 +100,7 @@ def predict_with_frozen_model(
     feature_rows: list[Optional[list[float]]],
     *,
     label_mode: str = "binary",
+    preprocessor: FeaturePreprocessor | None = None,
 ) -> tuple[list[Optional[float]], list[Optional[list[float]]], list[Optional[int]]]:
     probabilities: list[Optional[float]] = [None] * len(feature_rows)
     class_probabilities: list[Optional[list[float]]] = [None] * len(feature_rows)
@@ -83,7 +108,12 @@ def predict_with_frozen_model(
     valid_indices: list[int] = []
     x_rows: list[list[float]] = []
 
-    for index, features in enumerate(feature_rows):
+    prepared_rows = (
+        preprocessor.transform_optional_rows(feature_rows)
+        if preprocessor is not None
+        else feature_rows
+    )
+    for index, features in enumerate(prepared_rows):
         if features is None:
             continue
         valid_indices.append(index)
@@ -110,9 +140,12 @@ def run_walk_forward_prediction(
     test_bars: int,
     step_bars: int,
     sample_mask: list[bool] | None = None,
+    feature_names: list[str] | None = None,
+    closes: list[float] | None = None,
 ) -> WalkForwardResult:
     label_mode = str(params.get("label_mode") or "binary")
     bar_count = len(feature_rows)
+    names = _resolve_feature_names(feature_rows, feature_names)
     windows = build_walk_forward_windows(bar_count, train_bars, test_bars, step_bars)
     probabilities: list[Optional[float]] = [None] * bar_count
     class_probabilities: list[Optional[list[float]]] = [None] * bar_count
@@ -122,8 +155,15 @@ def run_walk_forward_prediction(
     oos_y_pred: list[int] = []
     oos_y_proba: list[list[float]] = []
     oos_x_rows: list[list[float]] = []
+    oos_bar_indices: list[int] = []
     model_classes: list[int] = []
     last_trained_model: Any | None = None
+    last_preprocessor: FeaturePreprocessor | None = None
+    pruned_all: list[str] = []
+    regime_selections: list[dict] = []
+    explainability_feature_names: list[str] = []
+    explainability_x_rows: list[list[float]] = []
+    explainability_bar_indices: list[int] = []
 
     for train_indices, test_indices in windows:
         x_train, y_train, _ = _collect_samples(
@@ -138,16 +178,46 @@ def run_walk_forward_prediction(
             labels,
             sample_mask,
         )
-        min_samples = min_train_samples_for_model(model_type, params)
+        sparse_events = is_sparse_meta_label_training(params, sample_mask)
+        min_samples = min_train_samples_for_fold(
+            model_type,
+            params,
+            sparse_events=sparse_events,
+        )
         if len(x_train) < min_samples or len(set(y_train)) < 2:
             continue
         if not x_test:
             continue
 
-        trained = train_model(model_type, x_train, y_train, params)
+        preprocessor = fit_feature_preprocessor(
+            x_train,
+            y_train,
+            names,
+            params,
+            closes=closes,
+            train_indices=train_indices,
+        )
+        pruned_all.extend(preprocessor.pruned_features)
+        if preprocessor.regime_meta:
+            regime_selections.append(preprocessor.regime_meta)
+
+        x_train_m = preprocessor.transform(x_train)
+        x_test_m = preprocessor.transform(x_test)
+        if not x_train_m or not x_train_m[0]:
+            continue
+        use_smote = params.get("use_smote", True)
+        x_train_m, y_train = maybe_smote(
+            x_train_m,
+            y_train,
+            enabled=bool(use_smote),
+            model_type=model_type,
+        )
+
+        trained = train_model(model_type, x_train_m, y_train, params)
         last_trained_model = trained.model
+        last_preprocessor = preprocessor
         model_classes = list(trained.model.classes_)
-        up_probs, matrix, preds = _predictions_for_mode(trained.model, x_test, label_mode)
+        up_probs, matrix, preds = _predictions_for_mode(trained.model, x_test_m, label_mode)
 
         for index, prob, row, pred in zip(valid_test_indices, up_probs, matrix, preds):
             probabilities[index] = prob
@@ -157,7 +227,11 @@ def run_walk_forward_prediction(
         oos_y_true.extend(y_test)
         oos_y_pred.extend(preds)
         oos_y_proba.extend(matrix)
-        oos_x_rows.extend(x_test)
+        oos_x_rows.extend(x_test_m)
+        oos_bar_indices.extend(valid_test_indices)
+        explainability_feature_names = list(preprocessor.output_feature_names)
+        explainability_x_rows = list(x_test_m)
+        explainability_bar_indices = list(valid_test_indices)
         correct = sum(1 for truth, pred in zip(y_test, preds) if truth == pred)
         oos_accuracies.append(correct / len(y_test))
 
@@ -173,6 +247,13 @@ def run_walk_forward_prediction(
         oos_y_pred=oos_y_pred,
         oos_y_proba=oos_y_proba,
         oos_x_rows=oos_x_rows,
+        oos_bar_indices=oos_bar_indices,
         model_classes=model_classes,
         last_trained_model=last_trained_model,
+        pruned_features=sorted(set(pruned_all)),
+        regime_feature_selection=regime_selections,
+        explainability_feature_names=explainability_feature_names,
+        explainability_x_rows=explainability_x_rows,
+        explainability_bar_indices=explainability_bar_indices,
+        last_preprocessor=last_preprocessor,
     )

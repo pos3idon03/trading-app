@@ -23,16 +23,17 @@ def _metric_row(time: datetime, name: str, value: float, period: str) -> dict:
 @pytest.mark.asyncio
 async def test_fundamentals_metrics_quarterly_filters():
     rows = [_metric_row(_T1, "revenue", 100.0, "2024-Q1")]
+    inst = {"id": 1, "symbol": "AAPL", "asset_type": "stock"}
 
     with (
         patch(
             "routes.fundamentals_read.instrument_dal.get_by_symbol",
-            new=AsyncMock(return_value={"id": 1, "symbol": "AAPL"}),
+            new=AsyncMock(return_value=inst),
         ),
         patch(
-            "routes.fundamentals_read.fundamentals_dal.list_fundamentals_for_symbol",
+            "routes.fundamentals_read.ensure_fundamentals_in_db",
             new=AsyncMock(return_value=rows),
-        ) as mock_list,
+        ) as mock_ensure,
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -46,8 +47,8 @@ async def test_fundamentals_metrics_quarterly_filters():
     assert data["symbol"] == "AAPL"
     assert data["period_type"] == "quarterly"
     assert data["count"] == 1
-    mock_list.assert_awaited_once()
-    kwargs = mock_list.await_args.kwargs
+    mock_ensure.assert_awaited_once()
+    kwargs = mock_ensure.await_args.kwargs
     assert kwargs["period_type"] == "quarterly"
     assert kwargs["metric_names"] == ["revenue"]
     assert kwargs["order"] == "asc"
@@ -56,16 +57,17 @@ async def test_fundamentals_metrics_quarterly_filters():
 @pytest.mark.asyncio
 async def test_fundamentals_metrics_annual():
     rows = [_metric_row(_T2, "netinc", 50.0, "FY-2023")]
+    inst = {"id": 2, "symbol": "MSFT", "asset_type": "stock"}
 
     with (
         patch(
             "routes.fundamentals_read.instrument_dal.get_by_symbol",
-            new=AsyncMock(return_value={"id": 2, "symbol": "MSFT"}),
+            new=AsyncMock(return_value=inst),
         ),
         patch(
-            "routes.fundamentals_read.fundamentals_dal.list_fundamentals_for_symbol",
+            "routes.fundamentals_read.ensure_fundamentals_in_db",
             new=AsyncMock(return_value=rows),
-        ) as mock_list,
+        ) as mock_ensure,
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -73,7 +75,7 @@ async def test_fundamentals_metrics_annual():
 
     assert resp.status_code == 200
     assert resp.json()["period_type"] == "annual"
-    assert mock_list.await_args.kwargs["period_type"] == "annual"
+    assert mock_ensure.await_args.kwargs["period_type"] == "annual"
 
 
 @pytest.mark.asyncio
@@ -100,13 +102,14 @@ async def test_fundamentals_metrics_not_found_instrument():
 
 @pytest.mark.asyncio
 async def test_fundamentals_metrics_empty_rows():
+    inst = {"id": 1, "symbol": "AAPL", "asset_type": "stock"}
     with (
         patch(
             "routes.fundamentals_read.instrument_dal.get_by_symbol",
-            new=AsyncMock(return_value={"id": 1, "symbol": "AAPL"}),
+            new=AsyncMock(return_value=inst),
         ),
         patch(
-            "routes.fundamentals_read.fundamentals_dal.list_fundamentals_for_symbol",
+            "routes.fundamentals_read.ensure_fundamentals_in_db",
             new=AsyncMock(return_value=[]),
         ),
     ):
@@ -118,20 +121,44 @@ async def test_fundamentals_metrics_empty_rows():
 
 
 @pytest.mark.asyncio
-async def test_fundamentals_metrics_all_unlimited():
+async def test_fundamentals_metrics_yfinance_fallback_returns_rows():
+    inst = {"id": 3, "symbol": "NVDA", "asset_type": "stock"}
+    rows = [_metric_row(_T1, "revenue", 200.0, "2024-Q1")]
+
     with (
         patch(
             "routes.fundamentals_read.instrument_dal.get_by_symbol",
-            new=AsyncMock(return_value={"id": 1, "symbol": "AAPL"}),
+            new=AsyncMock(return_value=inst),
         ),
         patch(
-            "routes.fundamentals_read.fundamentals_dal.list_fundamentals_for_symbol",
+            "routes.fundamentals_read.ensure_fundamentals_in_db",
+            new=AsyncMock(return_value=rows),
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/v1/ingestion/fundamentals/NVDA")
+
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fundamentals_metrics_all_unlimited():
+    inst = {"id": 1, "symbol": "AAPL", "asset_type": "stock"}
+    with (
+        patch(
+            "routes.fundamentals_read.instrument_dal.get_by_symbol",
+            new=AsyncMock(return_value=inst),
+        ),
+        patch(
+            "routes.fundamentals_read.ensure_fundamentals_in_db",
             new=AsyncMock(return_value=[_metric_row(_T1, "eps", 1.5, "2024-Q1")]),
-        ) as mock_list,
+        ) as mock_ensure,
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/v1/ingestion/fundamentals/AAPL?all=true")
 
     assert resp.status_code == 200
-    assert mock_list.await_args.kwargs["limit"] is None
+    assert mock_ensure.await_args.kwargs["limit"] is None

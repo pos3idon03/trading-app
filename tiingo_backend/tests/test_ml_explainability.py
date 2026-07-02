@@ -70,7 +70,7 @@ def test_build_explainer_accepts_scaled_logistic_pipeline():
         pytest.skip("shap not installed")
 
     x_array = np.array(x_rows)
-    explainer = _build_explainer(trained.model, shap, x_array)
+    explainer = _build_explainer(trained.model, shap, x_array, "ml_logistic")
     assert explainer is not None
 
 
@@ -102,6 +102,8 @@ def test_compute_instance_contributions_logistic():
     assert result["method"] == "shap_linear"
     assert len(result["top_contributors"]) <= 2
     assert all("feature" in row and "contribution" in row for row in result["top_contributors"])
+    assert "ordered_contributors" in result
+    assert result.get("base_value") is not None or result.get("predicted_value") is not None
 
 
 def test_compute_instance_contributions_tree_model():
@@ -149,6 +151,7 @@ def test_compute_instance_contributions_unavailable_for_knn():
     )
     assert result["method"] == "unavailable"
     assert result["top_contributors"] == []
+    assert "live SHAP" in result["warnings"][0]
 
 
 def test_extract_signed_shap_row_handles_1d_feature_vector():

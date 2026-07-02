@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from features.execution.evaluation_cycle import (
+    list_deployments_for_evaluation_cycle,
     refresh_active_deployment_market_data,
     run_deployment_cycle,
 )
@@ -16,7 +17,7 @@ from utils.json_serialization import json_safe
 @pytest.mark.asyncio
 async def test_run_deployment_cycle_skips_without_active(monkeypatch):
     monkeypatch.setattr(
-        "features.execution.evaluation_cycle.trading_deployment_dal.list_active_deployments_with_instrument",
+        "features.execution.evaluation_cycle.list_deployments_for_evaluation_cycle",
         AsyncMock(return_value=[]),
     )
     result = await run_deployment_cycle(AsyncMock())
@@ -28,10 +29,14 @@ async def test_run_deployment_cycle_skips_without_active(monkeypatch):
 async def test_run_deployment_cycle_skips_when_no_timeframes_due(monkeypatch):
     deployment_id = uuid4()
     monkeypatch.setattr(
-        "features.execution.evaluation_cycle.trading_deployment_dal.list_active_deployments_with_instrument",
+        "features.execution.evaluation_cycle.list_deployments_for_evaluation_cycle",
         AsyncMock(return_value=[
             {"id": deployment_id, "timeframe": "5m", "status": "active", "asset_type": "stock"},
         ]),
+    )
+    monkeypatch.setattr(
+        "features.execution.evaluation_cycle._run_reconciliation",
+        AsyncMock(return_value={"catch_up_runs": 0, "results": []}),
     )
     as_of = datetime(2026, 5, 28, 10, 7, tzinfo=timezone.utc)
     result = await run_deployment_cycle(AsyncMock(), as_of=as_of)
@@ -68,7 +73,7 @@ async def test_run_deployment_cycle_refreshes_then_evaluates(monkeypatch):
     build_plan = AsyncMock(return_value=type("Plan", (), {"is_empty": False})())
 
     monkeypatch.setattr(
-        "features.execution.evaluation_cycle.trading_deployment_dal.list_active_deployments_with_instrument",
+        "features.execution.evaluation_cycle.list_deployments_for_evaluation_cycle",
         AsyncMock(return_value=[deployment]),
     )
     monkeypatch.setattr(
@@ -82,6 +87,10 @@ async def test_run_deployment_cycle_refreshes_then_evaluates(monkeypatch):
     monkeypatch.setattr(
         "features.execution.evaluation_cycle.evaluate_deployment",
         evaluate,
+    )
+    monkeypatch.setattr(
+        "features.execution.evaluation_cycle._run_reconciliation",
+        AsyncMock(return_value={"catch_up_runs": 0, "results": []}),
     )
 
     as_of = datetime(2026, 5, 28, 15, 0, tzinfo=timezone.utc)
@@ -121,7 +130,7 @@ async def test_run_deployment_cycle_uses_scheduled_as_of_for_due_timeframes(monk
     reconcile = AsyncMock(return_value={"catch_up_runs": 0, "results": []})
 
     monkeypatch.setattr(
-        "features.execution.evaluation_cycle.trading_deployment_dal.list_active_deployments_with_instrument",
+        "features.execution.evaluation_cycle.list_deployments_for_evaluation_cycle",
         AsyncMock(return_value=[deployment]),
     )
     monkeypatch.setattr(
@@ -161,7 +170,7 @@ async def test_crypto_deployment_due_when_equity_intraday_not(monkeypatch):
     ]
     evaluate = AsyncMock(side_effect=lambda _s, dep_id: _evaluation_outcome(dep_id))
     monkeypatch.setattr(
-        "features.execution.evaluation_cycle.trading_deployment_dal.list_active_deployments_with_instrument",
+        "features.execution.evaluation_cycle.list_deployments_for_evaluation_cycle",
         AsyncMock(return_value=deployments),
     )
     monkeypatch.setattr(
@@ -186,6 +195,36 @@ async def test_crypto_deployment_due_when_equity_intraday_not(monkeypatch):
     assert result["skipped"] is False
     assert evaluate.await_count == 1
     assert evaluate.await_args.args[1] == crypto_id
+
+
+@pytest.mark.asyncio
+async def test_list_deployments_for_evaluation_cycle_includes_error_retry(monkeypatch):
+    error_id = uuid4()
+    active = [{"id": uuid4(), "timeframe": "1h", "status": "active", "asset_type": "stock"}]
+    error_dep = {
+        "id": error_id,
+        "timeframe": "1h",
+        "status": "error",
+        "asset_type": "crypto",
+        "last_signal": "sell",
+        "last_outcome": "error",
+    }
+    monkeypatch.setattr(
+        "features.execution.evaluation_cycle.trading_deployment_dal.list_active_deployments_with_instrument",
+        AsyncMock(return_value=active),
+    )
+    monkeypatch.setattr(
+        "features.execution.evaluation_cycle.trading_deployment_dal.list_error_deployments_with_instrument",
+        AsyncMock(return_value=[error_dep]),
+    )
+    monkeypatch.setattr(
+        "features.execution.evaluation_cycle.execution_order_dal.sum_filled_qty_by_deployment",
+        AsyncMock(return_value=0.5),
+    )
+
+    rows = await list_deployments_for_evaluation_cycle(AsyncMock())
+    assert len(rows) == 2
+    assert any(row["id"] == error_id for row in rows)
 
 
 @pytest.mark.asyncio

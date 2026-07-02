@@ -215,3 +215,65 @@ def compute_mfi(
             ratio = positive / negative
             result.append(100.0 - (100.0 / (1.0 + ratio)))
     return result
+
+
+def compute_macd(
+    values: list[float],
+    fast: int = 12,
+    slow: int = 26,
+    signal_period: int = 9,
+) -> tuple[list[Optional[float]], list[Optional[float]], list[Optional[float]]]:
+    ema_fast = compute_ema(values, fast)
+    ema_slow = compute_ema(values, slow)
+    macd_line: list[Optional[float]] = []
+    for fast_val, slow_val in zip(ema_fast, ema_slow):
+        if fast_val is None or slow_val is None:
+            macd_line.append(None)
+        else:
+            macd_line.append(fast_val - slow_val)
+
+    macd_values = [v if v is not None else 0.0 for v in macd_line]
+    signal = compute_ema(macd_values, signal_period)
+    histogram: list[Optional[float]] = []
+    for m, s in zip(macd_line, signal):
+        if m is None or s is None:
+            histogram.append(None)
+        else:
+            histogram.append(m - s)
+    return macd_line, signal, histogram
+
+
+def compute_obv(closes: list[float], volumes: list[float]) -> list[float]:
+    if not closes:
+        return []
+    obv = [0.0]
+    for i in range(1, len(closes)):
+        if closes[i] > closes[i - 1]:
+            obv.append(obv[-1] + volumes[i])
+        elif closes[i] < closes[i - 1]:
+            obv.append(obv[-1] - volumes[i])
+        else:
+            obv.append(obv[-1])
+    return obv
+
+
+def compute_ichimoku(
+    highs: list[float],
+    lows: list[float],
+    closes: list[float],
+    tenkan: int = 9,
+    kijun: int = 26,
+) -> tuple[list[Optional[float]], list[Optional[float]]]:
+    def _mid(high: list[float], low: list[float], period: int, index: int) -> Optional[float]:
+        if index + 1 < period:
+            return None
+        window_h = high[index + 1 - period : index + 1]
+        window_l = low[index + 1 - period : index + 1]
+        return (max(window_h) + min(window_l)) / 2.0
+
+    tenkan_vals: list[Optional[float]] = []
+    kijun_vals: list[Optional[float]] = []
+    for i in range(len(closes)):
+        tenkan_vals.append(_mid(highs, lows, tenkan, i))
+        kijun_vals.append(_mid(highs, lows, kijun, i))
+    return tenkan_vals, kijun_vals

@@ -1,20 +1,10 @@
 from typing import Optional
 
-from features.backtesting.indicators import compute_atr
-
-
-def _atr_at_index(
-    highs: list[float],
-    lows: list[float],
-    closes: list[float],
-    index: int,
-    period: int,
-) -> Optional[float]:
-    atr_series = compute_atr(highs, lows, closes, period)
-    value = atr_series[index]
-    if value is None or value <= 0:
-        return None
-    return float(value)
+from features.backtesting.trade_exits import (
+    atr_at_bar_index,
+    atr_bracket_levels,
+    intrabar_long_exit,
+)
 
 
 def label_single_event(
@@ -29,22 +19,30 @@ def label_single_event(
     if event_index < 0 or event_index >= len(bars):
         return None
 
-    highs = [float(b["high"]) for b in bars]
-    lows = [float(b["low"]) for b in bars]
     closes = [float(b["close"]) for b in bars]
-    atr = _atr_at_index(highs, lows, closes, event_index, atr_period)
+    atr = atr_at_bar_index(bars, event_index, atr_period)
     if atr is None:
         return None
 
     entry = closes[event_index]
-    profit_level = entry + profit_atr_mult * atr
-    stop_level = entry - stop_atr_mult * atr
+    profit_level, stop_level = atr_bracket_levels(
+        entry,
+        atr,
+        profit_atr_mult=profit_atr_mult,
+        stop_atr_mult=stop_atr_mult,
+    )
     end_index = min(len(bars) - 1, event_index + max_horizon_bars)
 
     for j in range(event_index + 1, end_index + 1):
-        if lows[j] <= stop_level:
+        hit = intrabar_long_exit(
+            float(bars[j]["high"]),
+            float(bars[j]["low"]),
+            profit_level=profit_level,
+            stop_level=stop_level,
+        )
+        if hit == "stop":
             return 0
-        if highs[j] >= profit_level:
+        if hit == "profit":
             return 1
     return None
 

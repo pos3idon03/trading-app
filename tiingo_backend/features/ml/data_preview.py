@@ -6,7 +6,9 @@ from dal import macro_dal
 from features.ml.catalog import feature_mode_uses_macro
 from features.ml.feature_builder import collect_required_ml_timeframes
 from features.ml.labels import build_labels_for_ml_params, label_distribution
-from features.ml.price_features import FEATURE_WARMUP_BARS
+from features.ml.catalog import resolve_warmup_bars
+from features.ml.catalog import ALWAYS_INCLUDED_FEATURE_IDS
+from features.ml.feature_column_summary import build_feature_groups
 from features.ml.walk_forward_diagnostics import build_walk_forward_readiness
 
 
@@ -22,6 +24,7 @@ async def build_data_preview(
     strategy_warnings: list[str],
     bars: list[dict] | None = None,
     feature_rows: list | None = None,
+    feature_names: list[str] | None = None,
 ) -> dict:
     bars = bars_by_timeframe[decision_timeframe]
     warnings: list[str] = [*context_warnings, *strategy_warnings]
@@ -73,14 +76,31 @@ async def build_data_preview(
             if issue not in warnings:
                 warnings.append(issue)
 
+    resolved_names = list(feature_names or [])
+    feature_groups = (
+        build_feature_groups(
+            resolved_names,
+            validated_params,
+            macro_series_ids=macro_series_ids,
+            fundamental_metrics=fundamental_metrics,
+        )
+        if resolved_names
+        else {}
+    )
+
     return {
         "decision_timeframe": decision_timeframe,
         "bar_counts": bar_counts,
-        "warmup_bars_excluded": FEATURE_WARMUP_BARS,
+        "warmup_bars_excluded": resolve_warmup_bars(validated_params),
         "macro_coverage": macro_coverage,
         "fundamental_metrics": fundamental_metrics,
         "context_timeframes": list(validated_params.get("context_timeframes") or []),
         "strategy_feature_ids": list(validated_params.get("strategy_feature_ids") or []),
+        "include_news_sentiment": bool(validated_params.get("include_news_sentiment")),
+        "feature_names": resolved_names,
+        "feature_count": len(resolved_names),
+        "feature_groups": feature_groups,
+        "always_included_features": list(ALWAYS_INCLUDED_FEATURE_IDS),
         "label_preview": {
             "label_mode": validated_params.get("label_mode", "binary"),
             "label_horizon": validated_params["label_horizon"],

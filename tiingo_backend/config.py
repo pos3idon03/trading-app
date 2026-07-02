@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://tiingo_user:changeme@tiingo_db:5432/tiingo_db"
     database_sync_url: str = "postgresql://tiingo_user:changeme@tiingo_db:5432/tiingo_db"
     # Alias: set TIINGO_DATABASE_URL in .env to override database_url
-    db_pool_size: int = 5
-    db_max_overflow: int = 10
+    db_pool_size: int = 10
+    db_max_overflow: int = 20
 
     tiingo_api_key: str = ""
     fred_api_key: str = ""
@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     stream_enabled: bool = Field(default=False, validation_alias="STREAM_ENABLED")
 
     tiingo_fundamentals_tier: str = "dow30"
+    yfinance_fundamentals_enabled: bool = Field(
+        default=True,
+        validation_alias="YFINANCE_FUNDAMENTALS_ENABLED",
+    )
     tiingo_hourly_limit: int = 9500
     tiingo_daily_limit: int = 95000
     ingest_concurrency: int = 8
@@ -62,7 +66,15 @@ class Settings(BaseSettings):
     sentiment_llm_batch_size: int = Field(default=5, validation_alias="SENTIMENT_LLM_BATCH_SIZE")
     sentiment_llm_timeout_seconds: int = Field(default=60, validation_alias="SENTIMENT_LLM_TIMEOUT")
     news_title_dedup_hours: int = Field(default=6, validation_alias="NEWS_TITLE_DEDUP_HOURS")
+    market_sentiment_window_hours: int = Field(
+        default=24,
+        validation_alias="MARKET_SENTIMENT_WINDOW_HOURS",
+    )
 
+    macro_seed_interval_hours: int = Field(
+        default=24,
+        validation_alias="MACRO_SEED_INTERVAL_HOURS",
+    )
     macro_brief_enabled: bool = Field(default=True, validation_alias="MACRO_BRIEF_ENABLED")
     macro_brief_model: str = Field(default="gemini-2.5-flash", validation_alias="MACRO_BRIEF_MODEL")
     macro_brief_timeout_seconds: int = Field(default=60, validation_alias="MACRO_BRIEF_TIMEOUT")

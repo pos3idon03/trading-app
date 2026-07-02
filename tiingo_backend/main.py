@@ -9,6 +9,7 @@ from routes import (
     backtest,
     backtest_foundation,
     backtest_ml,
+    backtest_rl,
     execution,
     fundamentals_read,
     ingestion,
@@ -27,16 +28,6 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("tiingo_backend_startup", env=settings.app_env)
-
-    try:
-        from db import AsyncSessionLocal
-        from features.worker.tasks import create_and_enqueue_job
-
-        async with AsyncSessionLocal() as session:
-            await create_and_enqueue_job(session, "macro_seed_catalog", {})
-        logger.info("macro_seed_catalog_enqueued")
-    except Exception as exc:
-        logger.warning("macro_seed_catalog_enqueue_failed", error=str(exc))
 
     if settings.enable_scheduler:
         from features.scheduler.scheduler import start_scheduler
@@ -105,5 +96,6 @@ app.include_router(market_data.router, prefix="/api/v1")
 app.include_router(overview.router, prefix="/api/v1")
 app.include_router(backtest.router, prefix="/api/v1")
 app.include_router(backtest_ml.router, prefix="/api/v1")
+app.include_router(backtest_rl.router, prefix="/api/v1")
 app.include_router(backtest_foundation.router, prefix="/api/v1")
 app.include_router(execution.router, prefix="/api/v1")

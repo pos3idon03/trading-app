@@ -78,6 +78,9 @@ async def test_cancel_job_success():
         with patch(
             "routes.ingestion.job_dal.cancel_job",
             new=AsyncMock(return_value=cancelled),
+        ), patch(
+            "features.worker.job_abort.abort_ingestion_arq_job",
+            new=AsyncMock(return_value=True),
         ):
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:

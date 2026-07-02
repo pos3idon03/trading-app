@@ -27,6 +27,8 @@ const BACKTESTING_ROUTES = [
   { path: '/backtesting/algos/AAPL', label: 'Algos symbol' },
   { path: '/backtesting/ml', label: 'ML' },
   { path: '/backtesting/ml/AAPL', label: 'ML symbol' },
+  { path: '/backtesting/ml-testing', label: 'ML Testing' },
+  { path: '/backtesting/ml-testing/AAPL', label: 'ML Testing symbol' },
   { path: '/backtesting/foundation', label: 'Foundation Models' },
   { path: '/backtesting/foundation/AAPL', label: 'Foundation symbol' },
   { path: '/backtesting/trading-models', label: 'Trading Models' },

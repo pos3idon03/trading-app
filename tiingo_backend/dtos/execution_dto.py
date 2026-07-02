@@ -52,6 +52,7 @@ class TradingDeploymentDTO(BaseModel):
     model_type: str | None = None
     feature_mode: str | None = None
     last_evaluated_bar_time: datetime | None = None
+    last_evaluated_at: datetime | None = None
     last_signal: str | None = None
     last_error: str | None = None
     last_blocked_reason: str | None = None
@@ -77,6 +78,7 @@ class DeleteDeploymentResponse(BaseModel):
     close_positions: bool
     closed_qty: float = 0
     close_order_id: UUID | None = None
+    close_warning: str | None = None
 
 
 class EvaluateDeploymentResponse(BaseModel):
@@ -258,12 +260,14 @@ class DeploymentOverviewDTO(BaseModel):
     status: str
     model_name: str | None = None
     last_error: str | None = None
+    last_blocked_reason: str | None = None
     last_signal: str | None = None
     last_probability: float | None = None
     buy_threshold: float | None = None
     sell_threshold: float | None = None
     last_explainability: ProbabilityExplainabilityDTO | None = None
     last_evaluated_bar_time: datetime | None = None
+    last_evaluated_at: datetime | None = None
     current_price: float | None = None
     price_updated_at: datetime | None = None
     round_trip_count: int = 0

@@ -273,3 +273,21 @@ class MacroBriefResponseDTO(BaseModel):
     generated_at: Optional[datetime] = None
     available: bool
     message: Optional[str] = None
+
+
+class MarketSentimentPointDTO(BaseModel):
+    recorded_at: datetime
+    score: float
+    article_count: int
+    bullish_count: int
+    bearish_count: int
+    neutral_count: int
+
+
+class MarketSentimentResponseDTO(BaseModel):
+    window_hours: int
+    current_score: float
+    current_article_count: int
+    points: list[MarketSentimentPointDTO]
+    available: bool
+    message: Optional[str] = None

@@ -52,6 +52,7 @@ async def test_enqueue_heavy_job_uses_heavy_queue() -> None:
         str(job_id),
         "foundation_backtest",
         {"symbol": "IBM"},
+        _job_id=str(job_id),
         _queue_name="heavy",
     )
 
@@ -75,6 +76,7 @@ async def test_enqueue_light_job_uses_default_queue() -> None:
         str(job_id),
         "execution_deployment_cycle",
         {},
+        _job_id=str(job_id),
     )
 
 
@@ -92,5 +94,6 @@ async def test_enqueue_ml_train_uses_heavy_queue() -> None:
         str(job_id),
         "ml_train",
         {"symbol": "AAPL"},
+        _job_id=str(job_id),
         _queue_name="heavy",
     )

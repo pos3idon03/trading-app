@@ -1,7 +1,7 @@
 from typing import Any, Optional
 
 from features.ml.labels import build_labels_for_ml_params
-from features.ml.price_features import FEATURE_WARMUP_BARS
+from features.ml.catalog import resolve_warmup_bars
 from features.ml.splitter import build_walk_forward_windows
 
 
@@ -28,10 +28,13 @@ def _collect_samples(
     indices: list[int],
     feature_rows: list[Optional[list[float]]],
     labels: list[Optional[int]],
+    sample_mask: list[bool] | None = None,
 ) -> tuple[list[list[float]], list[int]]:
     x_rows: list[list[float]] = []
     y_rows: list[int] = []
     for index in indices:
+        if sample_mask is not None and not sample_mask[index]:
+            continue
         features = feature_rows[index]
         label = labels[index]
         if features is None or label is None:
@@ -55,12 +58,32 @@ def count_structural_walk_forward_folds(
         return 0
 
 
+def _meta_label_sample_mask(
+    bars: list[dict],
+    validated_params: dict,
+) -> list[bool] | None:
+    if str(validated_params.get("label_mode") or "") != "meta_label":
+        return None
+    from features.ml.labels import build_meta_label_targets
+    from features.ml.meta_label_events import build_event_mask
+
+    event_mask = build_event_mask(bars, validated_params)
+    _, meta_labels = build_meta_label_targets(bars, validated_params)
+    return [
+        bool(is_event and label is not None)
+        for is_event, label in zip(event_mask, meta_labels)
+    ]
+
+
 def count_viable_walk_forward_folds(
     feature_rows: list[Optional[list[float]]],
     labels: list[Optional[int]],
     train_bars: int,
     test_bars: int,
     step_bars: int,
+    *,
+    validated_params: dict | None = None,
+    bars: list[dict] | None = None,
 ) -> int:
     bar_count = len(feature_rows)
     if bar_count < train_bars + test_bars:
@@ -71,11 +94,33 @@ def count_viable_walk_forward_folds(
     except ValueError:
         return 0
 
+    sample_mask = None
+    if validated_params and bars:
+        sample_mask = _meta_label_sample_mask(bars, validated_params)
+
+    model_type = str((validated_params or {}).get("model_type") or "")
+    sparse_events = sample_mask is not None
+
     viable = 0
     for train_indices, test_indices in windows:
-        x_train, y_train = _collect_samples(train_indices, feature_rows, labels)
-        x_test, _ = _collect_samples(test_indices, feature_rows, labels)
-        if len(x_train) < 2 or len(set(y_train)) < 2 or not x_test:
+        x_train, y_train = _collect_samples(
+            train_indices,
+            feature_rows,
+            labels,
+            sample_mask,
+        )
+        x_test, _ = _collect_samples(test_indices, feature_rows, labels, sample_mask)
+        if sparse_events and model_type:
+            from features.ml.sparse_event_training import min_train_samples_for_fold
+
+            min_rows = min_train_samples_for_fold(
+                model_type,
+                validated_params or {},
+                sparse_events=True,
+            )
+        else:
+            min_rows = 2
+        if len(x_train) < min_rows or len(set(y_train)) < 2 or not x_test:
             continue
         viable += 1
     return viable
@@ -108,6 +153,13 @@ def _append_readiness_issues(
             issues.append(
                 "Date range is too short for the walk-forward train + test windows.",
             )
+        elif str(validated_params.get("label_mode") or "") == "meta_label":
+            issues.append(
+                "Meta-label walk-forward: no fold has enough base-strategy entry events "
+                "to train the model (LSTM needs several events per train window). "
+                "Use a busier base strategy, shorten lstm_seq_length, extend the date "
+                "range, or switch to binary/ternary label mode.",
+            )
         else:
             issues.append(
                 "Walk-forward folds exist structurally but none can train — "
@@ -115,9 +167,10 @@ def _append_readiness_issues(
                 "include more varied market history.",
             )
 
-    if train_bars <= FEATURE_WARMUP_BARS:
+    warmup_bars = resolve_warmup_bars(validated_params)
+    if train_bars <= warmup_bars:
         issues.append(
-            f"Train bars ({train_bars}) is at or below the {FEATURE_WARMUP_BARS}-bar "
+            f"Train bars ({train_bars}) is at or below the {warmup_bars}-bar "
             "feature warmup — most training windows lack usable features.",
         )
 
@@ -158,6 +211,8 @@ def build_walk_forward_readiness(
         train_bars,
         test_bars,
         step_bars,
+        validated_params=validated_params,
+        bars=bars,
     )
 
     readiness_issues: list[str] = []
@@ -175,7 +230,7 @@ def build_walk_forward_readiness(
 
     return {
         "total_bars": total_bars,
-        "warmup_bars": FEATURE_WARMUP_BARS,
+        "warmup_bars": resolve_warmup_bars(validated_params),
         "valid_feature_rows": valid_feature_rows,
         "labeled_rows": labeled_rows,
         "trainable_rows": trainable_rows,

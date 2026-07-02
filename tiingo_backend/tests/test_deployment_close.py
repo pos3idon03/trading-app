@@ -41,6 +41,14 @@ async def test_close_deployment_position_sells_net_qty(monkeypatch):
         AsyncMock(return_value=False),
     )
     monkeypatch.setattr(
+        "features.execution.deployment_close.instrument_dal.get_by_symbol",
+        AsyncMock(return_value={"asset_type": "stock"}),
+    )
+    monkeypatch.setattr(
+        "features.execution.deployment_close.alpaca_client.get_positions",
+        AsyncMock(return_value=[{"symbol": "AAPL", "qty": 2.5, "qty_available": 2.5}]),
+    )
+    monkeypatch.setattr(
         "features.execution.deployment_close.alpaca_client.submit_market_order",
         AsyncMock(return_value={"id": "alpaca-1", "status": "accepted"}),
     )
@@ -77,3 +85,40 @@ async def test_close_deployment_position_blocks_when_open_order(monkeypatch):
 
     with pytest.raises(ValueError, match="Open order pending"):
         await close_deployment_position(AsyncMock(), deployment)
+
+
+@pytest.mark.asyncio
+async def test_close_deployment_position_skips_when_no_alpaca_position(monkeypatch):
+    deployment_id = uuid4()
+    deployment = {"id": deployment_id, "symbol": "BTC-USD"}
+    monkeypatch.setattr(
+        "features.execution.deployment_close.sync_deployment_orders",
+        AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "features.execution.deployment_close.execution_order_dal.sum_filled_qty_by_deployment",
+        AsyncMock(return_value=0.0676),
+    )
+    monkeypatch.setattr(
+        "features.execution.deployment_close.execution_order_dal.has_open_order",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(
+        "features.execution.deployment_close.instrument_dal.get_by_symbol",
+        AsyncMock(return_value={"asset_type": "crypto"}),
+    )
+    monkeypatch.setattr(
+        "features.execution.deployment_close.alpaca_client.get_positions",
+        AsyncMock(return_value=[]),
+    )
+    submit_mock = AsyncMock()
+    monkeypatch.setattr(
+        "features.execution.deployment_close.alpaca_client.submit_market_order",
+        submit_mock,
+    )
+
+    result = await close_deployment_position(AsyncMock(), deployment)
+    assert result["closed"] is False
+    assert result["qty"] == 0.0
+    assert result.get("close_warning")
+    submit_mock.assert_not_awaited()

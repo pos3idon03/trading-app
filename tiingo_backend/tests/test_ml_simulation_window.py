@@ -1,6 +1,15 @@
 import pytest
 
 from features.backtesting.engine import run_backtest_with_signals, run_buy_and_hold_benchmark
+from features.backtesting.trade_exits import TradeExitConfig
+
+SIGNAL_ONLY_EXIT = TradeExitConfig(
+    policy="signal_only",
+    max_hold_bars=5,
+    profit_atr_mult=2.0,
+    stop_atr_mult=1.5,
+    atr_period=14,
+)
 from features.ml.labels import build_forward_return_labels
 from features.ml.predictor import run_walk_forward_prediction
 from features.ml.price_features import build_price_feature_matrix
@@ -133,13 +142,14 @@ def test_find_bar_index_by_date_matches_daily_bar():
 
 def test_resolve_evaluation_start_index_uses_signal_bar_before_entry():
     bars = _bars(80)
-    signals = ["hold"] * 50 + ["buy"] + ["hold"] * 29
+    signals = ["hold"] * 50 + ["buy"] + ["hold"] * 27 + ["sell"] + ["hold"]
     strategy = run_backtest_with_signals(
         bars,
         signals,
         initial_cash=10_000.0,
         commission_bps=0.0,
         decision_timeframe="1d",
+        exit_config=SIGNAL_ONLY_EXIT,
     )
     assert len(strategy.trades) >= 1
     assert resolve_evaluation_start_index(
@@ -174,6 +184,7 @@ def _apply_evaluation_window(bars, signals, initial_cash=10_000.0):
         initial_cash,
         commission_bps=0.0,
         decision_timeframe="1d",
+        exit_config=SIGNAL_ONLY_EXIT,
     )
     eval_offset = resolve_evaluation_start_index(
         bars,
@@ -188,6 +199,7 @@ def _apply_evaluation_window(bars, signals, initial_cash=10_000.0):
             initial_cash,
             commission_bps=0.0,
             decision_timeframe="1d",
+            exit_config=SIGNAL_ONLY_EXIT,
         )
         benchmark = run_buy_and_hold_benchmark(
             eval_bars,
@@ -207,7 +219,7 @@ def _apply_evaluation_window(bars, signals, initial_cash=10_000.0):
 
 def test_evaluation_window_aligns_benchmark_with_first_trade():
     bars = _bars(80)
-    signals = ["hold"] * 50 + ["buy"] + ["hold"] * 29
+    signals = ["hold"] * 50 + ["buy"] + ["hold"] * 27 + ["sell"] + ["hold"]
 
     full_benchmark = run_buy_and_hold_benchmark(
         bars,

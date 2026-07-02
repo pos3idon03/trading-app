@@ -23,3 +23,8 @@ CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 \i /docker-entrypoint-initdb.d/migrations/020_create_macro_briefs.sql
 \i /docker-entrypoint-initdb.d/migrations/021_deployment_peak_profit.sql
 \i /docker-entrypoint-initdb.d/migrations/022_macro_brief_cycle_phases.sql
+\i /docker-entrypoint-initdb.d/migrations/023_deployment_last_evaluated_at.sql
+\i /docker-entrypoint-initdb.d/migrations/024_instrument_lifecycle.sql
+\i /docker-entrypoint-initdb.d/migrations/025_universe_tables.sql
+\i /docker-entrypoint-initdb.d/migrations/026_backtest_universe_fields.sql
+\i /docker-entrypoint-initdb.d/migrations/027_rl_models.sql

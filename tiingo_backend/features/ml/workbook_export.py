@@ -96,6 +96,11 @@ def sheet_data_preview_rows(preview: dict[str, Any]) -> list[dict[str, Any]]:
             rows.append({"key": f"walk_forward.{key}", "value": value})
     for warning in preview.get("warnings") or []:
         rows.append({"key": "warning", "value": warning})
+    rows.append({"key": "feature_count", "value": preview.get("feature_count")})
+    for group, names in (preview.get("feature_groups") or {}).items():
+        rows.append({"key": f"feature_group.{group}", "value": ", ".join(names)})
+    for name in preview.get("feature_names") or []:
+        rows.append({"key": "feature_name", "value": name})
     return rows
 
 
@@ -134,6 +139,11 @@ def sheet_ml_summary_rows(ml_summary: dict[str, Any]) -> list[dict[str, Any]]:
         "window_accuracies",
         "feature_importance",
         "shap_importance",
+        "coefficient_importance",
+        "shap_interactions",
+        "partial_dependence",
+        "shap_slices",
+        "tree_rules",
         "roc_curves",
         "auc_scores",
         "feature_names",
@@ -188,6 +198,40 @@ def sheet_feature_importance_rows(ml_summary: dict[str, Any]) -> list[dict[str, 
 
 def sheet_shap_importance_rows(ml_summary: dict[str, Any]) -> list[dict[str, Any]]:
     return [dict(item) for item in (ml_summary.get("shap_importance") or [])]
+
+
+def sheet_shap_interaction_rows(ml_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    return [dict(item) for item in (ml_summary.get("shap_interactions") or [])]
+
+
+def sheet_partial_dependence_rows(ml_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for curve in ml_summary.get("partial_dependence") or []:
+        feature = curve.get("feature")
+        for index, grid_value in enumerate(curve.get("grid") or []):
+            p_up_values = curve.get("p_up") or []
+            rows.append({
+                "feature": feature,
+                "grid_value": grid_value,
+                "p_up": p_up_values[index] if index < len(p_up_values) else None,
+            })
+    return rows
+
+
+def sheet_shap_slice_rows(ml_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    slices = ml_summary.get("shap_slices") or {}
+    rows: list[dict[str, Any]] = []
+    for slice_name, items in slices.items():
+        for item in items or []:
+            rows.append({"slice": slice_name, **dict(item)})
+    return rows
+
+
+def sheet_tree_rules_rows(ml_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    rules = ml_summary.get("tree_rules")
+    if not rules:
+        return []
+    return [dict(rules)]
 
 
 def sheet_roc_point_rows(ml_summary: dict[str, Any]) -> list[dict[str, Any]]:
@@ -314,6 +358,10 @@ def collect_workbook_specs(workbook: WorkbookInput) -> list[SheetSpec]:
             _spec("Window_Accuracies", "Per walk-forward window out-of-sample accuracy", sheet_window_accuracy_rows(ml_summary)),
             _spec("Feature_Importance", "Model feature importance values", sheet_feature_importance_rows(ml_summary)),
             _spec("SHAP_Importance", "Mean absolute SHAP values by class and feature", sheet_shap_importance_rows(ml_summary)),
+            _spec("SHAP_Interactions", "Top pairwise SHAP interaction strengths", sheet_shap_interaction_rows(ml_summary)),
+            _spec("Partial_Dependence", "Marginal P(up) vs feature grid", sheet_partial_dependence_rows(ml_summary)),
+            _spec("SHAP_Trade_Slices", "SHAP by winning vs losing trade deciles", sheet_shap_slice_rows(ml_summary)),
+            _spec("Tree_Rules", "Representative tree rules export", sheet_tree_rules_rows(ml_summary)),
             _spec("ROC_Points", "ROC curve points (one-vs-rest) by class", sheet_roc_point_rows(ml_summary)),
         ]
         metrics = workbook.run_results.get("metrics")

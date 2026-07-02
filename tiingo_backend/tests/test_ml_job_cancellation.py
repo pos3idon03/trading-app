@@ -60,6 +60,9 @@ async def test_execute_ml_label_search_propagates_cancellation():
                     "label_mode": "binary",
                     "horizons": [5],
                     "thresholds": [0.01],
+                    "model_configs": [
+                        {"model_type": "ml_logistic", "label_mode": "binary"},
+                    ],
                 },
                 job_id=job_id,
             )

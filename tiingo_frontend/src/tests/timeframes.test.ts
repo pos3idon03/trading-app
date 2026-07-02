@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildOhlcvQuery,
+  normalizeDateRangeForApi,
   DAILY_PLUS_BAR_LIMIT,
   INTRADAY_BAR_LIMIT,
   toDailyApiRange,
@@ -41,6 +42,17 @@ describe('buildOhlcvQuery', () => {
       start: range.start,
       end: range.end,
     });
+  });
+});
+
+describe('normalizeDateRangeForApi', () => {
+  it('fills missing end date for open-ended custom ranges', () => {
+    const normalized = normalizeDateRangeForApi(
+      { preset: 'MAX', start: '2020-01-01' },
+      '1d',
+    );
+    expect(normalized.start).toBe('2020-01-01');
+    expect(normalized.end).toBeTruthy();
   });
 });
 

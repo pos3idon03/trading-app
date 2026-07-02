@@ -3,16 +3,20 @@ from typing import Optional
 from features.backtesting.bar_context import MultiTimeframeContext
 from features.backtesting.indicators import compute_rsi, compute_sma
 from features.ml.price_features import (
+    FEATURE_WARMUP_BARS,
     _pct_return,
     _rolling_vol,
     _sma_distance,
-    FEATURE_WARMUP_BARS,
 )
 
 _CONTEXT_SUFFIXES = ("ret_5", "ret_20", "rsi_14", "sma20_dist")
 
 
-def _compact_features_for_bars(bars: list[dict]) -> list[Optional[list[float]]]:
+def _compact_features_for_bars(
+    bars: list[dict],
+    *,
+    warmup_bars: int = FEATURE_WARMUP_BARS,
+) -> list[Optional[list[float]]]:
     if not bars:
         return []
 
@@ -22,7 +26,7 @@ def _compact_features_for_bars(bars: list[dict]) -> list[Optional[list[float]]]:
     rows: list[Optional[list[float]]] = []
 
     for index in range(len(bars)):
-        if index < FEATURE_WARMUP_BARS:
+        if index < warmup_bars:
             rows.append(None)
             continue
         values = [
@@ -41,6 +45,8 @@ def _compact_features_for_bars(bars: list[dict]) -> list[Optional[list[float]]]:
 def build_context_feature_matrix(
     bar_context: MultiTimeframeContext,
     context_timeframes: list[str],
+    *,
+    warmup_bars: int = FEATURE_WARMUP_BARS,
 ) -> tuple[list[str], list[Optional[list[float]]], list[str]]:
     decision_count = len(bar_context.decision_bars)
     if not context_timeframes:
@@ -60,7 +66,7 @@ def build_context_feature_matrix(
 
         tf_names = [f"ctx_{timeframe}_{suffix}" for suffix in _CONTEXT_SUFFIXES]
         tf_bars = bar_context.bars_for(timeframe)
-        tf_features = _compact_features_for_bars(tf_bars)
+        tf_features = _compact_features_for_bars(tf_bars, warmup_bars=warmup_bars)
         aligned: list[Optional[list[float]]] = []
 
         for decision_index in range(decision_count):

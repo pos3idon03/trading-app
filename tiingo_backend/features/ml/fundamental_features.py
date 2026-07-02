@@ -99,6 +99,8 @@ def _build_metric_columns(
     metric_code: str,
     observations: list[dict],
     period_type: str,
+    *,
+    include_level: bool = True,
 ) -> tuple[list[str], list[list[Optional[float]]]]:
     levels, days_since, _ = forward_fill_asof(bar_dates, observations, publication_lag_days=0)
     yoy_values: list[Optional[float]] = [None] * len(bar_dates)
@@ -119,13 +121,19 @@ def _build_metric_columns(
         if days is not None:
             quarters_since[index] = round(days / _DAYS_PER_QUARTER, 2)
 
-    names = [
-        f"{metric_code}_level",
-        f"{metric_code}_yoy",
-        f"{metric_code}_qoq",
-        f"{metric_code}_quarters_since_report",
-    ]
-    columns = [levels, yoy_values, qoq_values, quarters_since]
+    names: list[str] = []
+    columns: list[list[Optional[float]]] = []
+    if include_level:
+        names.append(f"{metric_code}_level")
+        columns.append(levels)
+    names.extend(
+        [
+            f"{metric_code}_yoy",
+            f"{metric_code}_qoq",
+            f"{metric_code}_quarters_since_report",
+        ]
+    )
+    columns.extend([yoy_values, qoq_values, quarters_since])
     return names, columns
 
 
@@ -134,10 +142,14 @@ def build_fundamental_feature_matrix(
     metric_data: dict[str, list[dict]],
     metric_codes: list[str],
     period_type: str = "quarterly",
+    *,
+    fundamental_features_mode: str = "full",
+    include_valuation_kpis: bool = True,
 ) -> tuple[list[str], list[Optional[list[float]]], list[str]]:
     if not bars or not metric_codes:
         return [], [None] * len(bars), []
 
+    include_level = fundamental_features_mode != "growth_only"
     bar_dates = bar_dates_from_bars(bars)
     feature_names: list[str] = []
     column_data: list[list[Optional[float]]] = []
@@ -156,9 +168,25 @@ def build_fundamental_feature_matrix(
                 "for point-in-time ML features.",
             )
         observations = _rows_to_observations(rows)
-        names, columns = _build_metric_columns(bar_dates, metric_code, observations, period_type)
+        names, columns = _build_metric_columns(
+            bar_dates,
+            metric_code,
+            observations,
+            period_type,
+            include_level=include_level,
+        )
         feature_names.extend(names)
         column_data.extend(columns)
+
+    if include_valuation_kpis and "eps" in metric_data:
+        from features.ml.fundamental_kpis import PE_RATIO_COLUMN, build_pe_ratio_column
+
+        eps_rows = metric_data.get("eps", [])
+        if eps_rows:
+            eps_observations = _rows_to_observations(eps_rows)
+            pe_values = build_pe_ratio_column(bars, eps_observations)
+            feature_names.append(PE_RATIO_COLUMN)
+            column_data.append(pe_values)
 
     if not feature_names:
         return [], [None] * len(bars), warnings

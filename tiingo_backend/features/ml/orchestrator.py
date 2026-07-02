@@ -15,13 +15,15 @@ from features.backtesting.engine import (
     serialize_simulation,
 )
 from features.backtesting.metrics import compute_metrics
+from features.backtesting.trade_exits import resolve_trade_exit_config
 from features.ml.artifacts import (
     build_feature_schema,
     delete_model_artifact,
-    load_model_artifact,
+    load_model_bundle,
     save_model_artifact,
     validate_feature_schema,
 )
+from features.ml.feature_preprocessor import fit_feature_preprocessor
 from features.ml.catalog import (
     feature_mode_uses_macro,
     label_search_horizons,
@@ -31,15 +33,18 @@ from features.ml.catalog import (
     resolve_macro_series_ids,
     validate_inference_params,
     validate_ml_params,
+    validate_model_label_search_configs,
 )
 from features.ml.data_preview import build_data_preview
 from features.ml.evaluation import (
     build_confusion_matrix,
     build_roc_curves,
     compute_classification_metrics,
+    extract_coefficient_importance,
     extract_feature_importance,
 )
 from features.ml.explainability import compute_shap_importance
+from features.ml.explainability_advanced import enrich_ml_summary_advanced
 from features.ml.feature_builder import (
     _resolve_context_timeframes,
     _resolve_strategy_ids,
@@ -62,7 +67,7 @@ from features.ml.inference_holdout import (
 from features.ml.label_search import (
     DEFAULT_LABEL_SEARCH_MODEL_TYPES,
     evaluate_label_combo,
-    label_search_combos,
+    label_search_work_units,
 )
 from features.ml.labels import build_labels, build_labels_for_ml_params, build_meta_label_targets
 from features.ml.meta_label_events import build_event_mask
@@ -81,20 +86,7 @@ from features.ml.threshold_search import (
     evaluate_ternary_threshold_gate,
     ternary_threshold_gates,
 )
-from features.ml.trainer import train_model
-from features.tiingo.entitlement import is_fundamentals_entitled
-
-
-def _validate_fundamentals_entitlement(symbol: str, feature_mode: str) -> None:
-    if feature_mode != "prices_macro_fundamentals":
-        return
-    settings = get_settings()
-    if is_fundamentals_entitled(symbol, settings.tiingo_fundamentals_tier):
-        return
-    raise ValueError(
-        f"Symbol {symbol.upper()} is not entitled for fundamentals under tier "
-        f"{settings.tiingo_fundamentals_tier}. Use an entitled symbol or upgrade tier."
-    )
+from features.ml.trainer import _resolve_classifier, train_model
 
 
 def get_ml_model_catalog() -> list[dict]:
@@ -136,15 +128,23 @@ def _build_enriched_ml_summary(
     x_rows_for_shap: list[list[float]],
     model_classes: list[int],
     importance_model: Any | None,
+    importance_feature_names: list[str] | None = None,
     evaluation_metadata: dict | None = None,
 ) -> dict:
     label_mode = str(validated_params.get("label_mode") or "binary")
     metrics = compute_classification_metrics(y_true, y_pred)
-    importance = (
-        extract_feature_importance(importance_model, feature_names)
-        if importance_model is not None
-        else []
-    )
+    model_feature_names = importance_feature_names or feature_names
+    importance = []
+    coefficient_importance: list[dict] = []
+    if importance_model is not None:
+        importance = extract_feature_importance(importance_model, model_feature_names)
+        if model_type == "ml_logistic":
+            coefficient_importance = extract_coefficient_importance(
+                importance_model,
+                model_feature_names,
+            )
+            if not importance and coefficient_importance:
+                importance = coefficient_importance
     confusion_labels = sorted(set(y_true) | set(y_pred)) if y_true else [0, 1]
     roc_curves, auc_scores = build_roc_curves(y_true, y_proba, model_classes or confusion_labels)
     shap_rows: list[dict] = []
@@ -154,8 +154,9 @@ def _build_enriched_ml_summary(
             shap_rows = compute_shap_importance(
                 importance_model,
                 x_rows_for_shap,
-                feature_names,
+                model_feature_names,
                 model_classes or confusion_labels,
+                model_type=model_type,
             )
         except Exception as exc:
             shap_warnings.append(f"SHAP explainability skipped: {exc}")
@@ -180,11 +181,13 @@ def _build_enriched_ml_summary(
         ),
         "confusion_labels": confusion_labels,
         "feature_importance": importance,
+        "coefficient_importance": coefficient_importance,
         "roc_curves": roc_curves,
         "auc_scores": auc_scores,
         "shap_importance": shap_rows,
         "signal_counts": count_signals(signals),
         "feature_names": feature_names,
+        "model_feature_names": model_feature_names,
         "macro_series_ids": macro_series_ids,
         "macro_warnings": [*macro_warnings, *shap_warnings],
         "fundamental_metrics": fundamental_metrics,
@@ -208,6 +211,7 @@ async def _load_bars_and_features(
     progress_start: int = 10,
     progress_end: int = 50,
     min_bars: int | None = None,
+    returns_panel=None,
 ) -> tuple[list[dict], list[str], list, list[str], list[str], list[str], list[str], list[str], list[str]]:
     from features.backtesting.bar_context import build_multi_timeframe_context
     from features.ml.job_checkpoints import checkpoint_ml_job
@@ -235,9 +239,14 @@ async def _load_bars_and_features(
     mid_progress = progress_start + (progress_end - progress_start) // 2
     await checkpoint_ml_job(session, job_id, mid_progress)
 
+    from features.ml.job_checkpoints import run_cpu_bound_step
+
     bar_context = None
     if len(required_tfs) > 1:
-        bar_context = build_multi_timeframe_context(
+        bar_context = await run_cpu_bound_step(
+            session,
+            job_id,
+            build_multi_timeframe_context,
             decision_timeframe=timeframe,
             decision_bars=bars,
             bars_by_timeframe=bars_by_tf,
@@ -261,6 +270,10 @@ async def _load_bars_and_features(
         symbol=instrument["symbol"],
         decision_timeframe=timeframe,
         bar_context=bar_context,
+        returns_panel=returns_panel,
+        job_id=job_id,
+        progress_start=mid_progress,
+        progress_end=progress_end,
     )
     all_macro_warnings = [*macro_warnings, *context_warnings, *strategy_warnings]
     await checkpoint_ml_job(session, job_id, progress_end)
@@ -304,8 +317,6 @@ async def train_ml_model_for_symbol(
         asset_type=asset_type,
     )
 
-    _validate_fundamentals_entitlement(instrument["symbol"], validated_params["feature_mode"])
-
     (
         _bars,
         feature_names,
@@ -335,6 +346,18 @@ async def train_ml_model_for_symbol(
     if len(x_rows) < 2 or len(set(y_rows)) < 2:
         raise ValueError("Insufficient labeled train samples to train a model")
 
+    closes = [float(bar["close"]) for bar in _bars]
+    preprocessor = fit_feature_preprocessor(
+        x_rows,
+        y_rows,
+        feature_names,
+        validated_params,
+        closes=closes,
+        train_indices=train_indices,
+    )
+    x_rows = preprocessor.transform(x_rows)
+    model_feature_names = list(preprocessor.output_feature_names)
+
     await checkpoint_ml_job(session, job_id, 55)
     trained = train_model(model_type, x_rows, y_rows, validated_params)
     predictions = [1 if prob >= 0.5 else 0 for prob in trained.model.predict(x_rows).tolist()]
@@ -343,6 +366,7 @@ async def train_ml_model_for_symbol(
         labels,
         holdout_indices,
     )
+    holdout_x = preprocessor.transform(holdout_x)
     holdout_predictions = [
         1 if prob >= 0.5 else 0 for prob in trained.model.predict(holdout_x).tolist()
     ]
@@ -356,6 +380,21 @@ async def train_ml_model_for_symbol(
         start=start,
         end=end,
     )
+    model_classes = list(_resolve_classifier(trained.model).classes_)
+    shap_for_train: list[dict] = []
+    shap_source = holdout_x if holdout_x else x_rows
+    if shap_source:
+        try:
+            shap_for_train = compute_shap_importance(
+                trained.model,
+                shap_source,
+                model_feature_names,
+                model_classes,
+                model_type=model_type,
+            )
+        except Exception:
+            shap_for_train = []
+
     train_metrics = {
         **compute_classification_metrics(y_rows, predictions),
         "train_accuracy": round(trained.train_accuracy, 4),
@@ -363,6 +402,7 @@ async def train_ml_model_for_symbol(
         "holdout_accuracy": round(holdout_metrics["accuracy"], 4),
         "training_symbol": instrument["symbol"],
         "timeframe": timeframe,
+        "shap_importance": shap_for_train,
         **holdout_metadata,
     }
 
@@ -382,7 +422,11 @@ async def train_ml_model_for_symbol(
         train_metrics=train_metrics,
         artifact_path=None,
     )
-    artifact_path = save_model_artifact(trained.model, row["id"])
+    artifact_path = save_model_artifact(
+        trained.model,
+        row["id"],
+        preprocessor=preprocessor,
+    )
     row = await ml_model_dal.update_artifact_path(session, row["id"], artifact_path)
     await session.commit()
     return row
@@ -444,6 +488,8 @@ async def _run_walk_forward_backtest(
         test_bars=int(validated_params["test_bars"]),
         step_bars=int(validated_params["step_bars"]),
         sample_mask=sample_mask,
+        feature_names=feature_names,
+        closes=[float(b["close"]) for b in bars],
     )
     min_class_probability = validated_params.get("min_class_probability")
     min_class_prob = float(min_class_probability) if min_class_probability is not None else None
@@ -482,11 +528,27 @@ async def _run_walk_forward_backtest(
         y_true=walk_forward.oos_y_true,
         y_pred=walk_forward.oos_y_pred,
         y_proba=walk_forward.oos_y_proba,
-        x_rows_for_shap=walk_forward.oos_x_rows,
+        x_rows_for_shap=walk_forward.explainability_x_rows or walk_forward.oos_x_rows,
         model_classes=walk_forward.model_classes,
         importance_model=walk_forward.last_trained_model,
+        importance_feature_names=(
+            walk_forward.explainability_feature_names or feature_names
+        ),
     )
-    return signals, ml_summary
+    ml_summary = {
+        **ml_summary,
+        "pruned_features": walk_forward.pruned_features,
+        "regime_feature_selection": walk_forward.regime_feature_selection,
+    }
+    wf_context = {
+        "importance_model": walk_forward.last_trained_model,
+        "oos_x_rows": walk_forward.explainability_x_rows or walk_forward.oos_x_rows,
+        "oos_bar_indices": (
+            walk_forward.explainability_bar_indices or walk_forward.oos_bar_indices
+        ),
+        "feature_names": walk_forward.explainability_feature_names or feature_names,
+    }
+    return signals, ml_summary, wf_context
 
 
 async def _run_inference_backtest(
@@ -515,11 +577,12 @@ async def _run_inference_backtest(
     validate_feature_schema(saved["feature_schema"], feature_names)
 
     label_mode = str(validated_params.get("label_mode") or "binary")
-    model = load_model_artifact(saved["artifact_path"])
+    model, preprocessor = load_model_bundle(saved["artifact_path"])
     probabilities, class_probabilities, class_predictions = predict_with_frozen_model(
         model,
         feature_rows,
         label_mode=label_mode,
+        preprocessor=preprocessor,
     )
     min_class_probability = validated_params.get("min_class_probability")
     min_class_prob = float(min_class_probability) if min_class_probability is not None else None
@@ -536,7 +599,7 @@ async def _run_inference_backtest(
     aligned_y_true: list[int] = []
     aligned_y_pred: list[int] = []
     aligned_y_proba: list[list[float]] = []
-    aligned_x_rows: list[list[float]] = []
+    aligned_raw_rows: list[list[float]] = []
     for index, (features, label, prob, class_pred, class_probs) in enumerate(
         zip(
             feature_rows,
@@ -553,7 +616,13 @@ async def _run_inference_backtest(
         aligned_y_true.append(label)
         aligned_y_pred.append(int(class_pred))
         aligned_y_proba.append(class_probs)
-        aligned_x_rows.append(features)
+        aligned_raw_rows.append(features)
+
+    shap_x_rows = aligned_raw_rows
+    shap_feature_names = feature_names
+    if preprocessor is not None:
+        shap_feature_names = list(preprocessor.output_feature_names)
+        shap_x_rows = preprocessor.transform(aligned_raw_rows)
 
     eval_signals = signals[eval_start_index:] if eval_start_index > 0 else signals
     ml_summary = _build_enriched_ml_summary(
@@ -573,9 +642,10 @@ async def _run_inference_backtest(
         y_true=aligned_y_true,
         y_pred=aligned_y_pred,
         y_proba=aligned_y_proba,
-        x_rows_for_shap=aligned_x_rows,
+        x_rows_for_shap=shap_x_rows,
         model_classes=list(model.classes_),
         importance_model=model,
+        importance_feature_names=shap_feature_names,
         evaluation_metadata=evaluation_metadata,
     )
     return signals, ml_summary, saved["model_type"]
@@ -593,8 +663,29 @@ async def run_ml_backtest_for_symbol(
     initial_cash: float,
     commission_bps: float,
     job_id: UUID | None = None,
+    symbols: list[str] | None = None,
+    universe_id: int | None = None,
 ) -> dict:
     from features.ml.job_checkpoints import checkpoint_ml_job
+
+    extra_symbols = [s.upper() for s in (symbols or []) if s]
+    if universe_id is not None or len(extra_symbols) > 1:
+        from features.ml.universe_backtest_runner import run_ml_universe_backtest
+
+        return await run_ml_universe_backtest(
+            session,
+            primary_symbol=symbol,
+            model_type=model_type,
+            params=params,
+            timeframe=timeframe,
+            start=start,
+            end=end,
+            initial_cash=initial_cash,
+            commission_bps=commission_bps,
+            symbols=extra_symbols or None,
+            universe_id=universe_id,
+            job_id=job_id,
+        )
 
     validate_timeframe(timeframe, "decision timeframe")
 
@@ -607,14 +698,15 @@ async def run_ml_backtest_for_symbol(
         raise LookupError(f"Instrument not found: {symbol.upper()}")
 
     asset_type = str(instrument.get("asset_type") or "equity")
-    validated_params = validate_ml_params(
-        model_type,
-        raw_params,
-        timeframe,
-        asset_type=asset_type,
-    )
-
-    _validate_fundamentals_entitlement(instrument["symbol"], validated_params["feature_mode"])
+    validated_params = {
+        **validate_ml_params(
+            model_type,
+            raw_params,
+            timeframe,
+            asset_type=asset_type,
+        ),
+        "model_type": model_type,
+    }
 
     saved_model: dict | None = None
     if model_id:
@@ -680,6 +772,7 @@ async def run_ml_backtest_for_symbol(
         slippage_bps = float(validated_params.get("slippage_bps", 0.0))
         effective_model_type = model_type
         eval_start_index = 0
+        wf_context: dict | None = None
         await checkpoint_ml_job(session, job_id, 55)
         if model_id:
             if saved_model is None:
@@ -706,7 +799,7 @@ async def run_ml_backtest_for_symbol(
                 evaluation_metadata=scope_metadata,
             )
         else:
-            signals, ml_summary = await _run_walk_forward_backtest(
+            signals, ml_summary, wf_context = await _run_walk_forward_backtest(
                 model_type=model_type,
                 validated_params=validated_params,
                 feature_names=feature_names,
@@ -760,6 +853,7 @@ async def run_ml_backtest_for_symbol(
                 "signal_counts": count_signals(signals_for_sim),
             }
 
+        exit_config = resolve_trade_exit_config(validated_params)
         strategy_result = run_backtest_with_signals(
             bars_for_sim,
             signals_for_sim,
@@ -767,6 +861,7 @@ async def run_ml_backtest_for_symbol(
             commission_bps,
             decision_timeframe=timeframe,
             slippage_bps=slippage_bps,
+            exit_config=exit_config,
         )
         eval_offset = resolve_evaluation_start_index(
             bars_for_sim,
@@ -786,6 +881,7 @@ async def run_ml_backtest_for_symbol(
                 commission_bps,
                 decision_timeframe=timeframe,
                 slippage_bps=slippage_bps,
+                exit_config=exit_config,
             )
             benchmark_result = run_buy_and_hold_benchmark(
                 eval_bars,
@@ -806,6 +902,8 @@ async def run_ml_backtest_for_symbol(
         eval_reason = "first_trade" if strategy_result.trades else "simulation_start"
         ml_summary = {
             **ml_summary,
+            "exit_policy": exit_config.policy,
+            "max_hold_bars": exit_config.max_hold_bars,
             **build_evaluation_metadata(
                 bars=bars,
                 start_index=sim_start + eval_offset,
@@ -822,6 +920,30 @@ async def run_ml_backtest_for_symbol(
         )
         strategy_payload = serialize_simulation(strategy_result)
         benchmark_payload = serialize_simulation(benchmark_result)
+
+        if wf_context:
+            ml_summary = enrich_ml_summary_advanced(
+                ml_summary=ml_summary,
+                importance_model=wf_context.get("importance_model"),
+                oos_x_rows=wf_context.get("oos_x_rows") or [],
+                oos_bar_indices=wf_context.get("oos_bar_indices") or [],
+                trades=strategy_payload["trades"],
+                bars=bars,
+                feature_names=wf_context.get("feature_names"),
+            )
+
+        from features.backtesting.survivorship import build_survivorship_warnings
+
+        requested_end = end.date() if end else None
+        ml_summary = {
+            **ml_summary,
+            "survivorship_warnings": build_survivorship_warnings(
+                symbols=[instrument["symbol"]],
+                instruments={instrument["symbol"]: instrument},
+                bars_by_symbol={instrument["symbol"]: bars},
+                requested_end=requested_end,
+            ),
+        }
 
         final_params = {**validated_params, "ml_summary": ml_summary}
         if model_id:
@@ -974,11 +1096,9 @@ async def preview_ml_data_for_symbol(
     instrument = await instrument_dal.get_by_symbol(session, symbol)
     if not instrument:
         raise LookupError(f"Instrument not found: {symbol.upper()}")
-    _validate_fundamentals_entitlement(instrument["symbol"], validated_params["feature_mode"])
-
     (
         bars,
-        _feature_names,
+        feature_names,
         feature_rows,
         macro_warnings,
         fundamental_warnings,
@@ -1006,19 +1126,50 @@ async def preview_ml_data_for_symbol(
         end,
     )
     await checkpoint_ml_job(session, job_id, 70)
+    preview_params = {**validated_params, "model_type": model_type}
     preview = await build_data_preview(
         session,
         bars_by_timeframe=bars_by_tf,
         decision_timeframe=timeframe,
-        validated_params=validated_params,
+        validated_params=preview_params,
         macro_series_ids=macro_series_ids,
         fundamental_metrics=fundamental_metrics,
         context_warnings=[*context_warnings, *macro_warnings, *fundamental_warnings],
         strategy_warnings=strategy_warnings,
         bars=bars,
         feature_rows=feature_rows,
+        feature_names=feature_names,
     )
     return preview
+
+
+def _resolve_label_search_configs(
+    *,
+    model_configs: list[dict[str, str]] | None,
+    model_type: str | None,
+    model_types: list[str] | None,
+    label_mode: str,
+) -> list[tuple[str, str]]:
+    validated = validate_model_label_search_configs(model_configs)
+    if validated:
+        return validated
+    resolved_models = model_types
+    if resolved_models is None and model_type is not None:
+        resolved_models = [model_type]
+    if resolved_models is None:
+        resolved_models = DEFAULT_LABEL_SEARCH_MODEL_TYPES
+    return [(current, label_mode) for current in resolved_models]
+
+
+def _label_search_total_work(
+    configs: list[tuple[str, str]],
+    horizons: list[int],
+    thresholds: list[float],
+) -> int:
+    total = 0
+    for _, mode in configs:
+        total += len(label_search_work_units(mode, horizons, thresholds))
+    return max(total, 1)
 
 
 async def search_ml_labels_for_symbol(
@@ -1034,13 +1185,20 @@ async def search_ml_labels_for_symbol(
     thresholds: list[float],
     model_type: str | None = None,
     model_types: list[str] | None = None,
+    model_configs: list[dict[str, str]] | None = None,
     on_progress: Callable[[int], None] | None = None,
     job_id: UUID | None = None,
 ) -> list[dict]:
     from features.ml.job_checkpoints import checkpoint_ml_job, progress_in_band
 
     validate_timeframe(timeframe, "decision timeframe")
-    probe_model = model_type or (model_types[0] if model_types else "ml_logistic")
+    configs = _resolve_label_search_configs(
+        model_configs=model_configs,
+        model_type=model_type,
+        model_types=model_types,
+        label_mode=label_mode,
+    )
+    probe_model = configs[0][0]
     validated_params = validate_ml_params(probe_model, params, timeframe)
     if not horizons:
         horizons = label_search_horizons(int(validated_params["label_horizon"]))
@@ -1064,23 +1222,17 @@ async def search_ml_labels_for_symbol(
         progress_start=10,
         progress_end=40,
     )
-    resolved_models = model_types
-    if resolved_models is None and model_type is not None:
-        resolved_models = [model_type]
-    if resolved_models is None:
-        resolved_models = DEFAULT_LABEL_SEARCH_MODEL_TYPES
-
-    combos = label_search_combos(label_mode, horizons, thresholds)
     label_method = str(validated_params.get("label_method") or "endpoint")
     train_bars = int(validated_params["train_bars"])
     test_bars = int(validated_params["test_bars"])
     step_bars = int(validated_params["step_bars"])
-    total_work = max(len(resolved_models) * len(combos), 1)
+    total_work = _label_search_total_work(configs, horizons, thresholds)
 
     combined: list[dict] = []
     done = 0
-    for current_model in resolved_models:
-        for horizon, threshold in combos:
+    for current_model, current_mode in configs:
+        work_units = label_search_work_units(current_mode, horizons, thresholds)
+        for horizon, threshold in work_units:
             await checkpoint_ml_job(
                 session,
                 job_id,
@@ -1090,7 +1242,8 @@ async def search_ml_labels_for_symbol(
                 evaluate_label_combo,
                 bars=bars,
                 feature_rows=feature_rows,
-                label_mode=label_mode,
+                feature_names=_feature_names,
+                label_mode=current_mode,
                 horizon=horizon,
                 threshold=threshold,
                 label_method=label_method,
@@ -1098,6 +1251,7 @@ async def search_ml_labels_for_symbol(
                 test_bars=test_bars,
                 step_bars=step_bars,
                 model_type=current_model,
+                ml_params=validated_params,
             )
             combined.append(result)
             done += 1
@@ -1190,6 +1344,17 @@ async def search_ml_thresholds_for_symbol(
             )
         return results
 
+    from features.ml.threshold_search import (
+        evaluate_binary_threshold_pnl,
+        threshold_sort_key,
+    )
+
+    exit_config = resolve_trade_exit_config(validated_params)
+    asset_type = str(instrument.get("asset_type") or "equity")
+    slippage_bps = float(validated_params.get("slippage_bps", 0.0))
+    train_bars = int(validated_params["train_bars"])
+    initial_cash_search = 10_000.0
+
     combos = binary_threshold_combos(buy_thresholds, sell_thresholds)
     total_work = max(len(combos), 1)
     results = []
@@ -1201,16 +1366,24 @@ async def search_ml_thresholds_for_symbol(
         )
         results.append(
             await asyncio.to_thread(
-                evaluate_binary_threshold_combo,
-                label_mode=label_mode,
+                evaluate_binary_threshold_pnl,
+                bars=bars,
                 probabilities=walk_forward.probabilities,
-                y_true=walk_forward.oos_y_true,
-                y_proba=walk_forward.oos_y_proba,
+                label_mode=label_mode,
                 buy_threshold=buy_threshold,
                 sell_threshold=sell_threshold,
+                y_true=walk_forward.oos_y_true,
+                y_proba=walk_forward.oos_y_proba,
+                train_bars=train_bars,
+                initial_cash=initial_cash_search,
+                commission_bps=float(validated_params.get("commission_bps", 5.0)),
+                slippage_bps=slippage_bps,
+                exit_config=exit_config,
+                decision_timeframe=timeframe,
+                asset_type=asset_type,
             )
         )
-    results.sort(key=lambda row: (row.get("f1_macro") or 0.0, row.get("f1") or 0.0), reverse=True)
+    results.sort(key=threshold_sort_key, reverse=True)
     return results
 
 
@@ -1288,8 +1461,6 @@ async def export_training_data_for_symbol(
     if not instrument:
         raise LookupError(f"Instrument not found: {symbol.upper()}")
 
-    _validate_fundamentals_entitlement(instrument["symbol"], validated_params["feature_mode"])
-
     (
         bars,
         feature_names,
@@ -1363,8 +1534,6 @@ async def export_workbook_for_symbol(
     instrument = await instrument_dal.get_by_symbol(session, symbol)
     if not instrument:
         raise LookupError(f"Instrument not found: {symbol.upper()}")
-
-    _validate_fundamentals_entitlement(instrument["symbol"], validated_params["feature_mode"])
 
     (
         bars,

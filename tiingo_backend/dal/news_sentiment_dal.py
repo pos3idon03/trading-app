@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -378,6 +378,124 @@ async def fetch_scored_articles_for_rollup(
         }
         for row in rows
     ]
+
+
+def _watchlist_tickers_overlap(symbols: list[str]):
+    return or_(*(NewsArticle.tickers.any(symbol) for symbol in symbols))
+
+
+def _normalize_watchlist_tickers(symbols: list[str]) -> list[str]:
+    return [symbol.lower().strip() for symbol in symbols if symbol and symbol.strip()]
+
+
+async def list_watchlist_scored_articles_in_window(
+    session: AsyncSession,
+    *,
+    symbols: list[str],
+    since: datetime,
+    finbert_model_name: str,
+    finbert_model_version: str,
+    llm_model_name: str,
+    llm_model_version: str,
+    llm_enabled: bool,
+) -> list[dict]:
+    normalized = _normalize_watchlist_tickers(symbols)
+    if not normalized:
+        return []
+
+    q = _watchlist_sentiment_query(
+        finbert_model_name=finbert_model_name,
+        finbert_model_version=finbert_model_version,
+        llm_model_name=llm_model_name,
+        llm_model_version=llm_model_version,
+        llm_enabled=llm_enabled,
+    ).where(
+        NewsArticle.published_at >= since,
+        _watchlist_tickers_overlap(normalized),
+    )
+    rows = (await session.execute(q)).all()
+    return _effective_articles_from_rows(rows)
+
+
+def _watchlist_sentiment_query(
+    *,
+    finbert_model_name: str,
+    finbert_model_version: str,
+    llm_model_name: str,
+    llm_model_version: str,
+    llm_enabled: bool,
+):
+    _ = llm_enabled
+    return (
+        select(
+            NewsArticle.id,
+            NewsArticle.published_at,
+            NewsArticle.tickers,
+            NewsSentiment.label,
+            NewsSentiment.score_positive,
+            NewsSentiment.score_negative,
+            NewsSentiment.score_neutral,
+            NewsSentiment.confidence,
+            NewsSentimentEnrichment.refined_label,
+            NewsSentimentEnrichment.refined_confidence,
+            NewsSentimentEnrichment.score_positive.label("enrich_score_positive"),
+            NewsSentimentEnrichment.score_negative.label("enrich_score_negative"),
+            NewsSentimentEnrichment.score_neutral.label("enrich_score_neutral"),
+        )
+        .join(
+            NewsSentiment,
+            and_(
+                NewsSentiment.news_article_id == NewsArticle.id,
+                NewsSentiment.model_name == finbert_model_name,
+                NewsSentiment.model_version == finbert_model_version,
+                NewsSentiment.error.is_(None),
+            ),
+        )
+        .outerjoin(
+            NewsSentimentEnrichment,
+            and_(
+                NewsSentimentEnrichment.news_article_id == NewsArticle.id,
+                NewsSentimentEnrichment.model_name == llm_model_name,
+                NewsSentimentEnrichment.model_version == llm_model_version,
+                NewsSentimentEnrichment.error.is_(None),
+            ),
+        )
+    )
+
+
+def _effective_articles_from_rows(rows) -> list[dict]:
+    articles: list[dict] = []
+    for row in rows:
+        finbert = {
+            "label": row.label,
+            "score_positive": row.score_positive,
+            "score_negative": row.score_negative,
+            "score_neutral": row.score_neutral,
+            "confidence": row.confidence,
+        }
+        enrichment = None
+        if row.refined_label is not None:
+            enrichment = {
+                "refined_label": row.refined_label,
+                "refined_confidence": row.refined_confidence,
+                "score_positive": row.enrich_score_positive,
+                "score_negative": row.enrich_score_negative,
+                "score_neutral": row.enrich_score_neutral,
+            }
+        effective = resolve_effective_sentiment(finbert, enrichment)
+        effective_dict = effective_to_dict(effective)
+        if effective_dict is None:
+            continue
+        articles.append(
+            {
+                "id": row.id,
+                "published_at": row.published_at,
+                "tickers": row.tickers or [],
+                "label": effective_dict["label"],
+                "confidence": effective_dict["confidence"],
+            }
+        )
+    return articles
 
 
 def utc_now() -> datetime:

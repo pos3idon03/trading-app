@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dal import instrument_dal, ml_model_dal
 from features.ml.artifacts import (
     align_feature_matrix_to_schema,
-    load_model_artifact,
+    load_model_bundle,
     validate_feature_schema,
 )
 from features.ml.catalog import (
@@ -116,30 +116,46 @@ async def run_live_inference(
         raise ValueError("No usable features for latest bar")
 
     label_mode = str(validated_params.get("label_mode") or "binary")
-    model = load_model_artifact(saved["artifact_path"])
+    model, preprocessor = load_model_bundle(saved["artifact_path"])
     probabilities, class_probabilities, class_predictions = predict_with_frozen_model(
         model,
         feature_rows,
         label_mode=label_mode,
+        preprocessor=preprocessor,
+    )
+
+    prepared_rows = (
+        preprocessor.transform_optional_rows(feature_rows)
+        if preprocessor is not None
+        else feature_rows
+    )
+    explainability_names = (
+        preprocessor.output_feature_names
+        if preprocessor is not None
+        else feature_names
     )
 
     last_prob = probabilities[last_index]
     last_class_pred = class_predictions[last_index]
     last_class_probs = class_probabilities[last_index]
-    last_features = feature_rows[last_index]
+    last_features = prepared_rows[last_index]
     background_rows = [
-        row for row in feature_rows[: last_index + 1] if row is not None
+        row for row in prepared_rows[: last_index + 1] if row is not None
     ]
     classes = list(_resolve_classifier(model).classes_)
     explainability = compute_instance_contributions(
         model,
         last_features,
         background_rows,
-        feature_names,
+        explainability_names,
         classes,
+        model_type=saved["model_type"],
     ) if last_features is not None else {
         "method": "unavailable",
+        "base_value": None,
+        "predicted_value": None,
         "top_contributors": [],
+        "ordered_contributors": [],
         "warnings": ["Latest bar has no usable features"],
     }
     min_class_probability = validated_params.get("min_class_probability")

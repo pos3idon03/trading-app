@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { StrategyCatalogItem } from '../api/backtestTypes';
-import { eligibleStrategyFeatureOptions } from '../utils/mlStrategyFeatures';
+import {
+  eligibleStrategyFeatureOptions,
+  metaLabelBaseStrategyOptions,
+} from '../utils/mlStrategyFeatures';
 
 const CATALOG: StrategyCatalogItem[] = [
   {
@@ -43,6 +46,14 @@ const CATALOG: StrategyCatalogItem[] = [
     constraints: {},
     ensemble_eligible: true,
   },
+  {
+    id: 'crypto_trend_entry',
+    label: 'Crypto Trend Entry',
+    description: '',
+    params: {},
+    constraints: {},
+    ensemble_eligible: false,
+  },
 ];
 
 describe('eligibleStrategyFeatureOptions', () => {
@@ -66,5 +77,21 @@ describe('eligibleStrategyFeatureOptions', () => {
     expect(options.find((item) => item.id === 'donchian_breakout')?.label).toBe(
       'Donchian Breakout',
     );
+  });
+});
+
+describe('metaLabelBaseStrategyOptions', () => {
+  it('includes crypto_trend_entry plus ensemble-eligible strategies', () => {
+    const ids = metaLabelBaseStrategyOptions(CATALOG).map((item) => item.id);
+    expect(ids).toContain('crypto_trend_entry');
+    expect(ids).toContain('sma_crossover');
+    expect(ids).not.toContain('buy_and_hold');
+    expect(ids[0]).toBe('crypto_trend_entry');
+  });
+
+  it('falls back to static base strategies when catalog is empty', () => {
+    const options = metaLabelBaseStrategyOptions([]);
+    expect(options.length).toBeGreaterThan(2);
+    expect(options.some((item) => item.id === 'ts_momentum')).toBe(true);
   });
 });

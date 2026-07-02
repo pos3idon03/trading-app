@@ -62,6 +62,8 @@ def _build_series_columns(
     series_id: str,
     observations: list[dict],
     publication_lag_days: dict[str, int] | None,
+    *,
+    include_level: bool = True,
 ) -> tuple[list[str], list[list[Optional[float]]], list[str]]:
     frequency = SERIES_CATALOG.get(series_id, {}).get("frequency")
     offsets = _offsets_for_frequency(frequency)
@@ -87,18 +89,25 @@ def _build_series_columns(
                 offsets[window],
             )
 
-    names = [
-        f"{series_id}_level",
-        f"{series_id}_chg_1m",
-        f"{series_id}_chg_3m",
-        f"{series_id}_days_since_update",
-    ]
-    columns = [
-        levels,
-        change_cols["1m"],
-        change_cols["3m"],
-        [float(d) if d is not None else None for d in days_since],
-    ]
+    names: list[str] = []
+    columns: list[list[Optional[float]]] = []
+    if include_level:
+        names.append(f"{series_id}_level")
+        columns.append(levels)
+    names.extend(
+        [
+            f"{series_id}_chg_1m",
+            f"{series_id}_chg_3m",
+            f"{series_id}_days_since_update",
+        ]
+    )
+    columns.extend(
+        [
+            change_cols["1m"],
+            change_cols["3m"],
+            [float(d) if d is not None else None for d in days_since],
+        ]
+    )
     return names, columns, join_warnings
 
 
@@ -107,9 +116,13 @@ def build_macro_feature_matrix(
     series_data: dict[str, list[dict]],
     series_ids: list[str],
     publication_lag_days: dict[str, int] | None = None,
+    *,
+    macro_features_mode: str = "full",
 ) -> tuple[list[str], list[Optional[list[float]]], list[str]]:
     if not bars or not series_ids:
         return [], [None] * len(bars), []
+
+    include_level = macro_features_mode != "changes_only"
 
     bar_dates = bar_dates_from_bars(bars)
     feature_names: list[str] = []
@@ -126,6 +139,7 @@ def build_macro_feature_matrix(
             series_id,
             observations,
             publication_lag_days,
+            include_level=include_level,
         )
         for warning in join_warnings:
             warnings.append(f"{series_id}: {warning}")

@@ -21,6 +21,7 @@ async def test_enqueue_ingestion_job_commits_and_enqueues():
         str(job_id),
         "ohlcv_backfill",
         {"symbols": ["AAPL"]},
+        _job_id=str(job_id),
     )
 
 
@@ -38,6 +39,7 @@ async def test_enqueue_foundation_job_uses_heavy_queue():
         str(job_id),
         "foundation_backtest",
         {"symbol": "IBM"},
+        _job_id=str(job_id),
         _queue_name="heavy",
     )
 

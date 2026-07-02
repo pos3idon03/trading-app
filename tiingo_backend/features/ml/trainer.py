@@ -39,6 +39,8 @@ def supports_feature_importance(model_type: str) -> bool:
 def min_train_samples_for_model(model_type: str, params: dict) -> int:
     if model_type == "ml_knn":
         return max(1, int(params.get("knn_neighbors", 5)))
+    if model_type == "ml_lstm":
+        return max(2, int(params.get("lstm_seq_length", 32)))
     return 2
 
 
@@ -91,6 +93,20 @@ def _create_model(model_type: str, params: dict) -> Any:
             learning_rate=float(params.get("xgboost_learning_rate", 0.1)),
             random_state=42,
             eval_metric="mlogloss",
+        )
+    if model_type == "ml_lstm":
+        from features.ml.models.lstm_classifier import LstmClassifier
+
+        return LstmClassifier(
+            seq_length=int(params.get("lstm_seq_length", 32)),
+            hidden_size=int(params.get("lstm_hidden_size", 64)),
+            num_layers=int(params.get("lstm_num_layers", 2)),
+            epochs=int(params.get("lstm_epochs", 10)),
+            dropout=float(params.get("lstm_dropout", 0.2)),
+            learning_rate=float(params.get("lstm_learning_rate", 0.001)),
+            batch_size=int(params.get("lstm_batch_size", 32)),
+            early_stopping_patience=int(params.get("lstm_early_stopping_patience", 3)),
+            validation_fraction=float(params.get("lstm_validation_fraction", 0.15)),
         )
     raise ValueError(f"Unsupported model type: {model_type}")
 

@@ -12,7 +12,13 @@ def _sample_bars(count: int = 60) -> list[dict]:
     for idx in range(1, count):
         closes.append(closes[-1] * (1 + 0.002 * (1 if idx % 3 else -1)))
     return [
-        {"time": f"2024-01-{idx:02d}", "close": c, "high": c * 1.01, "low": c * 0.99}
+        {
+            "time": f"2024-01-{idx:02d}",
+            "close": c,
+            "high": c * 1.01,
+            "low": c * 0.99,
+            "volume": 500_000.0 + idx * 1000,
+        }
         for idx, c in enumerate(closes, start=1)
     ]
 
@@ -106,6 +112,41 @@ async def test_build_data_preview_includes_walk_forward_readiness():
     assert readiness["trainable_rows"] > 0
     assert readiness["structural_folds"] > 0
     assert "viable_folds" in readiness
+
+
+@pytest.mark.asyncio
+async def test_build_data_preview_includes_feature_columns():
+    bars = _sample_bars(300)
+    feature_names, feature_rows = build_price_feature_matrix(bars)
+    validated_params = {
+        "feature_mode": "prices_only",
+        "label_horizon": 5,
+        "train_bars": 120,
+        "test_bars": 60,
+        "step_bars": 60,
+        "label_mode": "binary",
+        "label_threshold": 0.01,
+        "label_method": "endpoint",
+    }
+
+    result = await build_data_preview(
+        AsyncMock(),
+        bars_by_timeframe={"1d": bars},
+        decision_timeframe="1d",
+        validated_params=validated_params,
+        macro_series_ids=[],
+        fundamental_metrics=[],
+        context_warnings=[],
+        strategy_warnings=[],
+        bars=bars,
+        feature_rows=feature_rows,
+        feature_names=feature_names,
+    )
+
+    assert result["feature_count"] == len(feature_names)
+    assert "volume_rel_20" in result["feature_names"]
+    assert "volume_rel_20" in result["feature_groups"]["volume"]
+    assert "volume_rel_20" in result["always_included_features"]
 
 
 @pytest.mark.asyncio

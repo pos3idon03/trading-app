@@ -46,6 +46,19 @@ def alpaca_qty_by_symbol(alpaca_positions: list[dict]) -> dict[str, float]:
     return totals
 
 
+def alpaca_available_qty_by_symbol(alpaca_positions: list[dict]) -> dict[str, float]:
+    totals: dict[str, float] = {}
+    for position in alpaca_positions:
+        raw_symbol = position.get("symbol") or ""
+        if not raw_symbol:
+            continue
+        key = _alpaca_position_tiingo_key(raw_symbol)
+        available = position.get("qty_available")
+        qty = float(available if available is not None else position.get("qty") or 0)
+        totals[key] = max(qty, totals.get(key, 0.0))
+    return totals
+
+
 def alpaca_price_by_tiingo_symbol(alpaca_positions: list[dict]) -> dict[str, float]:
     prices: dict[str, float] = {}
     for position in alpaca_positions:

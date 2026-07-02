@@ -13,7 +13,7 @@ from features.ingestion.deployment_ohlcv_refresh import (
 @pytest.mark.asyncio
 async def test_build_deployment_fetch_plan_empty_when_no_active(monkeypatch):
     monkeypatch.setattr(
-        "features.ingestion.deployment_ohlcv_refresh.trading_deployment_dal.list_active_deployment_requirements",
+        "features.ingestion.deployment_ohlcv_refresh.trading_deployment_dal.list_deployments_for_ohlcv_refresh",
         AsyncMock(return_value=[]),
     )
     plan = await build_deployment_fetch_plan(AsyncMock())
@@ -91,7 +91,7 @@ async def test_refresh_deployment_ohlcv_derives_4h(monkeypatch):
 @pytest.mark.asyncio
 async def test_build_deployment_fetch_plan_filters_timeframe(monkeypatch):
     monkeypatch.setattr(
-        "features.ingestion.deployment_ohlcv_refresh.trading_deployment_dal.list_active_deployment_requirements",
+        "features.ingestion.deployment_ohlcv_refresh.trading_deployment_dal.list_deployments_for_ohlcv_refresh",
         AsyncMock(
             return_value=[
                 {"symbol": "AAPL", "timeframe": "5m", "asset_type": "stock"},

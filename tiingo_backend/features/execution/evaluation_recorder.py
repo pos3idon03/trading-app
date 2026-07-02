@@ -72,6 +72,7 @@ async def record_evaluation(
     order_id: UUID | None,
     warnings: list[str],
     explainability: dict | None = None,
+    skip_last_evaluated_at: bool = False,
 ) -> dict:
     explainability_payload = explainability or {}
     evaluation = await execution_evaluation_dal.create_evaluation(
@@ -91,17 +92,32 @@ async def record_evaluation(
         warnings=warnings,
         explainability=explainability_payload,
     )
+    status_update = None
+    clear_last_error = False
+    last_error_update = None
+    if outcome == "error":
+        last_error_update = blocked_reason
+    elif outcome == "order_submitted":
+        clear_last_error = True
+        if deployment.get("status") == "error":
+            status_update = "active"
+    else:
+        clear_last_error = True
+
     await trading_deployment_dal.update_deployment_evaluation(
         session,
         deployment["id"],
         last_evaluated_bar_time=bar_time,
+        last_evaluated_at=evaluation["created_at"],
         last_signal=signal,
-        last_error=None,
+        last_error=last_error_update,
         last_blocked_reason=blocked_reason,
         last_probability=probability,
         last_explainability=explainability_payload,
         last_outcome=outcome,
-        status="active" if deployment.get("status") == "error" else None,
+        status=status_update,
+        clear_last_error=clear_last_error,
+        skip_last_evaluated_at=skip_last_evaluated_at,
     )
     model = await ml_model_dal.get_model(session, deployment["model_id"])
     payload = build_activity_payload(

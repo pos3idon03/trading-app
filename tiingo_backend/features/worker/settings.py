@@ -12,6 +12,7 @@ class DefaultWorkerSettings:
     redis_settings = get_redis_settings()
     max_jobs = get_settings().arq_max_jobs
     job_timeout = _JOB_TIMEOUT
+    allow_abort_jobs = True
 
 
 class HeavyWorkerSettings:
@@ -22,6 +23,7 @@ class HeavyWorkerSettings:
     queue_name = get_settings().arq_heavy_queue_name
     max_jobs = get_settings().arq_heavy_max_jobs
     job_timeout = _JOB_TIMEOUT
+    allow_abort_jobs = True
 
 
 # Backward-compatible alias for `arq worker.WorkerSettings`

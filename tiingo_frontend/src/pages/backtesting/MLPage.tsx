@@ -14,6 +14,7 @@ import {
 } from '../../constants/timeframes';
 import { mlFieldHelp, mlFieldLabel } from '../../utils/mlBacktestHelp';
 import { nextWizardStep, prevWizardStep } from '../../utils/mlWizardState';
+import { ML_TESTING_HYDRATE_KEY, type MlTestingConfigSnapshot } from '../../utils/mlTestingSession';
 import { dateRangeFromTrainMetrics } from '../../utils/tradingModels';
 
 const BASE_PATH = '/backtesting/ml';
@@ -31,8 +32,10 @@ export default function MLPage() {
   );
   const [wizardBridge, setWizardBridge] = useState<MlWizardBridge | null>(null);
   const [navError, setNavError] = useState<string | null>(null);
+  const [testingBootstrap, setTestingBootstrap] = useState<MlTestingConfigSnapshot | null>(null);
   const appliedEditContextRef = useRef<string | null>(null);
   const editUrlCleanedRef = useRef(false);
+  const testingHydrateAppliedRef = useRef(false);
 
   const wizardStep = wizardBridge?.wizardStep ?? 'universe';
 
@@ -117,6 +120,25 @@ export default function MLPage() {
       cancelled = true;
     };
   }, [symbol, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (!searchParams.get('fromTesting') || testingHydrateAppliedRef.current) return;
+    const raw = sessionStorage.getItem(ML_TESTING_HYDRATE_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(ML_TESTING_HYDRATE_KEY);
+    try {
+      const snapshot = JSON.parse(raw) as MlTestingConfigSnapshot;
+      setTestingBootstrap(snapshot);
+      setDecisionTimeframe(snapshot.timeframe);
+      setDateRange(snapshot.dateRange);
+      testingHydrateAppliedRef.current = true;
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('fromTesting');
+      setSearchParams(nextParams, { replace: true });
+    } catch {
+      setNavError('Could not load ML Testing configuration.');
+    }
+  }, [searchParams, setSearchParams]);
 
   const handleSelect = (instrument: Instrument | null) => {
     setSelected(instrument);
@@ -233,6 +255,7 @@ export default function MLPage() {
             assetType={selected?.asset_type ?? 'stock'}
             onWizardBridge={setWizardBridge}
             initialEditModelId={initialEditModelIdRef.current}
+            initialTestingBootstrap={testingBootstrap}
           />
           <div className="flex justify-between items-center gap-4">
             <button

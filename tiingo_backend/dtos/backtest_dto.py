@@ -67,6 +67,7 @@ class BacktestTradeDTO(BaseModel):
     shares: float
     pnl: float
     pnl_pct: float
+    exit_reason: str = ""
 
 
 class BacktestRunResponse(BaseModel):

@@ -64,7 +64,7 @@ async def build_deployment_fetch_plan(
     *,
     deployment_timeframes: set[str] | None = None,
 ) -> DeploymentFetchPlan:
-    requirements = await trading_deployment_dal.list_active_deployment_requirements(session)
+    requirements = await trading_deployment_dal.list_deployments_for_ohlcv_refresh(session)
     if not requirements:
         return DeploymentFetchPlan()
 

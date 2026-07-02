@@ -30,7 +30,9 @@ const EXPECTED_KEYS = [
   'include_news_sentiment',
   'label_mode',
   'meta_gate_threshold',
+  'base_strategy_id',
   'slippage_bps',
+  'correlation_prune_threshold',
 ] as const;
 
 describe('mlBacktestHelp', () => {

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
@@ -106,7 +106,42 @@ async def list_jobs(
     q = select(IngestionJob).order_by(IngestionJob.created_at.desc()).limit(limit)
     if status:
         q = q.where(IngestionJob.status == status)
-    return [_to_dict(r) for r in (await session.execute(q)).scalars().all()]
+    return [_to_dict(r, include_result=False) for r in (await session.execute(q)).scalars().all()]
+
+
+async def has_active_or_recent_job(
+    session: AsyncSession,
+    job_type: str,
+    *,
+    within_hours: int,
+    success_statuses: tuple[str, ...] = ("completed", "partial"),
+) -> bool:
+    active = (
+        await session.execute(
+            select(IngestionJob.id)
+            .where(
+                IngestionJob.job_type == job_type,
+                IngestionJob.status.in_(_ACTIVE_STATUSES),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if active is not None:
+        return True
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=within_hours)
+    recent = (
+        await session.execute(
+            select(IngestionJob.id)
+            .where(
+                IngestionJob.job_type == job_type,
+                IngestionJob.status.in_(success_statuses),
+                IngestionJob.created_at >= cutoff,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return recent is not None
 
 
 async def list_active_jobs(session: AsyncSession, limit: int = 50) -> list[dict]:
@@ -116,19 +151,21 @@ async def list_active_jobs(session: AsyncSession, limit: int = 50) -> list[dict]
         .order_by(IngestionJob.created_at.desc())
         .limit(limit)
     )
-    return [_to_dict(r) for r in (await session.execute(q)).scalars().all()]
+    return [_to_dict(r, include_result=False) for r in (await session.execute(q)).scalars().all()]
 
 
-def _to_dict(row: IngestionJob) -> dict:
-    return {
+def _to_dict(row: IngestionJob, *, include_result: bool = True) -> dict:
+    payload = {
         "id": row.id,
         "job_type": row.job_type,
         "status": row.status,
         "progress": row.progress,
         "params": row.params,
-        "result": row.result,
         "error_message": row.error_message,
         "started_at": row.started_at,
         "finished_at": row.finished_at,
         "created_at": row.created_at,
     }
+    if include_result:
+        payload["result"] = row.result
+    return payload

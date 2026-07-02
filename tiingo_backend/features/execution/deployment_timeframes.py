@@ -22,7 +22,7 @@ _NATIVE_FETCH: dict[str, str] = {
 
 # US regular session (ET) — 9:30–16:00, approximated in UTC (no DST handling in MVP).
 _US_SESSION_START_HOUR_UTC = 14
-_US_SESSION_END_HOUR_UTC = 21
+_US_SESSION_END_HOUR_UTC = 22
 
 
 @dataclass(frozen=True)

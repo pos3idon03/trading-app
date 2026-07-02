@@ -77,6 +77,23 @@ async def list_active_deployments(session: AsyncSession) -> list[dict]:
     return [_to_dict(row) for row in rows]
 
 
+async def list_error_deployments_with_instrument(session: AsyncSession) -> list[dict]:
+    from models.instrument import Instrument
+
+    q = (
+        select(TradingDeployment, Instrument)
+        .join(Instrument, TradingDeployment.symbol == Instrument.symbol)
+        .where(TradingDeployment.status == "error")
+    )
+    rows = (await session.execute(q)).all()
+    result: list[dict] = []
+    for dep, inst in rows:
+        base = _to_dict(dep)
+        base["asset_type"] = inst.asset_type
+        result.append(base)
+    return result
+
+
 async def list_active_deployments_with_instrument(session: AsyncSession) -> list[dict]:
     from models.instrument import Instrument
 
@@ -95,12 +112,20 @@ async def list_active_deployments_with_instrument(session: AsyncSession) -> list
 
 
 async def list_active_deployment_requirements(session: AsyncSession) -> list[dict]:
+    return await list_deployments_for_ohlcv_refresh(session, statuses=("active",))
+
+
+async def list_deployments_for_ohlcv_refresh(
+    session: AsyncSession,
+    *,
+    statuses: tuple[str, ...] = ("active", "error"),
+) -> list[dict]:
     from models.instrument import Instrument
 
     q = (
         select(TradingDeployment, Instrument)
         .join(Instrument, TradingDeployment.symbol == Instrument.symbol)
-        .where(TradingDeployment.status == "active")
+        .where(TradingDeployment.status.in_(statuses))
     )
     rows = (await session.execute(q)).all()
     return [
@@ -159,6 +184,7 @@ async def update_deployment_evaluation(
     deployment_id: UUID,
     *,
     last_evaluated_bar_time: datetime,
+    last_evaluated_at: datetime | None = None,
     last_signal: str,
     last_error: str | None = None,
     last_blocked_reason: str | None = None,
@@ -166,16 +192,23 @@ async def update_deployment_evaluation(
     last_explainability: dict | None = None,
     last_outcome: str | None = None,
     status: str | None = None,
+    clear_last_error: bool = False,
+    skip_last_evaluated_at: bool = False,
 ) -> dict | None:
     values: dict = {
         "last_evaluated_bar_time": last_evaluated_bar_time,
         "last_signal": last_signal,
-        "last_error": last_error,
         "last_blocked_reason": last_blocked_reason,
         "last_probability": last_probability,
         "last_outcome": last_outcome,
         "updated_at": datetime.now(timezone.utc),
     }
+    if not skip_last_evaluated_at:
+        values["last_evaluated_at"] = last_evaluated_at or datetime.now(timezone.utc)
+    if clear_last_error:
+        values["last_error"] = None
+    elif last_error is not None:
+        values["last_error"] = last_error
     if last_explainability is not None:
         values["last_explainability"] = last_explainability
     if status:
@@ -238,6 +271,7 @@ def _to_dict(row: TradingDeployment) -> dict:
         "allocation_pct": float(row.allocation_pct),
         "hyperparams_snapshot": row.hyperparams_snapshot or {},
         "last_evaluated_bar_time": row.last_evaluated_bar_time,
+        "last_evaluated_at": row.last_evaluated_at,
         "last_signal": row.last_signal,
         "last_error": row.last_error,
         "last_blocked_reason": row.last_blocked_reason,

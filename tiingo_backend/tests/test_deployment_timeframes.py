@@ -66,6 +66,16 @@ def test_intraday_boundary_during_session():
     assert should_evaluate_timeframe("1h", as_of) is True
 
 
+def test_stock_1h_runs_at_21_utc_closing_slot():
+    as_of = datetime(2026, 5, 28, 21, 0, tzinfo=timezone.utc)
+    assert should_evaluate_timeframe("1h", as_of, asset_type="stock") is True
+
+
+def test_stock_1h_skipped_after_21_utc_non_boundary():
+    as_of = datetime(2026, 5, 28, 21, 5, tzinfo=timezone.utc)
+    assert should_evaluate_timeframe("1h", as_of, asset_type="stock") is False
+
+
 def test_intraday_skipped_outside_session():
     as_of = datetime(2026, 5, 28, 2, 0, tzinfo=timezone.utc)
     assert should_evaluate_timeframe("5m", as_of) is False

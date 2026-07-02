@@ -15,6 +15,7 @@ import MacroDashboardPage from './pages/dashboard/MacroDashboardPage';
 import DashboardOverviewPage from './pages/dashboard/OverviewPage';
 import AlgosPage from './pages/backtesting/AlgosPage';
 import MLPage from './pages/backtesting/MLPage';
+import MlTestingPage from './pages/backtesting/MlTestingPage';
 import TradingModelsPage from './pages/backtesting/TradingModelsPage';
 import FoundationPage from './pages/backtesting/FoundationPage';
 import DeploymentsPage from './pages/trading/DeploymentsPage';
@@ -52,6 +53,8 @@ export default function App() {
           <Route path="backtesting/algos/:symbol" element={<AlgosPage />} />
           <Route path="backtesting/ml" element={<MLPage />} />
           <Route path="backtesting/ml/:symbol" element={<MLPage />} />
+          <Route path="backtesting/ml-testing" element={<MlTestingPage />} />
+          <Route path="backtesting/ml-testing/:symbol" element={<MlTestingPage />} />
           <Route path="backtesting/foundation" element={<FoundationPage />} />
           <Route path="backtesting/foundation/:symbol" element={<FoundationPage />} />
           <Route path="backtesting/trading-models" element={<TradingModelsPage />} />

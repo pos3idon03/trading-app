@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dal import fundamentals_dal, instrument_dal
 from db import get_db
+from features.market_data.fundamentals_provider import ensure_fundamentals_in_db
 from dtos.market_data_dto import (
     FundamentalMetricDTO,
     FundamentalsCoverageItemDTO,
@@ -45,9 +46,9 @@ async def get_fundamentals(
 
     names = [n.strip() for n in metric_names.split(",") if n.strip()] if metric_names else None
     effective_limit = None if all else limit
-    rows = await fundamentals_dal.list_fundamentals_for_symbol(
+    rows = await ensure_fundamentals_in_db(
         session,
-        inst["id"],
+        inst,
         period_type=period_type,
         metric_names=names,
         order=order,

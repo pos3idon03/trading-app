@@ -47,6 +47,34 @@ class MlShapImportanceItemDTO(BaseModel):
     mean_abs_shap: float
 
 
+class MlShapInteractionItemDTO(BaseModel):
+    feature_a: str
+    feature_b: str
+    strength: float
+
+
+class MlPartialDependenceCurveDTO(BaseModel):
+    feature: str
+    grid: list[float] = Field(default_factory=list)
+    p_up: list[float] = Field(default_factory=list)
+
+
+class MlShapSliceFeatureDTO(BaseModel):
+    feature: str
+    mean_abs_shap: float
+
+
+class MlShapTradeSlicesDTO(BaseModel):
+    winners_top_decile: list[MlShapSliceFeatureDTO] = Field(default_factory=list)
+    losers_bottom_decile: list[MlShapSliceFeatureDTO] = Field(default_factory=list)
+
+
+class MlTreeRulesDTO(BaseModel):
+    format: str
+    content: str
+    max_depth: int = 4
+
+
 class MlRunRequest(BaseModel):
     symbol: str
     model_type: str
@@ -56,6 +84,8 @@ class MlRunRequest(BaseModel):
     end: Optional[datetime] = None
     initial_cash: float = Field(default=10_000.0, gt=0)
     commission_bps: float = Field(default=5.0, ge=0, le=1000)
+    symbols: list[str] = Field(default_factory=list)
+    universe_id: Optional[int] = None
 
 
 class MlSummaryDTO(BaseModel):
@@ -86,6 +116,11 @@ class MlSummaryDTO(BaseModel):
     roc_curves: list[MlRocCurveDTO] = Field(default_factory=list)
     auc_scores: dict[str, float | None] = Field(default_factory=dict)
     shap_importance: list[MlShapImportanceItemDTO] = Field(default_factory=list)
+    coefficient_importance: list[MlFeatureImportanceItemDTO] = Field(default_factory=list)
+    shap_interactions: list[MlShapInteractionItemDTO] = Field(default_factory=list)
+    partial_dependence: list[MlPartialDependenceCurveDTO] = Field(default_factory=list)
+    shap_slices: Optional[MlShapTradeSlicesDTO] = None
+    tree_rules: Optional[MlTreeRulesDTO] = None
     simulation_start_bar_index: Optional[int] = None
     simulation_start_date: Optional[str] = None
     pre_oos_bars_excluded: Optional[int] = None
@@ -97,6 +132,7 @@ class MlSummaryDTO(BaseModel):
     holdout_start_date: Optional[str] = None
     holdout_end_date: Optional[str] = None
     train_end_date: Optional[str] = None
+    survivorship_warnings: list[str] = Field(default_factory=list)
 
 
 class MlRunResponse(BaseModel):
@@ -210,11 +246,21 @@ class MlDataPreviewResponse(BaseModel):
     fundamental_metrics: list[str] = Field(default_factory=list)
     context_timeframes: list[str] = Field(default_factory=list)
     strategy_feature_ids: list[str] = Field(default_factory=list)
+    include_news_sentiment: bool = False
+    feature_names: list[str] = Field(default_factory=list)
+    feature_count: int = 0
+    feature_groups: dict[str, list[str]] = Field(default_factory=dict)
+    always_included_features: list[str] = Field(default_factory=list)
     label_preview: MlLabelPreviewDTO
     walk_forward_readiness: MlWalkForwardReadinessDTO = Field(
         default_factory=MlWalkForwardReadinessDTO,
     )
     warnings: list[str] = Field(default_factory=list)
+
+
+class MlModelLabelSearchConfig(BaseModel):
+    model_type: str
+    label_mode: str = "binary"
 
 
 class MlLabelSearchRequest(BaseModel):
@@ -228,6 +274,7 @@ class MlLabelSearchRequest(BaseModel):
     thresholds: list[float] = Field(default_factory=lambda: [0.01, 0.02])
     model_type: Optional[str] = None
     model_types: Optional[list[str]] = None
+    model_configs: Optional[list[MlModelLabelSearchConfig]] = None
 
 
 class MlLabelSearchResultDTO(BaseModel):

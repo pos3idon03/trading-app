@@ -3,7 +3,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dal import trading_deployment_dal
+from dal import execution_order_dal, trading_deployment_dal
 from features.execution.alpaca_symbols import execution_asset_type
 from features.execution.deployment_timeframes import should_evaluate_timeframe
 from features.execution.orchestrator import evaluate_deployment
@@ -34,6 +34,31 @@ def group_due_deployments_by_timeframe(
     return buckets
 
 
+def _should_retry_error_deployment(deployment: dict) -> bool:
+    signal = (deployment.get("last_signal") or "").lower()
+    outcome = (deployment.get("last_outcome") or "").lower()
+    return signal == "sell" or outcome == "error"
+
+
+async def list_deployments_for_evaluation_cycle(session: AsyncSession) -> list[dict]:
+    active = await trading_deployment_dal.list_active_deployments_with_instrument(session)
+    seen = {row["id"] for row in active}
+    for deployment in await trading_deployment_dal.list_error_deployments_with_instrument(session):
+        if deployment["id"] in seen:
+            continue
+        if not _should_retry_error_deployment(deployment):
+            continue
+        net_qty = await execution_order_dal.sum_filled_qty_by_deployment(
+            session,
+            deployment["id"],
+        )
+        if net_qty <= 0:
+            continue
+        active.append(deployment)
+        seen.add(deployment["id"])
+    return active
+
+
 async def run_deployment_cycle(
     session: AsyncSession,
     *,
@@ -42,7 +67,7 @@ async def run_deployment_cycle(
     skip_reconciliation: bool = False,
 ) -> dict:
     now = as_of or datetime.now(timezone.utc)
-    active = await trading_deployment_dal.list_active_deployments_with_instrument(session)
+    active = await list_deployments_for_evaluation_cycle(session)
     if not active:
         return {"skipped": True, "reason": "no active deployments", "results": []}
 
@@ -108,6 +133,9 @@ async def run_deployment_cycle(
     }
     if not skip_reconciliation:
         result["reconciliation"] = await _run_reconciliation(session)
+    from features.execution.account_rebalance import maybe_rebalance_active_deployments
+
+    result["portfolio_rebalance"] = await maybe_rebalance_active_deployments(session)
     return result
 
 

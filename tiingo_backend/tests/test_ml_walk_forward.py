@@ -48,6 +48,52 @@ def test_walk_forward_predictions_only_on_oos_indices():
     assert len(result.oos_y_pred) == len(result.oos_y_true)
 
 
+def test_walk_forward_tracks_last_fold_explainability_features():
+    bars = _bars(500)
+    feature_names, feature_rows = build_price_feature_matrix(bars)
+    labels = build_forward_return_labels(bars, label_horizon=5)
+
+    result = run_walk_forward_prediction(
+        model_type="ml_random_forest",
+        params={"correlation_prune_threshold": 0.75},
+        feature_rows=feature_rows,
+        labels=labels,
+        train_bars=252,
+        test_bars=63,
+        step_bars=63,
+        feature_names=feature_names,
+    )
+
+    assert result.explainability_feature_names
+    assert result.explainability_x_rows
+    assert all(
+        len(row) == len(result.explainability_feature_names)
+        for row in result.explainability_x_rows
+    )
+    assert len(result.explainability_feature_names) <= len(feature_names)
+
+
+def test_walk_forward_logistic_handles_warmup_none_prefix_rows():
+    bars = _bars(500)
+    feature_names, feature_rows = build_price_feature_matrix(bars)
+    labels = build_forward_return_labels(bars, label_horizon=5)
+
+    result = run_walk_forward_prediction(
+        model_type="ml_logistic",
+        params={},
+        feature_rows=feature_rows,
+        labels=labels,
+        train_bars=252,
+        test_bars=63,
+        step_bars=63,
+        feature_names=feature_names,
+    )
+
+    assert feature_rows[0] is None
+    assert result.oos_window_count >= 1
+    assert len(result.oos_y_true) > 0
+
+
 def test_walk_forward_knn_skips_folds_below_neighbor_count():
     bar_count = 250
     train_bars, test_bars, step_bars = 150, 50, 50

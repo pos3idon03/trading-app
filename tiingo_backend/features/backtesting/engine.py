@@ -9,8 +9,14 @@ from features.backtesting.simulator import (
     TradeRecord,
     apply_corporate_actions,
     buy_all_in,
+    buy_all_in_at_bar,
     mark_equity,
     sell_all,
+)
+from features.backtesting.trade_exits import (
+    TradeExitConfig,
+    cache_bracket_levels,
+    evaluate_position_exit,
 )
 from features.backtesting.strategies.registry import get_signal_fn
 from features.market_data.ohlcv_resample import DAILY_PLUS_TIMEFRAMES
@@ -39,9 +45,26 @@ def run_backtest(
 
     decision_bars = bar_context.decision_bars if bar_context else bars
 
+    signal_only = TradeExitConfig(
+        policy="signal_only",
+        max_hold_bars=1,
+        profit_atr_mult=2.0,
+        stop_atr_mult=1.5,
+        atr_period=14,
+    )
     for index, bar in enumerate(decision_bars):
         apply_corporate_actions(state, bar)
-        _execute_pending(state, bar, pending_action, commission_bps, trades, slippage_bps)
+        _execute_pending(
+            state,
+            bar,
+            index,
+            pending_action,
+            commission_bps,
+            trades,
+            slippage_bps,
+            signal_only,
+            decision_bars,
+        )
         pending_action = None
 
         if strategy_id in IMMEDIATE_ENTRY_STRATEGIES and index == 0 and state.shares == 0:
@@ -84,6 +107,7 @@ def run_backtest_with_signals(
     commission_bps: float,
     decision_timeframe: str = "1d",
     slippage_bps: float = 0.0,
+    exit_config: TradeExitConfig | None = None,
 ) -> SimulationResult:
     if len(signals) != len(bars):
         raise ValueError(
@@ -95,13 +119,35 @@ def run_backtest_with_signals(
     equity_curve: list[EquityPoint] = []
     pending_action: str | None = None
     peak_equity = initial_cash
+    config = exit_config or TradeExitConfig(
+        policy="signal_only",
+        max_hold_bars=1,
+        profit_atr_mult=2.0,
+        stop_atr_mult=1.5,
+        atr_period=14,
+    )
 
     for index, bar in enumerate(bars):
         apply_corporate_actions(state, bar)
-        _execute_pending(state, bar, pending_action, commission_bps, trades, slippage_bps)
+        _execute_pending(
+            state,
+            bar,
+            index,
+            pending_action,
+            commission_bps,
+            trades,
+            slippage_bps,
+            config,
+            bars,
+        )
         pending_action = None
 
-        pending_action = _resolve_pending(signals[index], state)
+        if _apply_structural_exit(
+            state, bar, index, bars, config, commission_bps, trades, slippage_bps,
+        ):
+            pending_action = None
+        else:
+            pending_action = _resolve_pending(signals[index], state)
 
         equity, drawdown = mark_equity(state, bar, peak_equity)
         peak_equity = max(peak_equity, equity)
@@ -202,16 +248,85 @@ def _generate_signal(
 def _execute_pending(
     state: PortfolioState,
     bar: dict,
+    bar_index: int,
     pending_action: str | None,
     commission_bps: float,
     trades: list[TradeRecord],
-    slippage_bps: float = 0.0,
+    slippage_bps: float,
+    config: TradeExitConfig,
+    bars: list[dict],
 ) -> None:
     price = float(bar["open"])
     if pending_action == "buy" and state.shares == 0:
-        buy_all_in(state, price, bar, commission_bps, slippage_bps)
+        buy_all_in_at_bar(
+            state, price, bar, bar_index, commission_bps, slippage_bps,
+        )
+        _set_bracket_cache(state, bars, config)
     elif pending_action == "sell" and state.shares > 0:
-        sell_all(state, price, bar, commission_bps, trades, slippage_bps)
+        sell_all(
+            state, price, bar, commission_bps, trades, slippage_bps,
+            exit_reason="signal",
+        )
+
+
+def _set_bracket_cache(
+    state: PortfolioState,
+    bars: list[dict],
+    config: TradeExitConfig,
+) -> None:
+    if state.entry_bar_index is None or state.entry_price is None:
+        return
+    levels = cache_bracket_levels(
+        bars,
+        state.entry_bar_index,
+        state.entry_price,
+        config,
+    )
+    if levels is None:
+        state.bracket_profit_level = None
+        state.bracket_stop_level = None
+        return
+    state.bracket_profit_level, state.bracket_stop_level = levels
+
+
+def _apply_structural_exit(
+    state: PortfolioState,
+    bar: dict,
+    bar_index: int,
+    bars: list[dict],
+    config: TradeExitConfig,
+    commission_bps: float,
+    trades: list[TradeRecord],
+    slippage_bps: float,
+) -> bool:
+    if not config.is_active() or state.shares <= 0:
+        return False
+    if state.entry_bar_index is None or state.entry_price is None:
+        return False
+
+    decision = evaluate_position_exit(
+        bar_index=bar_index,
+        bar=bar,
+        entry_bar_index=state.entry_bar_index,
+        entry_price=state.entry_price,
+        bars=bars,
+        config=config,
+        profit_level=state.bracket_profit_level,
+        stop_level=state.bracket_stop_level,
+    )
+    if decision is None:
+        return False
+
+    sell_all(
+        state,
+        decision.fill_price,
+        bar,
+        commission_bps,
+        trades,
+        slippage_bps,
+        exit_reason=decision.reason,
+    )
+    return True
 
 
 def _resolve_pending(signal: str, state: PortfolioState) -> str | None:

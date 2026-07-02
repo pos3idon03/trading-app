@@ -1,0 +1,4 @@
+# LSTM classifier + RL (DDQN). Installed in Docker with base image; locally:
+# pip install -r requirements.txt -r requirements-deep-learning.txt
+# torch: installed in Dockerfile (TORCH_CUDA build arg)
+gymnasium>=0.29.0,<2.0

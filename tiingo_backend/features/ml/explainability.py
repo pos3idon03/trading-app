@@ -6,6 +6,9 @@ from sklearn.pipeline import Pipeline
 from features.ml.trainer import _resolve_classifier
 
 _SHAP_SAMPLE_CAP = 500
+_TREE_SHAP_MODEL_TYPES = frozenset({"ml_random_forest", "ml_xgboost"})
+_LINEAR_SHAP_MODEL_TYPES = frozenset({"ml_logistic"})
+_PERMUTATION_GLOBAL_MODEL_TYPES = frozenset({"ml_gradient_boosting", "ml_knn", "ml_lstm"})
 
 
 def _to_scalar_float(value: Any) -> float:
@@ -15,14 +18,50 @@ def _to_scalar_float(value: Any) -> float:
     return float(arr[0])
 
 
+def _normalize_model_type(model_type: str | None) -> str | None:
+    if not model_type:
+        return None
+    return str(model_type).strip() or None
+
+
+def _infer_model_type(model: Any, model_type: str | None) -> str | None:
+    resolved = _normalize_model_type(model_type)
+    if resolved:
+        return resolved
+    classifier = _resolve_classifier(model)
+    type_name = type(classifier).__name__
+    if type_name == "XGBClassifier":
+        return "ml_xgboost"
+    if type_name == "RandomForestClassifier":
+        return "ml_random_forest"
+    if type_name == "HistGradientBoostingClassifier":
+        return "ml_gradient_boosting"
+    if type_name == "LogisticRegression":
+        return "ml_logistic"
+    if type_name == "SafeKNeighborsClassifier":
+        return "ml_knn"
+    return None
+
+
 def compute_shap_importance(
     model: Any,
     x_rows: list[list[float]],
     feature_names: list[str],
     classes: list[int],
+    *,
+    model_type: str | None = None,
 ) -> list[dict]:
     if not x_rows or not feature_names:
         return []
+
+    resolved_type = _infer_model_type(model, model_type)
+    if resolved_type in _PERMUTATION_GLOBAL_MODEL_TYPES:
+        return _compute_permutation_importance_rows(
+            model,
+            x_rows,
+            feature_names,
+            classes,
+        )
 
     sample = x_rows[-min(len(x_rows), _SHAP_SAMPLE_CAP):]
     x_array = np.array(sample)
@@ -32,32 +71,87 @@ def compute_shap_importance(
     except ImportError:  # pragma: no cover
         return []
 
-    explainer = _build_explainer(model, shap, x_array)
+    explainer = _build_explainer(model, shap, x_array, resolved_type)
     if explainer is None:
         return []
 
     explain_x = (
         _scale_features_for_explainer(model, x_array)
-        if _uses_scaled_explainer_input(model)
+        if _uses_scaled_explainer_input(model, resolved_type)
         else x_array
     )
     values = explainer.shap_values(explain_x)
     return _format_shap_values(values, feature_names, classes)
 
 
-def _build_explainer(model: Any, shap_module: Any, x_array: np.ndarray) -> Any | None:
+def _compute_permutation_importance_rows(
+    model: Any,
+    x_rows: list[list[float]],
+    feature_names: list[str],
+    classes: list[int],
+) -> list[dict]:
+    try:
+        from sklearn.inspection import permutation_importance
+    except ImportError:  # pragma: no cover
+        return []
+
+    sample = x_rows[-min(len(x_rows), _SHAP_SAMPLE_CAP):]
+    x_array = np.array(sample)
+    if x_array.shape[0] < 2:
+        return []
+
+    y_true = model.predict(x_array)
+    if len(set(y_true.tolist())) < 2:
+        return []
+
+    result = permutation_importance(
+        model,
+        x_array,
+        y_true,
+        n_repeats=5,
+        random_state=42,
+        n_jobs=1,
+    )
+    class_label = str(_default_class_for_single_matrix(classes))
+    rows: list[dict] = []
+    for index, feature_name in enumerate(feature_names):
+        if index >= len(result.importances_mean):
+            break
+        rows.append({
+            "class_label": class_label,
+            "feature": feature_name,
+            "mean_abs_shap": round(float(abs(result.importances_mean[index])), 6),
+        })
+    rows.sort(key=lambda item: item["mean_abs_shap"], reverse=True)
+    return rows
+
+
+def _build_explainer(
+    model: Any,
+    shap_module: Any,
+    x_array: np.ndarray,
+    model_type: str | None,
+) -> Any | None:
+    resolved_type = _infer_model_type(model, model_type)
     classifier = _resolve_classifier(model)
-    if hasattr(classifier, "feature_importances_"):
-        return shap_module.TreeExplainer(classifier)
-    if hasattr(classifier, "coef_"):
-        scaled_x = _scale_features_for_explainer(model, x_array)
-        return shap_module.LinearExplainer(classifier, scaled_x)
+
+    if resolved_type in _TREE_SHAP_MODEL_TYPES:
+        if hasattr(classifier, "get_booster") or hasattr(classifier, "estimators_"):
+            return shap_module.TreeExplainer(classifier)
+        return None
+
+    if resolved_type in _LINEAR_SHAP_MODEL_TYPES:
+        if hasattr(classifier, "coef_"):
+            scaled_x = _scale_features_for_explainer(model, x_array)
+            return shap_module.LinearExplainer(classifier, scaled_x)
+        return None
+
     return None
 
 
-def _uses_scaled_explainer_input(model: Any) -> bool:
-    classifier = _resolve_classifier(model)
-    return hasattr(classifier, "coef_")
+def _uses_scaled_explainer_input(model: Any, model_type: str | None) -> bool:
+    resolved_type = _infer_model_type(model, model_type)
+    return resolved_type in _LINEAR_SHAP_MODEL_TYPES
 
 
 def _scale_features_for_explainer(model: Any, x_array: np.ndarray) -> np.ndarray:
@@ -142,12 +236,14 @@ def _positive_class_index(classes: list[int]) -> int:
     return max(len(classes) - 1, 0)
 
 
-def _explainer_method(model: Any) -> str:
-    classifier = _resolve_classifier(model)
-    if hasattr(classifier, "feature_importances_"):
+def _explainer_method(model: Any, model_type: str | None = None) -> str:
+    resolved_type = _infer_model_type(model, model_type)
+    if resolved_type in _TREE_SHAP_MODEL_TYPES:
         return "shap_tree"
-    if hasattr(classifier, "coef_"):
+    if resolved_type in _LINEAR_SHAP_MODEL_TYPES:
         return "shap_linear"
+    if resolved_type in _PERMUTATION_GLOBAL_MODEL_TYPES:
+        return "permutation_global"
     return "unavailable"
 
 
@@ -188,11 +284,12 @@ def _extract_signed_shap_row(
     return [float(value) for value in array.ravel()]
 
 
-def _top_contributors(
+def _ordered_contributors(
     shap_row: list[float],
     x_row: list[float],
     feature_names: list[str],
-    top_n: int,
+    *,
+    top_n: int | None = None,
 ) -> list[dict]:
     rows: list[dict] = []
     for index, feature_name in enumerate(feature_names):
@@ -204,13 +301,32 @@ def _top_contributors(
             "contribution": round(float(shap_row[index]), 6),
         })
     rows.sort(key=lambda item: abs(item["contribution"]), reverse=True)
-    return rows[:top_n]
+    if top_n is not None:
+        return rows[:top_n]
+    return rows
+
+
+def _extract_base_value(explainer: Any, classes: list[int]) -> float | None:
+    expected = getattr(explainer, "expected_value", None)
+    if expected is None:
+        return None
+    positive_index = _positive_class_index(classes)
+    if isinstance(expected, (list, tuple, np.ndarray)):
+        values = list(np.asarray(expected).ravel())
+        if not values:
+            return None
+        index = positive_index if positive_index < len(values) else len(values) - 1
+        return round(float(values[index]), 6)
+    return round(float(expected), 6)
 
 
 def _unavailable_explainability(warnings: list[str]) -> dict:
     return {
         "method": "unavailable",
+        "base_value": None,
+        "predicted_value": None,
         "top_contributors": [],
+        "ordered_contributors": [],
         "warnings": warnings,
     }
 
@@ -222,13 +338,20 @@ def compute_instance_contributions(
     feature_names: list[str],
     classes: list[int],
     *,
+    model_type: str | None = None,
     top_n: int = 5,
+    ordered_top_n: int = 15,
 ) -> dict:
-    method = _explainer_method(model)
+    method = _explainer_method(model, model_type)
     if not x_row or not feature_names:
         return _unavailable_explainability(["No feature data for explainability"])
-    if method == "unavailable":
-        return _unavailable_explainability(["Model type does not support SHAP explainability"])
+    if method in ("unavailable", "permutation_global"):
+        warning = (
+            "Model type does not support live SHAP explainability"
+            if method == "permutation_global"
+            else "Model type does not support SHAP explainability"
+        )
+        return _unavailable_explainability([warning])
     if not background_rows:
         return _unavailable_explainability(["Insufficient background rows for SHAP"])
 
@@ -240,11 +363,12 @@ def compute_instance_contributions(
     sample = background_rows[-min(len(background_rows), _SHAP_SAMPLE_CAP):]
     background = np.array(sample)
     instance = np.array([x_row])
-    explainer = _build_explainer(model, shap, background)
+    resolved_type = _infer_model_type(model, model_type)
+    explainer = _build_explainer(model, shap, background, resolved_type)
     if explainer is None:
         return _unavailable_explainability(["Could not build SHAP explainer"])
 
-    scaled = _uses_scaled_explainer_input(model)
+    scaled = _uses_scaled_explainer_input(model, resolved_type)
     explain_x = _scale_features_for_explainer(model, instance) if scaled else instance
     try:
         values = explainer.shap_values(explain_x)
@@ -255,8 +379,22 @@ def compute_instance_contributions(
         shap_row = _extract_signed_shap_row(values, classes, _positive_class_index(classes))
     except (IndexError, ValueError) as exc:
         return _unavailable_explainability([f"SHAP explainability parse failed: {exc}"])
+
+    base_value = _extract_base_value(explainer, classes)
+    predicted_value = (
+        round(base_value + sum(shap_row), 6) if base_value is not None else None
+    )
+    ordered = _ordered_contributors(
+        shap_row,
+        x_row,
+        feature_names,
+        top_n=ordered_top_n,
+    )
     return {
         "method": method,
-        "top_contributors": _top_contributors(shap_row, x_row, feature_names, top_n),
+        "base_value": base_value,
+        "predicted_value": predicted_value,
+        "top_contributors": ordered[:top_n],
+        "ordered_contributors": ordered,
         "warnings": [],
     }

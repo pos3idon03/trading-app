@@ -30,6 +30,11 @@ interface MlUniversePeriodSectionProps {
   walkForwardValidationError: string | null;
   viableFolds: number | null;
   disabled?: boolean;
+  universeSymbols?: string;
+  onUniverseSymbolsChange?: (value: string) => void;
+  universes?: { id: number; name: string }[];
+  universeId?: number | null;
+  onUniverseIdChange?: (id: number | null) => void;
 }
 
 function formatEffectiveRangeLine(
@@ -65,6 +70,11 @@ export default function MlUniversePeriodSection({
   walkForwardValidationError,
   viableFolds,
   disabled = false,
+  universeSymbols = '',
+  onUniverseSymbolsChange,
+  universes = [],
+  universeId = null,
+  onUniverseIdChange,
 }: MlUniversePeriodSectionProps) {
   const effectiveRangeLine = formatEffectiveRangeLine(
     barCount,
@@ -77,6 +87,44 @@ export default function MlUniversePeriodSection({
     <section className="rounded-xl border border-slate-800 bg-surface-900 p-4 space-y-4">
       <div className="space-y-2">
         <h3 className="text-sm font-medium text-slate-300">Simulation period</h3>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Primary symbol drives ML features; optional multi-symbol list enables universe
+          portfolio backtests with HRP sizing.
+        </p>
+        {onUniverseIdChange && universes.length > 0 && (
+          <label className="block text-xs text-slate-400">
+            Saved universe
+            <select
+              value={universeId ?? ''}
+              onChange={(e) => {
+                const val = e.target.value;
+                onUniverseIdChange(val ? Number(val) : null);
+              }}
+              disabled={disabled}
+              className="mt-1 w-full rounded-lg border border-slate-700 bg-surface-950 px-3 py-2 text-sm text-slate-200"
+            >
+              <option value="">Custom symbol list</option>
+              {universes.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {onUniverseSymbolsChange && !universeId && (
+          <label className="block text-xs text-slate-400">
+            Universe symbols (comma-separated, optional)
+            <input
+              type="text"
+              value={universeSymbols}
+              onChange={(e) => onUniverseSymbolsChange(e.target.value)}
+              disabled={disabled}
+              placeholder="e.g. AAPL, MSFT, GOOG"
+              className="mt-1 w-full rounded-lg border border-slate-700 bg-surface-950 px-3 py-2 text-sm text-slate-200"
+            />
+          </label>
+        )}
         <p className="text-xs text-slate-400 leading-relaxed">
           Start and end dates define the full bar history used for feature engineering, labeling,
           walk-forward training, and out-of-sample simulation. The first 50 bars are feature warmup;

@@ -26,6 +26,7 @@ const SAMPLE_DEPLOYMENT: TradingDeployment = {
   model_type: 'ml_random_forest',
   feature_mode: 'prices_only',
   last_evaluated_bar_time: '2024-01-02T00:00:00Z',
+  last_evaluated_at: '2024-01-02T00:05:00Z',
   last_signal: 'buy',
   last_blocked_reason: null,
   last_probability: 0.61,

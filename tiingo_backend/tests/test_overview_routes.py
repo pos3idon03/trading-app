@@ -159,3 +159,37 @@ async def test_get_macro_brief():
     assert data["outlook"] == "Inflation may cool."
     assert data["situation_phase"] == "Expansion"
     assert data["outlook_phase"] == "Slowdown"
+
+
+@pytest.mark.asyncio
+async def test_get_market_sentiment():
+    recorded_at = datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc)
+    payload = {
+        "window_hours": 24,
+        "current_score": 72.5,
+        "current_article_count": 6,
+        "points": [{
+            "recorded_at": recorded_at,
+            "score": 72.5,
+            "article_count": 6,
+            "bullish_count": 5,
+            "bearish_count": 1,
+            "neutral_count": 0,
+        }],
+        "available": True,
+        "message": None,
+    }
+
+    with patch(
+        "routes.overview.load_market_sentiment_overview",
+        new=AsyncMock(return_value=payload),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/v1/market-data/overview/market-sentiment")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["current_score"] == 72.5
+    assert data["points"][0]["score"] == 72.5
+    assert data["available"] is True

@@ -30,6 +30,11 @@ from features.execution.signal_to_order import signal_to_order_intent
 from features.execution.alpaca_symbols import execution_asset_type
 from features.execution.deployment_overview import build_deployment_overview_row
 from features.execution.deployment_reconciliation import build_deployment_readiness
+from features.execution.market_data_gate import (
+    is_ohlcv_ready_for_evaluation,
+    market_data_not_ready_reason,
+)
+from features.execution.order_qty import alpaca_position_for_symbol
 from features.execution.deployment_risk_state import refresh_deployment_peak_profit
 from features.execution.deployment_timeframes import validate_execution_timeframe
 from features.execution.deployment_metrics import compute_strategy_pnl
@@ -291,10 +296,12 @@ async def delete_deployment(
 
         closed_qty = 0.0
         close_order_id = None
+        close_warning = None
         if close_positions:
             close_result = await close_deployment_position(session, deployment)
             closed_qty = float(close_result.get("qty") or 0)
             close_order_id = close_result.get("order_id")
+            close_warning = close_result.get("close_warning")
 
         deleted = await trading_deployment_dal.delete_deployment(session, deployment_id)
         if not deleted:
@@ -310,6 +317,7 @@ async def delete_deployment(
         "close_positions": close_positions,
         "closed_qty": closed_qty,
         "close_order_id": close_order_id,
+        "close_warning": close_warning,
     }
 
 
@@ -472,7 +480,10 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
         probability = None
     explainability = inference.get("explainability") or {
         "method": "unavailable",
+        "base_value": None,
+        "predicted_value": None,
         "top_contributors": [],
+        "ordered_contributors": [],
         "warnings": [],
     }
 
@@ -486,6 +497,48 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
             "outcome": "skipped",
             "probability": probability,
             "explainability": explainability,
+        }
+
+    now = datetime.now(timezone.utc)
+    readiness = await build_deployment_readiness(
+        session,
+        deployment,
+        now,
+        asset_type=asset_type,
+    )
+    if not is_ohlcv_ready_for_evaluation(readiness):
+        blocked_reason = market_data_not_ready_reason(readiness)
+        eval_row = await record_evaluation(
+            session,
+            deployment=deployment,
+            bar_time=bar_time,
+            signal=inference["signal"],
+            probability=probability,
+            buy_threshold=buy_threshold,
+            sell_threshold=sell_threshold,
+            position_side=deployment_side,
+            order_intent_side=None,
+            order_qty=None,
+            outcome="blocked",
+            blocked_reason=blocked_reason,
+            order_id=None,
+            warnings=inference.get("warnings") or [],
+            explainability=explainability,
+            skip_last_evaluated_at=True,
+        )
+        await session.commit()
+        return {
+            "deployment_id": str(deployment_id),
+            "skipped": False,
+            "signal": inference["signal"],
+            "bar_time": bar_time.isoformat(),
+            "probability": probability,
+            "explainability": explainability,
+            "warnings": inference.get("warnings") or [],
+            "order": None,
+            "blocked_reason": blocked_reason,
+            "outcome": "blocked",
+            "evaluation": eval_row,
         }
 
     signal = inference["signal"]
@@ -535,13 +588,6 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
     deployment_exposure = await compute_deployment_exposure(session, price_by_symbol=price_by_symbol)
     deployment_has_open_order = await execution_order_dal.has_open_order(session, deployment_id)
 
-    now = datetime.now(timezone.utc)
-    readiness = await build_deployment_readiness(
-        session,
-        deployment,
-        now,
-        asset_type=asset_type,
-    )
     orders = await execution_order_dal.list_orders(session, deployment_id=deployment_id)
     strategy_pnl = compute_strategy_pnl(orders, last_price)
     peak_profit = await refresh_deployment_peak_profit(
@@ -550,6 +596,17 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
         current_price=last_price,
     )
 
+    position = alpaca_position_for_symbol(
+        alpaca_positions,
+        deployment["symbol"],
+        asset_type,
+    )
+    position_qty = float(position.get("qty") or 0) if position else None
+    qty_available = (
+        float(position.get("qty_available") or position.get("qty") or 0)
+        if position
+        else None
+    )
     intent = signal_to_order_intent(
         signal,
         deployment_net_qty=deployment_net_qty,
@@ -558,8 +615,14 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
         allocation_pct=deployment["allocation_pct"],
         max_position_pct=settings.max_position_pct,
         last_price=inference.get("last_price"),
+        asset_type=asset_type,
+        position_qty=position_qty,
+        qty_available=qty_available,
     )
     if intent is None:
+        blocked_reason = "No actionable order for current deployment position"
+        if signal.lower() == "sell" and deployment_side == "long":
+            blocked_reason = "No sellable quantity available at broker"
         eval_row = await record_evaluation(
             session,
             deployment=deployment,
@@ -569,16 +632,16 @@ async def evaluate_deployment(session: AsyncSession, deployment_id: UUID) -> dic
             buy_threshold=buy_threshold,
             sell_threshold=sell_threshold,
             position_side=deployment_side,
-            order_intent_side=None,
+            order_intent_side="sell" if signal.lower() == "sell" else None,
             order_qty=None,
             outcome="blocked",
-            blocked_reason="No actionable order for current deployment position",
+            blocked_reason=blocked_reason,
             order_id=None,
             warnings=result["warnings"],
             explainability=explainability,
         )
         await session.commit()
-        result["blocked_reason"] = "No actionable order for current deployment position"
+        result["blocked_reason"] = blocked_reason
         result["outcome"] = "blocked"
         result["evaluation"] = eval_row
         return result

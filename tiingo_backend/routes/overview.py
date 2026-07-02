@@ -8,11 +8,14 @@ from dtos.market_data_dto import (
     MacroBriefResponseDTO,
     MacroOverviewResponseDTO,
     MacroOverviewRowDTO,
+    MarketSentimentPointDTO,
+    MarketSentimentResponseDTO,
     MetricGrowthDTO,
 )
 from features.market_data.overview_assets import load_asset_overview
 from features.market_data.overview_macro import load_macro_overview
 from features.agents.macro_crew.macro_crew_orchestrator import get_stored_macro_brief
+from features.sentiment.market_sentiment import load_market_sentiment_overview
 
 router = APIRouter(prefix="/market-data/overview", tags=["overview"])
 
@@ -101,3 +104,19 @@ async def get_macro_brief(
 ) -> MacroBriefResponseDTO:
     payload = await get_stored_macro_brief(session)
     return MacroBriefResponseDTO(**payload)
+
+
+@router.get("/market-sentiment", response_model=MarketSentimentResponseDTO)
+async def get_market_sentiment(
+    hours: int = Query(default=168, ge=1, le=720),
+    session: AsyncSession = Depends(get_db),
+) -> MarketSentimentResponseDTO:
+    payload = await load_market_sentiment_overview(session, hours=hours)
+    return MarketSentimentResponseDTO(
+        window_hours=payload["window_hours"],
+        current_score=payload["current_score"],
+        current_article_count=payload["current_article_count"],
+        points=[MarketSentimentPointDTO(**point) for point in payload["points"]],
+        available=payload["available"],
+        message=payload.get("message"),
+    )

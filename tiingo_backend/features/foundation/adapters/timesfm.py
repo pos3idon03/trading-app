@@ -2,6 +2,19 @@ from config import get_settings
 from features.foundation.adapters.base import ForecastResult
 
 
+def apply_foundation_torch_device(model, *, foundation_device: str):
+    """Move a TimesFM torch module to CUDA when configured and available."""
+    if foundation_device != "cuda":
+        return model
+    import torch
+
+    if not torch.cuda.is_available():
+        return model
+    if hasattr(model, "to"):
+        return model.to("cuda:0")
+    return model
+
+
 def load_timesfm_model(
     checkpoint: str,
     *,
@@ -58,6 +71,10 @@ class TimesFmAdapter:
                 infer_is_positive=False,
                 fix_quantile_crossing=True,
             )
+        )
+        self._model = apply_foundation_torch_device(
+            self._model,
+            foundation_device=device,
         )
 
     def forecast(self, context: list[float], horizon: int) -> ForecastResult:

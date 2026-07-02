@@ -22,7 +22,7 @@ async def enqueue_ingestion_job(
     await session.commit()
     pool = await get_arq_pool()
     queue_name = resolve_arq_queue_name(job_type)
-    kwargs: dict = {}
+    kwargs: dict = {"_job_id": str(job_id)}
     if queue_name is not None:
         kwargs["_queue_name"] = queue_name
     await pool.enqueue_job(

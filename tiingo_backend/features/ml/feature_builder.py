@@ -1,21 +1,27 @@
 from datetime import date, timedelta
-from typing import Any
+from typing import Optional
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from features.backtesting.bar_context import MultiTimeframeContext, build_multi_timeframe_context
+from dal import instrument_dal
+from features.backtesting.bar_context import MultiTimeframeContext
 from features.backtesting.bar_loader import validate_timeframe
+from features.ml.asof_join import bar_dates_from_bars
 from features.ml.assembler import assemble_feature_matrix
-from features.ml.catalog import resolve_fundamental_metrics, resolve_macro_series_ids
+from features.ml.catalog import resolve_fundamental_metrics, resolve_macro_series_ids, resolve_warmup_bars
 from features.ml.context_features import build_context_feature_matrix
+from features.ml.cross_sectional_factors import build_factor_features_at_index, factor_feature_names
 from features.ml.fundamental_features import build_fundamental_feature_matrix
 from features.ml.fundamental_loader import load_fundamental_observations
+from features.ml import job_checkpoints
 from features.ml.liquidity_features import (
     build_liquidity_feature_matrix,
     liquidity_series_requested,
 )
 from features.ml.macro_features import build_macro_feature_matrix
 from features.ml.macro_loader import load_macro_observations
+from features.ml.metadata_features import build_metadata_rows_for_bars
 from features.ml.price_features import build_price_feature_matrix
 from features.ml.strategy_features import build_strategy_feature_matrix
 
@@ -63,6 +69,7 @@ async def _build_macro_features(
         series_data,
         resolved_series_ids,
         validated_params.get("macro_publication_lag_days"),
+        macro_features_mode=str(validated_params.get("macro_features_mode") or "full"),
     )
     warnings = [*resolve_warnings, *build_warnings]
     if liquidity_series_requested(resolved_series_ids):
@@ -126,6 +133,8 @@ async def _build_fundamental_features(
         metric_data,
         resolved_metrics,
         period_type,
+        fundamental_features_mode=str(validated_params.get("fundamental_features_mode") or "full"),
+        include_valuation_kpis=validated_params.get("feature_mode") == "prices_macro_fundamentals",
     )
     warnings = [*resolve_warnings, *build_warnings]
     if not fund_names:
@@ -201,6 +210,146 @@ async def _build_news_features(
     return build_news_feature_matrix(bars, daily_rows)
 
 
+def _build_cross_sectional_block(
+    returns_panel,
+    symbol: str,
+    bars: list[dict],
+    validated_params: dict,
+) -> tuple[list[str], list[Optional[list[float]]]]:
+    if returns_panel is None or not validated_params.get("include_cross_sectional_factors"):
+        return [], []
+
+    sym = symbol.upper()
+    if sym not in returns_panel.symbols:
+        return [], []
+
+    use_ica = bool(validated_params.get("cross_sectional_use_ica"))
+    lookback = int(validated_params.get("cross_sectional_lookback_bars") or 63)
+    names = factor_feature_names(use_ica=use_ica)
+    date_to_panel_idx = {panel_date: idx for idx, panel_date in enumerate(returns_panel.dates)}
+
+    rows: list[Optional[list[float]]] = []
+    for bar_date in bar_dates_from_bars(bars):
+        panel_idx = date_to_panel_idx.get(bar_date)
+        if panel_idx is None:
+            rows.append(None)
+            continue
+        factors = build_factor_features_at_index(
+            returns_panel.log_returns,
+            returns_panel.symbols,
+            panel_idx,
+            lookback=lookback,
+            use_ica=use_ica,
+        )
+        sym_factors = factors.get(sym)
+        if sym_factors is None or any(value is None for value in sym_factors):
+            rows.append(None)
+            continue
+        rows.append([float(value) for value in sym_factors])
+    return names, rows
+
+
+def _merge_metadata_blocks(
+    *blocks: tuple[list[str], list[Optional[list[float]]]],
+) -> tuple[list[str], list[Optional[list[float]]]]:
+    active = [(names, rows) for names, rows in blocks if names and rows]
+    if not active:
+        return [], []
+    merged_names = [name for names, _rows in active for name in names]
+    row_count = len(active[0][1])
+    merged_rows: list[Optional[list[float]]] = []
+    for row_index in range(row_count):
+        combined: list[float] = []
+        row_complete = True
+        for _names, rows in active:
+            row = rows[row_index]
+            if row is None:
+                row_complete = False
+                break
+            combined.extend(row)
+        merged_rows.append(combined if row_complete else None)
+    return merged_names, merged_rows
+
+
+def _assemble_ml_features(
+    feature_mode: str,
+    *,
+    price_names: list[str],
+    price_rows: list,
+    macro_names: list[str] | None = None,
+    macro_rows: list | None = None,
+    fund_names: list[str] | None = None,
+    fund_rows: list | None = None,
+    news_names: list[str] | None = None,
+    news_rows: list | None = None,
+    metadata_names: list[str] | None = None,
+    metadata_rows: list | None = None,
+    context_names: list[str] | None = None,
+    context_rows: list | None = None,
+    strategy_names: list[str] | None = None,
+    strategy_rows: list | None = None,
+) -> tuple[list[str], list]:
+    return assemble_feature_matrix(
+        feature_mode,
+        price_names,
+        price_rows,
+        macro_names,
+        macro_rows,
+        fund_names,
+        fund_rows,
+        news_names=news_names,
+        news_rows=news_rows,
+        metadata_names=metadata_names,
+        metadata_rows=metadata_rows,
+        context_names=context_names,
+        context_rows=context_rows,
+        strategy_names=strategy_names,
+        strategy_rows=strategy_rows,
+    )
+
+
+def _feature_build_result(
+    feature_names: list[str],
+    feature_rows: list,
+    *,
+    macro_warnings: list[str],
+    fundamental_warnings: list[str],
+    resolved_series_ids: list[str],
+    resolved_fundamental_metrics: list[str],
+    context_warnings: list[str],
+    strategy_warnings: list[str],
+) -> tuple[list[str], list, list[str], list[str], list[str], list[str], list[str], list[str]]:
+    return (
+        feature_names,
+        feature_rows,
+        macro_warnings,
+        fundamental_warnings,
+        resolved_series_ids,
+        resolved_fundamental_metrics,
+        context_warnings,
+        strategy_warnings,
+    )
+
+
+async def _build_metadata_features(
+    session: AsyncSession,
+    *,
+    symbol: str | None,
+    bar_count: int,
+    validated_params: dict,
+    returns_panel=None,
+    bars: list[dict],
+) -> tuple[list[str], list[Optional[list[float]]]]:
+    blocks: list[tuple[list[str], list[Optional[list[float]]]]] = []
+    if validated_params.get("include_cross_sectional_factors") and symbol and returns_panel is not None:
+        blocks.append(_build_cross_sectional_block(returns_panel, symbol, bars, validated_params))
+    if validated_params.get("include_metadata_features") and symbol:
+        instrument = await instrument_dal.get_by_symbol(session, symbol)
+        if instrument:
+            blocks.append(build_metadata_rows_for_bars(instrument, bar_count))
+    return _merge_metadata_blocks(*blocks)
+
+
 async def build_ml_feature_matrix(
     session: AsyncSession,
     bars: list[dict],
@@ -210,8 +359,11 @@ async def build_ml_feature_matrix(
     symbol: str | None = None,
     decision_timeframe: str = "1d",
     bar_context: MultiTimeframeContext | None = None,
+    returns_panel=None,
+    job_id: UUID | None = None,
+    progress_start: int = 0,
+    progress_end: int = 100,
 ) -> tuple[list[str], list, list[str], list[str], list[str], list[str], list[str], list[str]]:
-    price_names, price_rows = build_price_feature_matrix(bars)
     feature_mode = validated_params["feature_mode"]
     macro_warnings: list[str] = []
     fundamental_warnings: list[str] = []
@@ -219,6 +371,37 @@ async def build_ml_feature_matrix(
     strategy_warnings: list[str] = []
     resolved_series_ids: list[str] = []
     resolved_fundamental_metrics: list[str] = []
+
+    await job_checkpoints.checkpoint_ml_job(session, job_id, progress_start)
+    price_names, price_rows = await job_checkpoints.run_cpu_bound_step(
+        session,
+        job_id,
+        build_price_feature_matrix,
+        bars,
+        denoise_method=str(validated_params.get("denoise_method") or "none"),
+        warmup_bars=resolve_warmup_bars(validated_params),
+    )
+    await job_checkpoints.checkpoint_ml_job(
+        session,
+        job_id,
+        job_checkpoints.progress_at_fraction(progress_start, progress_end, 0.4),
+    )
+    (
+        context_names,
+        context_rows,
+        context_warnings,
+        strategy_names,
+        strategy_rows,
+        strategy_warnings,
+    ) = await job_checkpoints.run_cpu_bound_step(
+        session,
+        job_id,
+        _build_optional_blocks,
+        bars,
+        validated_params,
+        decision_timeframe,
+        bar_context,
+    )
 
     news_names: list[str] = []
     news_rows: list = []
@@ -231,38 +414,46 @@ async def build_ml_feature_matrix(
         )
         macro_warnings.extend(news_warnings)
 
-    (
-        context_names,
-        context_rows,
-        context_warnings,
-        strategy_names,
-        strategy_rows,
-        strategy_warnings,
-    ) = _build_optional_blocks(bars, validated_params, decision_timeframe, bar_context)
+    metadata_names, metadata_rows = await _build_metadata_features(
+        session,
+        symbol=symbol,
+        bar_count=len(bars),
+        validated_params=validated_params,
+        returns_panel=returns_panel,
+        bars=bars,
+    )
+
+    assemble_kwargs = {
+        "price_names": price_names,
+        "price_rows": price_rows,
+        "news_names": news_names,
+        "news_rows": news_rows,
+        "metadata_names": metadata_names,
+        "metadata_rows": metadata_rows,
+        "context_names": context_names,
+        "context_rows": context_rows,
+        "strategy_names": strategy_names,
+        "strategy_rows": strategy_rows,
+    }
 
     if feature_mode == "prices_only":
-        feature_names, feature_rows = assemble_feature_matrix(
-            feature_mode,
-            price_names,
-            price_rows,
-            news_names=news_names,
-            news_rows=news_rows,
-            context_names=context_names,
-            context_rows=context_rows,
-            strategy_names=strategy_names,
-            strategy_rows=strategy_rows,
-        )
-        return (
+        feature_names, feature_rows = _assemble_ml_features(feature_mode, **assemble_kwargs)
+        return _feature_build_result(
             feature_names,
             feature_rows,
-            macro_warnings,
-            fundamental_warnings,
-            resolved_series_ids,
-            resolved_fundamental_metrics,
-            context_warnings,
-            strategy_warnings,
+            macro_warnings=macro_warnings,
+            fundamental_warnings=fundamental_warnings,
+            resolved_series_ids=resolved_series_ids,
+            resolved_fundamental_metrics=resolved_fundamental_metrics,
+            context_warnings=context_warnings,
+            strategy_warnings=strategy_warnings,
         )
 
+    await job_checkpoints.checkpoint_ml_job(
+        session,
+        job_id,
+        job_checkpoints.progress_at_fraction(progress_start, progress_end, 0.85),
+    )
     macro_names, macro_rows, macro_feature_warnings, resolved_series_ids = await _build_macro_features(
         session,
         bars,
@@ -271,28 +462,21 @@ async def build_ml_feature_matrix(
     macro_warnings.extend(macro_feature_warnings)
 
     if feature_mode == "prices_macro":
-        feature_names, feature_rows = assemble_feature_matrix(
+        feature_names, feature_rows = _assemble_ml_features(
             feature_mode,
-            price_names,
-            price_rows,
-            macro_names,
-            macro_rows,
-            news_names=news_names,
-            news_rows=news_rows,
-            context_names=context_names,
-            context_rows=context_rows,
-            strategy_names=strategy_names,
-            strategy_rows=strategy_rows,
+            macro_names=macro_names,
+            macro_rows=macro_rows,
+            **assemble_kwargs,
         )
-        return (
+        return _feature_build_result(
             feature_names,
             feature_rows,
-            macro_warnings,
-            fundamental_warnings,
-            resolved_series_ids,
-            resolved_fundamental_metrics,
-            context_warnings,
-            strategy_warnings,
+            macro_warnings=macro_warnings,
+            fundamental_warnings=fundamental_warnings,
+            resolved_series_ids=resolved_series_ids,
+            resolved_fundamental_metrics=resolved_fundamental_metrics,
+            context_warnings=context_warnings,
+            strategy_warnings=strategy_warnings,
         )
 
     if instrument_id is None:
@@ -301,30 +485,23 @@ async def build_ml_feature_matrix(
     fund_names, fund_rows, fundamental_warnings, resolved_fundamental_metrics = (
         await _build_fundamental_features(session, instrument_id, bars, validated_params)
     )
-    feature_names, feature_rows = assemble_feature_matrix(
+    feature_names, feature_rows = _assemble_ml_features(
         feature_mode,
-        price_names,
-        price_rows,
-        macro_names,
-        macro_rows,
-        fund_names,
-        fund_rows,
-        news_names=news_names,
-        news_rows=news_rows,
-        context_names=context_names,
-        context_rows=context_rows,
-        strategy_names=strategy_names,
-        strategy_rows=strategy_rows,
+        macro_names=macro_names,
+        macro_rows=macro_rows,
+        fund_names=fund_names,
+        fund_rows=fund_rows,
+        **assemble_kwargs,
     )
-    return (
+    return _feature_build_result(
         feature_names,
         feature_rows,
-        macro_warnings,
-        fundamental_warnings,
-        resolved_series_ids,
-        resolved_fundamental_metrics,
-        context_warnings,
-        strategy_warnings,
+        macro_warnings=macro_warnings,
+        fundamental_warnings=fundamental_warnings,
+        resolved_series_ids=resolved_series_ids,
+        resolved_fundamental_metrics=resolved_fundamental_metrics,
+        context_warnings=context_warnings,
+        strategy_warnings=strategy_warnings,
     )
 
 

@@ -1,7 +1,7 @@
 import {
   estimateWalkForwardFoldCount,
-  FEATURE_WARMUP_BARS,
   minimumBarsRequired,
+  resolveWarmupBars,
   type WalkForwardParams,
 } from './mlBacktestConfig';
 import type { WalkForwardBudget } from './mlUniverseBudget';
@@ -38,6 +38,7 @@ export type WalkForwardBarReadinessOptions = {
   timeframe?: string;
   labelMode?: 'binary' | 'ternary' | 'meta_label';
   maxHorizonBars?: number;
+  warmupBars?: number;
 };
 
 export function cryptoBarReadinessTip(
@@ -75,6 +76,7 @@ function minimumParams(
 ) {
   return {
     ...params,
+    warmup_bars: options?.warmupBars ?? params.warmup_bars,
     label_mode: options?.labelMode,
     max_horizon_bars: options?.maxHorizonBars ?? 48,
   };
@@ -97,8 +99,11 @@ export function assessWalkForwardBarReadiness(
 ): WalkForwardBarReadiness {
   const labelTail = labelTailBars(params, options);
   const minimumRequired = minimumBarsRequired(minimumParams(params, options));
+  const warmup = resolveWarmupBars({
+    warmup_bars: options?.warmupBars ?? params.warmup_bars,
+  });
   const breakdown = {
-    warmup: FEATURE_WARMUP_BARS,
+    warmup,
     train: params.train_bars,
     test: params.test_bars,
     labelHorizon: labelTail,
@@ -142,7 +147,7 @@ export function assessWalkForwardBarReadiness(
 
   const budget = options?.budget;
   const walkForwardBudget =
-    budget?.walkForwardBudget ?? barCount - FEATURE_WARMUP_BARS - labelTail;
+    budget?.walkForwardBudget ?? barCount - warmup - labelTail;
   const headroom = barCount - minimumRequired;
   const shortfall = headroom < 0 ? -headroom : null;
   const structuralFolds =

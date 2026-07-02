@@ -73,6 +73,7 @@ def test_build_readiness_warns_when_train_below_warmup():
         bars,
         feature_rows,
         {
+            "warmup_bars": FEATURE_WARMUP_BARS,
             "train_bars": FEATURE_WARMUP_BARS,
             "test_bars": 60,
             "step_bars": 60,

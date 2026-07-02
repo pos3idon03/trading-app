@@ -71,6 +71,26 @@ def test_signal_to_order_intent_sell_uses_deployment_qty():
     assert intent == OrderIntent(side="sell", qty=2.5, reason="sell_signal_long")
 
 
+def test_signal_to_order_intent_sell_capped_to_alpaca_available():
+    intent = signal_to_order_intent(
+        "sell",
+        deployment_net_qty=0.0676,
+        buying_power=10_000,
+        account_equity=10_000,
+        allocation_pct=100,
+        max_position_pct=100,
+        last_price=74_000,
+        asset_type="crypto",
+        position_qty=0.0676,
+        qty_available=0.067409372,
+    )
+    assert intent == OrderIntent(
+        side="sell",
+        qty=0.067409372,
+        reason="sell_signal_long",
+    )
+
+
 def test_signal_to_order_intent_hold_returns_none():
     assert (
         signal_to_order_intent(

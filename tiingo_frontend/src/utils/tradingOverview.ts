@@ -68,6 +68,7 @@ export function mergeOverviewWithActivity(
       sell_threshold: event.sell_threshold ?? row.sell_threshold,
       last_explainability: event.explainability ?? row.last_explainability,
       last_evaluated_bar_time: event.bar_time,
+      last_evaluated_at: event.created_at,
     };
   });
 }
@@ -76,8 +77,8 @@ export function overviewLatestUpdate(row: DeploymentOverview): {
   value: string;
   timezone: string;
 } {
-  if (row.last_evaluated_bar_time) {
-    return formatDateTimeWithTimezone(row.last_evaluated_bar_time);
+  if (row.ohlcv_latest_bar_time) {
+    return formatDateTimeWithTimezone(row.ohlcv_latest_bar_time);
   }
   if (row.price_updated_at) {
     return formatDateTimeWithTimezone(row.price_updated_at);
@@ -85,14 +86,30 @@ export function overviewLatestUpdate(row: DeploymentOverview): {
   return { value: '—', timezone: '' };
 }
 
+export function overviewLastEvaluated(row: DeploymentOverview): {
+  value: string;
+  timezone: string;
+} {
+  if (row.last_evaluated_at) {
+    return formatDateTimeWithTimezone(row.last_evaluated_at);
+  }
+  return { value: '—', timezone: '' };
+}
+
 export function overviewMetricRows(row: DeploymentOverview): OverviewMetricRow[] {
   const latestUpdate = overviewLatestUpdate(row);
+  const lastEvaluated = overviewLastEvaluated(row);
   return [
     { label: 'Latest price', value: formatOverviewPrice(row.current_price) },
     {
       label: 'Latest update',
       value: latestUpdate.value,
       sublabel: latestUpdate.timezone || undefined,
+    },
+    {
+      label: 'Last evaluated',
+      value: lastEvaluated.value,
+      sublabel: lastEvaluated.timezone || undefined,
     },
     { label: 'Signal', value: formatSignal(row.last_signal) },
     {

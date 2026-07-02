@@ -7,6 +7,28 @@ import {
   resolveCompleteStepAdvance,
   validateWizardStepGate,
 } from '../utils/mlWizardState';
+import { buildLabelSearchGate } from '../utils/mlLabelSearchMatrix';
+const FULL_COVERAGE_GATE = buildLabelSearchGate(
+  { ml_logistic: { enabled: true, labelMode: 'binary' }, ml_lstm: { enabled: true, labelMode: 'meta_label' } },
+  [
+    {
+      label_key: 'a',
+      model_type: 'ml_logistic',
+      label_mode: 'binary',
+      label_horizon: 5,
+      oos_window_count: 1,
+      class_distribution: {},
+    },
+    {
+      label_key: 'b',
+      model_type: 'ml_lstm',
+      label_mode: 'meta_label',
+      label_horizon: 5,
+      oos_window_count: 1,
+      class_distribution: {},
+    },
+  ],
+);
 
 const BASE_COMPLETE_INPUT = {
   symbol: 'AAPL',
@@ -55,6 +77,35 @@ describe('validateWizardStepGate', () => {
     expect(error).toMatch(/data preview/i);
   });
 
+  it('requires at least one enabled model for labeling', () => {
+    const error = validateWizardStepGate(
+      'labeling',
+      DEFAULT_ML_PARAMS,
+      undefined,
+      'AAPL',
+      EMPTY_WIZARD_ARTIFACTS,
+      undefined,
+      { enabledModelIds: [], coverageComplete: false },
+    );
+    expect(error).toMatch(/at least one model/i);
+  });
+
+  it('requires grid search coverage for all selected models', () => {
+    const error = validateWizardStepGate(
+      'labeling',
+      DEFAULT_ML_PARAMS,
+      undefined,
+      'AAPL',
+      { ...EMPTY_WIZARD_ARTIFACTS, hasLabelSearch: true },
+      undefined,
+      buildLabelSearchGate(
+        { ml_logistic: { enabled: true, labelMode: 'binary' } },
+        [],
+      ),
+    );
+    expect(error).toMatch(/all selected models/i);
+  });
+
   it('requires label apply before leaving labeling', () => {
     const error = validateWizardStepGate(
       'labeling',
@@ -62,6 +113,8 @@ describe('validateWizardStepGate', () => {
       undefined,
       'AAPL',
       { ...EMPTY_WIZARD_ARTIFACTS, hasLabelSearch: true },
+      undefined,
+      FULL_COVERAGE_GATE,
     );
     expect(error).toMatch(/apply/i);
   });
@@ -77,6 +130,8 @@ describe('validateWizardStepGate', () => {
       undefined,
       'AAPL',
       merged,
+      undefined,
+      FULL_COVERAGE_GATE,
     );
     expect(error).toBeNull();
   });
@@ -133,8 +188,13 @@ describe('resolveCompleteStepAdvance', () => {
   it('advances labeling to model when apply patch is provided', () => {
     const result = resolveCompleteStepAdvance({
       step: 'labeling',
-      artifacts: { ...EMPTY_WIZARD_ARTIFACTS, hasLabelSearch: true },
+      artifacts: {
+        ...EMPTY_WIZARD_ARTIFACTS,
+        hasLabelSearch: true,
+        hasLabelApplied: true,
+      },
       artifactPatch: { hasLabelApplied: true },
+      labelSearchGate: FULL_COVERAGE_GATE,
       configOverride: {
         modelType: 'ml_random_forest',
         modelLabel: 'Random Forest',
@@ -157,10 +217,26 @@ describe('resolveCompleteStepAdvance', () => {
     const result = resolveCompleteStepAdvance({
       step: 'labeling',
       artifacts: { ...EMPTY_WIZARD_ARTIFACTS, hasLabelSearch: true },
+      labelSearchGate: FULL_COVERAGE_GATE,
       ...BASE_COMPLETE_INPUT,
     });
 
     expect(result.error).toMatch(/apply/i);
+  });
+
+  it('blocks labeling advance when labelSearchGate is omitted', () => {
+    const result = resolveCompleteStepAdvance({
+      step: 'labeling',
+      artifacts: {
+        ...EMPTY_WIZARD_ARTIFACTS,
+        hasLabelSearch: true,
+        hasLabelApplied: true,
+      },
+      artifactPatch: { hasLabelApplied: true },
+      ...BASE_COMPLETE_INPUT,
+    });
+
+    expect(result.error).toMatch(/model/i);
   });
 
   it('advances signals to run when threshold patch is provided', () => {

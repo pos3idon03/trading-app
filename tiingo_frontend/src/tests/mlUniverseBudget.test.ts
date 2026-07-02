@@ -7,6 +7,7 @@ import {
 } from '../utils/mlUniverseBudget';
 
 const params = {
+  warmup_bars: 50,
   train_bars: 150,
   test_bars: 52,
   step_bars: 52,

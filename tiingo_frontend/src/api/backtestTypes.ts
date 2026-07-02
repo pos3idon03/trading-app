@@ -63,6 +63,7 @@ export interface BacktestTrade {
   shares: number;
   pnl: number;
   pnl_pct: number;
+  exit_reason?: string;
 }
 
 export interface BacktestRunRequest {

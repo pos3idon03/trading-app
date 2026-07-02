@@ -3,11 +3,19 @@ from typing import Any
 import httpx
 
 from config import get_settings
-from features.execution.alpaca_symbols import execution_asset_type, to_alpaca_symbol
+from features.execution.alpaca_symbols import to_alpaca_symbol
+from features.execution.order_qty import format_order_qty_string
 
 _ACCOUNT_PATH = "/v2/account"
 _POSITIONS_PATH = "/v2/positions"
 _ORDERS_PATH = "/v2/orders"
+
+
+class AlpacaAPIError(RuntimeError):
+    def __init__(self, status_code: int, message: str):
+        self.status_code = status_code
+        self.message = message
+        super().__init__(f"Alpaca API error {status_code}: {message}")
 
 
 def _headers() -> dict[str, str]:
@@ -24,11 +32,22 @@ def _base_url() -> str:
     return get_settings().effective_alpaca_base_url
 
 
+def _extract_error_message(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+        if isinstance(payload, dict) and payload.get("message"):
+            return str(payload["message"])
+    except Exception:
+        pass
+    return response.text or response.reason_phrase
+
+
 async def _request(method: str, path: str, *, json: dict | None = None) -> Any:
     url = f"{_base_url()}{path}"
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.request(method, url, headers=_headers(), json=json)
-        response.raise_for_status()
+        if response.is_error:
+            raise AlpacaAPIError(response.status_code, _extract_error_message(response))
         if response.status_code == 204:
             return None
         return response.json()
@@ -54,6 +73,7 @@ async def get_positions() -> list[dict]:
         {
             "symbol": row.get("symbol"),
             "qty": float(row.get("qty") or 0),
+            "qty_available": float(row.get("qty_available") or row.get("qty") or 0),
             "side": row.get("side"),
             "market_value": float(row.get("market_value") or 0),
             "avg_entry_price": float(row.get("avg_entry_price") or 0),
@@ -104,10 +124,12 @@ async def submit_market_order(
     *,
     asset_type: str = "stock",
 ) -> dict:
+    from features.execution.alpaca_symbols import execution_asset_type
+
     is_crypto = execution_asset_type(asset_type) == "crypto"
     payload: dict = {
         "symbol": to_alpaca_symbol(symbol, asset_type),
-        "qty": str(round(qty, 6)),
+        "qty": format_order_qty_string(qty, asset_type=asset_type, side=side),
         "side": side.lower(),
         "type": "market",
         "time_in_force": "gtc" if is_crypto else "day",

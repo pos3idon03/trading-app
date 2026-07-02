@@ -1,3 +1,4 @@
+import { jobPollApi } from './jobClient';
 import { enqueueAndWait } from '../hooks/useMlJob';
 import { api } from './client';
 import type {
@@ -13,6 +14,7 @@ import type {
   AssetOverviewResponse,
   MacroBriefResponse,
   MacroOverviewResponse,
+  MarketSentimentResponse,
   OHLCVQueryResponse,
   PerformanceResponse,
   StockKpisResponse,
@@ -44,6 +46,7 @@ import type {
   MlTrainResponse,
   MlTrainingExportRequest,
   MlTrainingExportResponse,
+  MlUniverseDefinition,
   MlWorkbookExportRequest,
   MlWorkbookExportResponse,
 } from './mlBacktestTypes';
@@ -147,10 +150,13 @@ export const ingestionApi = {
     api.post('/ingestion/stream/start', { symbols }).then((r) => r.data),
   streamStop: () => api.post('/ingestion/stream/stop').then((r) => r.data),
   streamStatus: () => api.get('/ingestion/stream/status').then((r) => r.data),
-  listJobs: (params?: { status?: string; limit?: number }) =>
-    api.get<Job[]>('/ingestion/jobs', { params }).then((r) => r.data),
-  listActiveJobs: () => api.get<Job[]>('/ingestion/jobs/active').then((r) => r.data),
-  getJob: (id: string) => api.get<Job>(`/ingestion/jobs/${id}`).then((r) => r.data),
+  listJobs: (
+    params?: { status?: string; limit?: number },
+    config?: { signal?: AbortSignal },
+  ) => api.get<Job[]>('/ingestion/jobs', { params, ...config }).then((r) => r.data),
+  listActiveJobs: (config?: { signal?: AbortSignal }) =>
+    api.get<Job[]>('/ingestion/jobs/active', config).then((r) => r.data),
+  getJob: (id: string) => jobPollApi.get<Job>(`/ingestion/jobs/${id}`).then((r) => r.data),
   cancelJob: (id: string) =>
     api.post<Job>(`/ingestion/jobs/${id}/cancel`).then((r) => r.data),
   listMacroSeries: (params?: { ingestedOnly?: boolean; query?: string; limit?: number }) =>
@@ -219,6 +225,12 @@ export const marketDataApi = {
       .then((r) => r.data),
   getMacroBrief: () =>
     api.get<MacroBriefResponse>('/market-data/overview/macro/brief').then((r) => r.data),
+  getMarketSentiment: (hours = 168) =>
+    api
+      .get<MarketSentimentResponse>('/market-data/overview/market-sentiment', {
+        params: { hours },
+      })
+      .then((r) => r.data),
 };
 
 export const backtestApi = {
@@ -290,7 +302,11 @@ export const mlBacktestApi = {
       metrics: result.metrics ?? null,
     })),
   getResults: (id: string) =>
-    api.get<MlBacktestResultsResponse>(`/backtest/ml/${id}/results`).then((r) => r.data),
+    jobPollApi
+      .get<MlBacktestResultsResponse>(`/backtest/ml/${id}/results`)
+      .then((r) => r.data),
+  listUniverses: () =>
+    api.get<{ universes: MlUniverseDefinition[] }>('/backtest/ml/universes').then((r) => r.data),
 };
 
 export const foundationBacktestApi = {

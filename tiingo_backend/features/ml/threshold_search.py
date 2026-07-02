@@ -1,5 +1,12 @@
+from features.backtesting.engine import run_backtest_with_signals, run_buy_and_hold_benchmark
+from features.backtesting.metrics import compute_metrics
+from features.backtesting.trade_exits import TradeExitConfig
 from features.ml.evaluation import compute_classification_metrics
 from features.ml.signals import count_signals, predictions_to_signals
+from features.ml.simulation_window import (
+    slice_simulation_window,
+    walk_forward_simulation_start_index,
+)
 
 
 def ternary_threshold_gates(min_class_probability: float | None) -> list[float | None]:
@@ -18,6 +25,17 @@ def binary_threshold_combos(
             if buy_threshold > sell_threshold:
                 combos.append((buy_threshold, sell_threshold))
     return combos
+
+
+def threshold_sort_key(row: dict) -> tuple:
+    pf = row.get("profit_factor")
+    pf_val = float(pf) if pf is not None else -1.0
+    return (
+        pf_val,
+        row.get("total_return_pct") or -1e9,
+        row.get("sharpe_ratio") or -1e9,
+        row.get("f1_macro") or 0.0,
+    )
 
 
 def evaluate_ternary_threshold_gate(
@@ -96,6 +114,75 @@ def evaluate_binary_threshold_combo(
     }
 
 
+def evaluate_binary_threshold_pnl(
+    *,
+    bars: list[dict],
+    probabilities: list[float | None],
+    label_mode: str,
+    buy_threshold: float,
+    sell_threshold: float,
+    y_true: list[int],
+    y_proba: list[list[float]],
+    train_bars: int,
+    initial_cash: float,
+    commission_bps: float,
+    slippage_bps: float,
+    exit_config: TradeExitConfig,
+    decision_timeframe: str = "1d",
+    asset_type: str = "equity",
+) -> dict:
+    signals = predictions_to_signals(
+        label_mode=label_mode,
+        probabilities=probabilities,
+        buy_threshold=buy_threshold,
+        sell_threshold=sell_threshold,
+    )
+    sim_start = walk_forward_simulation_start_index(train_bars)
+    sim_bars, sim_signals = slice_simulation_window(bars, signals, sim_start)
+
+    strategy = run_backtest_with_signals(
+        sim_bars,
+        sim_signals,
+        initial_cash,
+        commission_bps,
+        decision_timeframe=decision_timeframe,
+        slippage_bps=slippage_bps,
+        exit_config=exit_config,
+    )
+    benchmark = run_buy_and_hold_benchmark(
+        sim_bars,
+        initial_cash,
+        commission_bps,
+        decision_timeframe=decision_timeframe,
+        slippage_bps=slippage_bps,
+    )
+    portfolio = compute_metrics(
+        strategy,
+        benchmark,
+        initial_cash,
+        decision_timeframe,
+        asset_type=asset_type,
+    )
+
+    cls = evaluate_binary_threshold_combo(
+        label_mode=label_mode,
+        probabilities=probabilities,
+        y_true=y_true,
+        y_proba=y_proba,
+        buy_threshold=buy_threshold,
+        sell_threshold=sell_threshold,
+    )
+    return {
+        **cls,
+        "profit_factor": portfolio.get("profit_factor"),
+        "total_return_pct": portfolio.get("total_return_pct"),
+        "max_drawdown_pct": portfolio.get("max_drawdown_pct"),
+        "sharpe_ratio": portfolio.get("sharpe_ratio"),
+        "trade_count": portfolio.get("trade_count"),
+        "alpha_pct": portfolio.get("alpha_pct"),
+    }
+
+
 def run_threshold_search(
     *,
     label_mode: str,
@@ -135,5 +222,5 @@ def run_threshold_search(
             sell_thresholds,
         )
     ]
-    results.sort(key=lambda row: (row.get("f1_macro") or 0.0, row.get("f1") or 0.0), reverse=True)
+    results.sort(key=threshold_sort_key, reverse=True)
     return results

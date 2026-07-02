@@ -196,4 +196,28 @@ async def cancel_ingestion_job(job_id: UUID, session: AsyncSession = Depends(get
             raise HTTPException(404, "Job not found")
         raise HTTPException(409, f"Job cannot be cancelled while {existing['status']}")
     await session.commit()
+    from features.worker.job_abort import abort_ingestion_arq_job
+
+    await abort_ingestion_arq_job(job_id, job["job_type"])
     return job
+
+
+@router.post("/universe/seed")
+async def seed_universe(
+    body: dict,
+    session: AsyncSession = Depends(get_db),
+):
+    from features.ingestion.universe_orchestrator import seed_universe as run_seed
+
+    try:
+        result = await run_seed(
+            session,
+            name=str(body.get("name") or "SP500"),
+            source=body.get("source"),
+            description=body.get("description"),
+            symbols=body.get("symbols"),
+        )
+        await session.commit()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

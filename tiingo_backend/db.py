@@ -24,6 +24,14 @@ class Base(DeclarativeBase):
     pass
 
 
+def ensure_models_registered() -> None:
+    """Import all ORM modules so string ForeignKey targets exist in metadata."""
+    import models  # noqa: F401
+
+
+ensure_models_registered()
+
+
 async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
         try:

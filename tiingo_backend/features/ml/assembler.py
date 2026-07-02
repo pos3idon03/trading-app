@@ -40,6 +40,8 @@ def assemble_feature_matrix(
     context_rows: list[Optional[list[float]]] | None = None,
     strategy_names: list[str] | None = None,
     strategy_rows: list[Optional[list[float]]] | None = None,
+    metadata_names: list[str] | None = None,
+    metadata_rows: list[Optional[list[float]]] | None = None,
 ) -> tuple[list[str], list[Optional[list[float]]]]:
     macro_names = macro_names or []
     macro_rows = macro_rows or []
@@ -51,6 +53,8 @@ def assemble_feature_matrix(
     context_rows = context_rows or []
     strategy_names = strategy_names or []
     strategy_rows = strategy_rows or []
+    metadata_names = metadata_names or []
+    metadata_rows = metadata_rows or []
 
     base_names: list[str] = []
     base_row_sets: list[list[Optional[list[float]]]] = []
@@ -67,6 +71,20 @@ def assemble_feature_matrix(
     else:
         raise ValueError(f"Unsupported feature_mode: {feature_mode}")
 
-    merged_names = [*base_names, *news_names, *context_names, *strategy_names]
-    merged_rows = _merge_rows(*base_row_sets, news_rows, context_rows, strategy_rows)
+    optional_blocks = [
+        (news_names, news_rows),
+        (metadata_names, metadata_rows),
+        (context_names, context_rows),
+        (strategy_names, strategy_rows),
+    ]
+    active_optional_names: list[str] = []
+    active_optional_row_sets: list[list[Optional[list[float]]]] = []
+    for block_names, block_rows in optional_blocks:
+        if not _row_set_is_active(block_rows):
+            continue
+        active_optional_names.extend(block_names)
+        active_optional_row_sets.append(block_rows)
+
+    merged_names = [*base_names, *active_optional_names]
+    merged_rows = _merge_rows(*base_row_sets, *active_optional_row_sets)
     return merged_names, merged_rows

@@ -4,6 +4,7 @@ export type FundamentalPeriodType = 'quarterly' | 'annual';
 export type MlLabelMode = 'binary' | 'ternary' | 'meta_label';
 export type MlLabelMethod = 'endpoint' | 'mean';
 export type MlRunMode = 'walk_forward' | 'inference';
+export type MlExitPolicy = 'signal_only' | 'label_horizon' | 'atr_bracket' | 'combined';
 
 export interface MlParamConstraint {
   min: number;
@@ -36,6 +37,7 @@ export interface MlParams {
   label_threshold?: number;
   label_method?: MlLabelMethod;
   label_horizon: number;
+  warmup_bars?: number;
   train_bars: number;
   test_bars: number;
   step_bars: number;
@@ -54,16 +56,56 @@ export interface MlParams {
   slippage_bps?: number;
   base_strategy_id?: string;
   base_strategy_params?: Record<string, unknown>;
+  exit_policy?: MlExitPolicy;
+  max_hold_bars?: number;
+  atr_period?: number;
   profit_atr_mult?: number;
   stop_atr_mult?: number;
   max_horizon_bars?: number;
   meta_gate_threshold?: number;
+  denoise_method?: 'none' | 'kalman' | 'wavelet';
+  include_cross_sectional_factors?: boolean;
+  include_metadata_features?: boolean;
+  dynamic_indicator_selection?: boolean;
+  indicator_groups?: string[];
+  correlation_prune_threshold?: number;
+  sizing_method?: 'fixed_fraction' | 'kelly' | 'hrp';
+  kelly_fraction?: number;
+  hrp_lookback_bars?: number;
+  rebalance_frequency?: number;
+  hrp_linkage_method?: 'single' | 'ward';
+  lstm_seq_length?: number;
+  lstm_hidden_size?: number;
+  lstm_num_layers?: number;
+  lstm_epochs?: number;
+  lstm_dropout?: number;
+  lstm_learning_rate?: number;
+  lstm_batch_size?: number;
+  technical_pca_enabled?: boolean;
+  technical_pca_variance_threshold?: number;
+  macro_features_mode?: 'full' | 'changes_only';
+  macro_pca_enabled?: boolean;
+  macro_pca_variance_threshold?: number;
+  macro_pca_input_mode?: 'changes_only' | 'all_macro';
+  fundamental_features_mode?: 'full' | 'growth_only';
+  fundamental_pca_enabled?: boolean;
+  fundamental_pca_variance_threshold?: number;
+  fundamental_pca_input_mode?: 'kpi_only' | 'all_fundamental' | 'growth_only';
+}
+
+export interface MlUniverseDefinition {
+  id: number;
+  name: string;
+  source?: string | null;
+  description?: string | null;
 }
 
 export interface MlRunRequest {
   symbol: string;
   model_type: string;
   params?: Partial<MlParams>;
+  symbols?: string[];
+  universe_id?: number;
   timeframe?: string;
   start?: string;
   end?: string;
@@ -89,6 +131,34 @@ export interface MlShapImportanceItem {
   mean_abs_shap: number;
 }
 
+export interface MlShapInteractionItem {
+  feature_a: string;
+  feature_b: string;
+  strength: number;
+}
+
+export interface MlPartialDependenceCurve {
+  feature: string;
+  grid: number[];
+  p_up: number[];
+}
+
+export interface MlShapSliceFeature {
+  feature: string;
+  mean_abs_shap: number;
+}
+
+export interface MlShapTradeSlices {
+  winners_top_decile: MlShapSliceFeature[];
+  losers_bottom_decile: MlShapSliceFeature[];
+}
+
+export interface MlTreeRules {
+  format: string;
+  content: string;
+  max_depth: number;
+}
+
 export interface MlSummary {
   feature_mode: string;
   model_type: string;
@@ -102,6 +172,7 @@ export interface MlSummary {
   fundamental_metrics?: string[];
   fundamental_period_type?: FundamentalPeriodType;
   fundamental_warnings?: string[];
+  survivorship_warnings?: string[];
   context_timeframes?: string[];
   strategy_feature_ids?: string[];
   run_mode?: MlRunMode | string | null;
@@ -117,6 +188,11 @@ export interface MlSummary {
   roc_curves?: MlRocCurve[];
   auc_scores?: Record<string, number | null>;
   shap_importance?: MlShapImportanceItem[];
+  coefficient_importance?: MlFeatureImportanceItem[];
+  shap_interactions?: MlShapInteractionItem[];
+  partial_dependence?: MlPartialDependenceCurve[];
+  shap_slices?: MlShapTradeSlices | null;
+  tree_rules?: MlTreeRules | null;
   simulation_start_bar_index?: number | null;
   simulation_start_date?: string | null;
   pre_oos_bars_excluded?: number | null;
@@ -249,9 +325,19 @@ export interface MlDataPreviewResponse {
   fundamental_metrics: string[];
   context_timeframes: string[];
   strategy_feature_ids: string[];
+  include_news_sentiment?: boolean;
+  feature_names?: string[];
+  feature_count?: number;
+  feature_groups?: Record<string, string[]>;
+  always_included_features?: string[];
   label_preview: MlLabelPreview;
   walk_forward_readiness?: MlWalkForwardReadiness;
   warnings: string[];
+}
+
+export interface MlModelLabelSearchConfig {
+  model_type: string;
+  label_mode: MlLabelMode;
 }
 
 export interface MlLabelSearchRequest {
@@ -264,6 +350,7 @@ export interface MlLabelSearchRequest {
   horizons?: number[];
   thresholds?: number[];
   model_type?: string;
+  model_configs?: MlModelLabelSearchConfig[];
 }
 
 export interface MlLabelSearchResult {
@@ -304,6 +391,12 @@ export interface MlThresholdSearchResult {
   recall?: number | null;
   f1?: number | null;
   f1_macro?: number | null;
+  profit_factor?: number | null;
+  total_return_pct?: number | null;
+  max_drawdown_pct?: number | null;
+  sharpe_ratio?: number | null;
+  trade_count?: number | null;
+  alpha_pct?: number | null;
 }
 
 export interface MlThresholdSearchResponse {

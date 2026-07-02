@@ -91,6 +91,31 @@ async def test_build_deployment_readiness_marks_stale(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_build_deployment_readiness_tracks_ohlcv_for_error(monkeypatch):
+    deployment = {
+        "status": "error",
+        "symbol": "BTC-USD",
+        "timeframe": "1h",
+        "created_at": datetime(2026, 5, 28, 10, 0, tzinfo=timezone.utc),
+        "last_evaluated_bar_time": datetime(2026, 5, 28, 17, 0, tzinfo=timezone.utc),
+    }
+    monkeypatch.setattr(
+        "features.execution.deployment_reconciliation.check_ohlcv_freshness",
+        AsyncMock(return_value=datetime(2026, 5, 28, 17, 0, tzinfo=timezone.utc)),
+    )
+    as_of = datetime(2026, 5, 28, 19, 20, tzinfo=timezone.utc)
+    readiness = await build_deployment_readiness(
+        AsyncMock(),
+        deployment,
+        as_of,
+        asset_type="crypto",
+    )
+    assert readiness["update_status"] == "stale"
+    assert readiness["missed_slot_count"] == 0
+    assert readiness["ohlcv_latest_bar_time"] is not None
+
+
+@pytest.mark.asyncio
 async def test_reconcile_missed_updates_runs_catch_up(monkeypatch):
     deployment_id = uuid4()
     deployment = {

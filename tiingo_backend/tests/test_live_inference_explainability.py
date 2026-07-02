@@ -59,8 +59,8 @@ async def test_run_live_inference_returns_explainability(monkeypatch):
     mock_model.classes_ = [0, 1]
     mock_model.predict_proba.return_value = [[0.3, 0.7]]
     monkeypatch.setattr(
-        "features.execution.inference_runner.load_model_artifact",
-        lambda _path: mock_model,
+        "features.execution.inference_runner.load_model_bundle",
+        lambda _path: (mock_model, None),
     )
     monkeypatch.setattr(
         "features.execution.inference_runner.predict_with_frozen_model",

@@ -64,6 +64,9 @@ export default function Sidebar() {
             <NavLink to="/backtesting/ml" className={subLinkClass}>
               ML
             </NavLink>
+            <NavLink to="/backtesting/ml-testing" className={subLinkClass}>
+              ML Testing
+            </NavLink>
             <NavLink to="/backtesting/foundation" className={subLinkClass}>
               Foundation Models
             </NavLink>

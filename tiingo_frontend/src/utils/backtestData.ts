@@ -104,11 +104,13 @@ export function buildEquityChartData(
   benchmark: BacktestEquityPoint[],
 ): Array<{ date: string; strategy?: number; benchmark?: number }> {
   const byDate = new Map<string, { date: string; strategy?: number; benchmark?: number }>();
+  const strategyPoints = Array.isArray(strategy) ? strategy : [];
+  const benchmarkPoints = Array.isArray(benchmark) ? benchmark : [];
 
-  for (const point of strategy) {
+  for (const point of strategyPoints) {
     byDate.set(point.date, { date: point.date, strategy: point.equity });
   }
-  for (const point of benchmark) {
+  for (const point of benchmarkPoints) {
     const existing = byDate.get(point.date) ?? { date: point.date };
     existing.benchmark = point.equity;
     byDate.set(point.date, existing);

@@ -19,6 +19,19 @@ import {
 
 type ToastState = { message: string; variant: 'success' | 'error' };
 
+function extractErrorMessage(err: unknown, fallback: string): string {
+  if (err && typeof err === 'object' && 'response' in err) {
+    const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
+    if (typeof detail === 'string') {
+      return detail;
+    }
+  }
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  return fallback;
+}
+
 export default function DeploymentsPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -123,13 +136,13 @@ export default function DeploymentsPage() {
       const detail =
         result.closed_qty > 0
           ? `Deployment deleted. Closed ${result.closed_qty.toFixed(4)} ${row.symbol}.`
-          : 'Deployment deleted.';
+          : result.close_warning ?? 'Deployment deleted.';
       setToast({ message: detail, variant: 'success' });
       setConfirmDelete(null);
       await load();
     } catch (err) {
       setToast({
-        message: err instanceof Error ? err.message : 'Failed to delete deployment.',
+        message: extractErrorMessage(err, 'Failed to delete deployment.'),
         variant: 'error',
       });
     } finally {

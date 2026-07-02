@@ -8,6 +8,9 @@ class PortfolioState:
     shares: float = 0.0
     entry_price: float | None = None
     entry_date: str | None = None
+    entry_bar_index: int | None = None
+    bracket_profit_level: float | None = None
+    bracket_stop_level: float | None = None
 
 
 @dataclass
@@ -19,6 +22,7 @@ class TradeRecord:
     shares: float
     pnl: float
     pnl_pct: float
+    exit_reason: str = ""
 
 
 @dataclass
@@ -88,6 +92,19 @@ def buy_all_in(
     state.entry_date = _format_trade_date(bar)
 
 
+def buy_all_in_at_bar(
+    state: PortfolioState,
+    price: float,
+    bar: dict,
+    bar_index: int,
+    commission_bps: float,
+    slippage_bps: float = 0.0,
+) -> None:
+    buy_all_in(state, price, bar, commission_bps, slippage_bps)
+    if state.shares > 0:
+        state.entry_bar_index = bar_index
+
+
 def sell_all(
     state: PortfolioState,
     price: float,
@@ -95,6 +112,8 @@ def sell_all(
     commission_bps: float,
     trades: list[TradeRecord],
     slippage_bps: float = 0.0,
+    *,
+    exit_reason: str = "signal",
 ) -> None:
     if state.shares <= 0 or price <= 0:
         return
@@ -117,6 +136,7 @@ def sell_all(
             shares=round(state.shares, 6),
             pnl=round(pnl, 2),
             pnl_pct=round(pnl_pct, 2),
+            exit_reason=exit_reason,
         )
     )
 
@@ -124,6 +144,9 @@ def sell_all(
     state.shares = 0.0
     state.entry_price = None
     state.entry_date = None
+    state.entry_bar_index = None
+    state.bracket_profit_level = None
+    state.bracket_stop_level = None
 
 
 def mark_equity(state: PortfolioState, bar: dict, peak_equity: float) -> tuple[float, float]:

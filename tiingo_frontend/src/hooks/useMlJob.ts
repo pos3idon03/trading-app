@@ -1,4 +1,4 @@
-import { ingestionApi } from '../api/endpoints';
+import { jobPollApi } from '../api/jobClient';
 import type { Job } from '../api/types';
 
 const POLL_MS = 3000;
@@ -15,7 +15,7 @@ export async function pollIngestionJob(
   onProgress?: (job: Job) => void,
 ): Promise<Job> {
   while (true) {
-    const job = await ingestionApi.getJob(jobId);
+    const job = (await jobPollApi.get<Job>(`/ingestion/jobs/${jobId}`)).data;
     onProgress?.(job);
     if (TERMINAL.has(job.status)) {
       if (job.status === 'failed') {

@@ -39,24 +39,35 @@ export default function JobsTab() {
   const [cancellingId, setCancellingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
     try {
       let data: Job[];
+      const requestConfig = { signal: controller.signal };
       if (filter === 'running') {
-        data = await ingestionApi.listActiveJobs();
+        data = await ingestionApi.listActiveJobs(requestConfig);
       } else if (filter === 'failed') {
-        data = await ingestionApi.listJobs({ status: 'failed', limit: 100 });
-        const partial = await ingestionApi.listJobs({ status: 'partial', limit: 100 });
+        data = await ingestionApi.listJobs({ status: 'failed', limit: 100 }, requestConfig);
+        const partial = await ingestionApi.listJobs(
+          { status: 'partial', limit: 100 },
+          requestConfig,
+        );
         data = [...data, ...partial];
       } else {
-        data = await ingestionApi.listJobs({ limit: 100 });
+        data = await ingestionApi.listJobs({ limit: 100 }, requestConfig);
       }
       setJobs(data);
       setError(null);
       return data;
     } catch (e) {
-      setError((e as Error).message);
+      const message =
+        (e as Error).name === 'AbortError' || (e as Error).name === 'CanceledError'
+          ? 'Jobs request timed out. The API may be overloaded — wait for ML jobs to finish or restart tiingo_backend.'
+          : (e as Error).message;
+      setError(message);
       return [];
     } finally {
+      clearTimeout(timer);
       setLoading(false);
     }
   }, [filter]);
@@ -99,10 +110,11 @@ export default function JobsTab() {
     }
   };
 
-  if (loading && jobs.length === 0) {
+  if (loading && jobs.length === 0 && !error) {
     return (
-      <div className="flex justify-center py-12">
+      <div className="flex flex-col items-center gap-3 py-12">
         <Spinner />
+        <p className="text-xs text-slate-500">Loading jobs…</p>
       </div>
     );
   }

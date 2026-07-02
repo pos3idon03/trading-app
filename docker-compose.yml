@@ -38,7 +38,8 @@ services:
       context: ./tiingo_backend
       dockerfile: Dockerfile
       args:
-        INSTALL_FOUNDATION: ${INSTALL_FOUNDATION:-false}
+        INSTALL_FOUNDATION: ${INSTALL_FOUNDATION:-true}
+        TORCH_CUDA: ${DOCKER_TORCH_CUDA:-cpu}
     container_name: tiingo_backend
     env_file: .env
     environment:
@@ -70,7 +71,8 @@ services:
       context: ./tiingo_backend
       dockerfile: Dockerfile
       args:
-        INSTALL_FOUNDATION: ${INSTALL_FOUNDATION:-false}
+        INSTALL_FOUNDATION: ${INSTALL_FOUNDATION:-true}
+        TORCH_CUDA: ${DOCKER_TORCH_CUDA:-cpu}
     container_name: tiingo_worker
     env_file: .env
     environment:
@@ -96,7 +98,8 @@ services:
       context: ./tiingo_backend
       dockerfile: Dockerfile
       args:
-        INSTALL_FOUNDATION: ${INSTALL_FOUNDATION:-false}
+        INSTALL_FOUNDATION: ${INSTALL_FOUNDATION:-true}
+        TORCH_CUDA: ${DOCKER_TORCH_CUDA:-cpu}
     container_name: tiingo_worker_heavy
     env_file: .env
     environment:

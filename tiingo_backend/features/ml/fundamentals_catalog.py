@@ -18,6 +18,17 @@ FUNDAMENTAL_METRIC_CODES: list[str] = [
     "currentRatio",
 ]
 
+RATIO_FUNDAMENTAL_METRICS = frozenset({
+    "roe",
+    "roa",
+    "debtEquity",
+    "grossMargin",
+    "profitMargin",
+    "currentRatio",
+})
+
+DERIVED_FUNDAMENTAL_METRIC_CODES = frozenset({"pe_ratio"})
+
 DEFAULT_FUNDAMENTAL_METRICS: list[str] = list(FUNDAMENTAL_METRIC_CODES)
 
 SUPPORTED_PERIOD_TYPES = frozenset({"quarterly", "annual"})

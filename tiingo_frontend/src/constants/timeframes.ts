@@ -112,13 +112,31 @@ export interface OhlcvApiQuery {
   limit: number;
 }
 
+/** Fills an open-ended custom range (start only or end only) so API queries do not 500. */
+export function normalizeDateRangeForApi(
+  value: DateRangeValue,
+  timeframe: string,
+): DateRangeValue {
+  const mode = dateRangeModeForTimeframe(timeframe);
+  const now = mode === 'date' ? formatDate(new Date()) : new Date().toISOString();
+  if (!value.start && !value.end) {
+    return value;
+  }
+  return {
+    ...value,
+    start: value.start ?? undefined,
+    end: value.end ?? now,
+  };
+}
+
 export function buildOhlcvQuery(timeframe: string, dateRange: DateRangeValue): OhlcvApiQuery {
   const limit = isDailyPlusTimeframe(timeframe) ? DAILY_PLUS_BAR_LIMIT : INTRADAY_BAR_LIMIT;
-  if (dateRange.preset === 'MAX' && !dateRange.start && !dateRange.end) {
+  const normalized = normalizeDateRangeForApi(dateRange, timeframe);
+  if (normalized.preset === 'MAX' && !normalized.start && !normalized.end) {
     return { timeframe, limit };
   }
   const rangeFn = isDailyPlusTimeframe(timeframe) ? toDailyApiRange : toApiRange;
-  return { timeframe, limit, ...rangeFn(dateRange) };
+  return { timeframe, limit, ...rangeFn(normalized) };
 }
 
 export function defaultDateRangeForTimeframe(_timeframe: string): DateRangeValue {

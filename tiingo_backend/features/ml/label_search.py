@@ -37,10 +37,22 @@ def label_search_combos(
     return [(horizon, threshold) for horizon in horizons for threshold in threshold_values]
 
 
+def label_search_work_units(
+    label_mode: str,
+    horizons: list[int],
+    thresholds: list[float],
+) -> list[tuple[int, float]]:
+    combos = label_search_combos(label_mode, horizons, thresholds)
+    if label_mode == "meta_label" and combos:
+        return [combos[0]]
+    return combos
+
+
 def evaluate_label_combo(
     *,
     bars: list[dict],
     feature_rows: list,
+    feature_names: list[str] | None = None,
     label_mode: str,
     horizon: int,
     threshold: float,
@@ -50,15 +62,19 @@ def evaluate_label_combo(
     step_bars: int,
     model_type: str,
     model_label: str | None = None,
+    ml_params: dict | None = None,
 ) -> dict:
+    meta_params = dict(ml_params or {})
     labels = build_labels(
         bars,
         horizon,
         label_mode=label_mode,
         label_threshold=threshold,
         label_method=label_method,
+        params=meta_params,
     )
     params = {
+        **meta_params,
         "label_mode": label_mode,
         "label_horizon": horizon,
         "label_threshold": threshold,
@@ -75,6 +91,8 @@ def evaluate_label_combo(
         train_bars=train_bars,
         test_bars=test_bars,
         step_bars=step_bars,
+        feature_names=feature_names,
+        closes=[float(bar["close"]) for bar in bars],
     )
     distribution = label_distribution(labels)
     f1_macro = None
@@ -112,6 +130,7 @@ def run_label_grid_search(
     *,
     bars: list[dict],
     feature_rows: list,
+    feature_names: list[str] | None = None,
     label_mode: str,
     horizons: list[int],
     thresholds: list[float],
@@ -126,6 +145,7 @@ def run_label_grid_search(
         evaluate_label_combo(
             bars=bars,
             feature_rows=feature_rows,
+            feature_names=feature_names,
             label_mode=label_mode,
             horizon=horizon,
             threshold=threshold,
@@ -145,6 +165,7 @@ def run_multi_model_label_grid_search(
     *,
     bars: list[dict],
     feature_rows: list,
+    feature_names: list[str] | None = None,
     label_mode: str,
     horizons: list[int],
     thresholds: list[float],
@@ -163,6 +184,7 @@ def run_multi_model_label_grid_search(
         combined.extend(run_label_grid_search(
             bars=bars,
             feature_rows=feature_rows,
+            feature_names=feature_names,
             label_mode=label_mode,
             horizons=horizons,
             thresholds=thresholds,

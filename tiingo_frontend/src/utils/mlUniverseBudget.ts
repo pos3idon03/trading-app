@@ -1,8 +1,8 @@
 import type { DateRangeValue } from '../constants/timeframes';
 import {
   estimateWalkForwardFoldCount,
-  FEATURE_WARMUP_BARS,
   minimumBarsRequired,
+  resolveWarmupBars,
   WALK_FORWARD_CONSTRAINTS,
   type WalkForwardParamKey,
   type WalkForwardParams,
@@ -39,7 +39,7 @@ export function maxWalkForwardParamValue(
   }
 
   const fixedOther =
-    FEATURE_WARMUP_BARS +
+    resolveWarmupBars(params) +
     (key === 'train_bars' ? 0 : params.train_bars) +
     (key === 'test_bars' ? 0 : params.test_bars) +
     (key === 'label_horizon' ? 0 : params.label_horizon);
@@ -52,13 +52,14 @@ export function computeWalkForwardBudget(
   barCount: number,
   params: WalkForwardParams,
 ): WalkForwardBudget {
+  const warmupBars = resolveWarmupBars(params);
   const minimumRequired = minimumBarsRequired(params);
-  const walkForwardBudget = Math.max(0, barCount - FEATURE_WARMUP_BARS - params.label_horizon);
+  const walkForwardBudget = Math.max(0, barCount - warmupBars - params.label_horizon);
   const remainingBars = barCount - minimumRequired;
 
   return {
     barCount,
-    warmupBars: FEATURE_WARMUP_BARS,
+    warmupBars,
     labelTail: params.label_horizon,
     minimumRequired,
     walkForwardBudget,

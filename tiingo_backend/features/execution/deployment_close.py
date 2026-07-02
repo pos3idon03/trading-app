@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dal import execution_order_dal, execution_settings_dal, instrument_dal
 from features.execution import alpaca_client
 from features.execution.alpaca_symbols import execution_asset_type
+from features.execution.order_qty import alpaca_position_for_symbol, resolve_sell_qty
 from features.execution.order_sync import sync_deployment_orders
 
 
@@ -20,10 +21,46 @@ async def close_deployment_position(session: AsyncSession, deployment: dict) -> 
 
     instrument = await instrument_dal.get_by_symbol(session, deployment["symbol"])
     asset_type = execution_asset_type((instrument or {}).get("asset_type"))
+    alpaca_positions = await alpaca_client.get_positions()
+    position = alpaca_position_for_symbol(
+        alpaca_positions,
+        deployment["symbol"],
+        asset_type,
+    )
+    if position is None:
+        return {
+            "closed": False,
+            "qty": 0.0,
+            "order_id": None,
+            "close_warning": (
+                f"No {deployment['symbol']} position in Alpaca; "
+                "deployment removed without selling."
+            ),
+        }
+
+    position_qty = float(position.get("qty") or 0)
+    qty_available = float(position.get("qty_available") or position.get("qty") or 0)
+    sell_qty = resolve_sell_qty(
+        net_qty,
+        asset_type=asset_type,
+        position_qty=position_qty,
+        qty_available=qty_available,
+    )
+    if sell_qty <= 0:
+        return {
+            "closed": False,
+            "qty": 0.0,
+            "order_id": None,
+            "close_warning": (
+                f"No sellable {deployment['symbol']} quantity in Alpaca; "
+                "deployment removed without selling."
+            ),
+        }
+
     bar_time = datetime.now(timezone.utc)
     alpaca_order = await alpaca_client.submit_market_order(
         deployment["symbol"],
-        net_qty,
+        sell_qty,
         "sell",
         asset_type=asset_type,
     )
@@ -34,10 +71,10 @@ async def close_deployment_position(session: AsyncSession, deployment: dict) -> 
         alpaca_order_id=alpaca_order.get("id"),
         symbol=deployment["symbol"],
         side="sell",
-        qty=net_qty,
+        qty=sell_qty,
         order_type="market",
         status=alpaca_order.get("status") or "pending",
         signal="manual_close",
         bar_time=bar_time,
     )
-    return {"closed": True, "qty": net_qty, "order_id": order_row["id"]}
+    return {"closed": True, "qty": sell_qty, "order_id": order_row["id"]}

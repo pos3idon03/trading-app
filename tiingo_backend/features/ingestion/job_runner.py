@@ -1,3 +1,4 @@
+import asyncio
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -123,6 +124,10 @@ async def execute_job(job_id: UUID, job_type: str, params: dict | None) -> None:
         except JobCancelledError:
             await session.rollback()
             logger.info("job_cancelled", job_id=str(job_id))
+        except asyncio.CancelledError:
+            await session.rollback()
+            logger.info("job_aborted", job_id=str(job_id))
+            raise
         except Exception as exc:
             await session.rollback()
             async with AsyncSessionLocal() as err_session:

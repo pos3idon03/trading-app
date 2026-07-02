@@ -1,5 +1,6 @@
 from typing import Any
 
+import numpy as np
 from sklearn.metrics import (
     accuracy_score,
     auc,
@@ -60,13 +61,47 @@ def build_confusion_matrix(
     return [[int(value) for value in row] for row in matrix.tolist()]
 
 
+def _resolve_classifier(model: Any) -> Any:
+    from sklearn.pipeline import Pipeline
+
+    if isinstance(model, Pipeline):
+        classifier = model.named_steps.get("classifier")
+        if classifier is not None:
+            return classifier
+    return model
+
+
 def extract_feature_importance(model: Any, feature_names: list[str]) -> list[dict]:
-    importances = getattr(model, "feature_importances_", None)
+    classifier = _resolve_classifier(model)
+    importances = getattr(classifier, "feature_importances_", None)
     if importances is None:
         return []
 
     pairs = sorted(
         zip(feature_names, importances),
+        key=lambda item: float(item[1]),
+        reverse=True,
+    )
+    return [
+        {"name": name, "value": round(float(value), 6)}
+        for name, value in pairs
+    ]
+
+
+def extract_coefficient_importance(model: Any, feature_names: list[str]) -> list[dict]:
+    classifier = _resolve_classifier(model)
+    coef = getattr(classifier, "coef_", None)
+    if coef is None:
+        return []
+
+    matrix = np.asarray(coef)
+    if matrix.ndim == 1:
+        weights = np.abs(matrix)
+    else:
+        weights = np.abs(matrix).mean(axis=0)
+
+    pairs = sorted(
+        zip(feature_names, weights),
         key=lambda item: float(item[1]),
         reverse=True,
     )
