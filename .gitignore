@@ -44,9 +44,9 @@ Thumbs.db
 *.csv
 *.parquet
 *.h5
-data/
+/data/
 logs/
 
 # Market data cache and backtest output
-data/
-results/
+/data/
+/results/
