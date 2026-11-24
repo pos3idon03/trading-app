@@ -46,3 +46,7 @@ Thumbs.db
 *.h5
 data/
 logs/
+
+# Market data cache and backtest output
+data/
+results/
